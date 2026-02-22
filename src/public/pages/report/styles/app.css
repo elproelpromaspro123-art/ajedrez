@@ -637,6 +637,12 @@ button:hover:not(:disabled) {
     font-size: 0.9rem;
 }
 
+.study-note {
+    margin-top: 10px;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
 @media (max-width: 1120px) {
     .panel-grid,
     .analysis-grid {
