@@ -1,21 +1,18 @@
-﻿{
+{
   "version": 2,
-  "builds": [
-    {
-      "src": "src/index.ts",
-      "use": "@vercel/node",
-      "config": {
-        "includeFiles": [
-          "src/public/**",
-          "src/resources/**"
-        ]
-      }
+  "functions": {
+    "api/index.ts": {
+      "runtime": "@vercel/node@3.2.25",
+      "includeFiles": [
+        "src/public/**",
+        "src/resources/**"
+      ]
     }
-  ],
-  "routes": [
+  },
+  "rewrites": [
     {
-      "src": "/(.*)",
-      "dest": "src/index.ts"
+      "source": "/(.*)",
+      "destination": "/api/index.ts"
     }
   ]
 }
