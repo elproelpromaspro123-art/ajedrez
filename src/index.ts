@@ -10,8 +10,7 @@ const app = express();
 app.use(express.json());
 
 app.use("/static",
-    express.static("dist/public"),
-    express.static("src/public")
+    express.static(path.resolve("src/public"))
 );
 
 app.use("/api", apiRouter);
@@ -20,10 +19,12 @@ app.get("/", async (req, res) => {
     res.sendFile(path.resolve("src/public/pages/report/index.html"));
 });
 
-app.get("/privacy", async (req, res) => {
-    res.sendFile(path.resolve("src/public/pages/privacy/index.html"));
-});
+const port = Number(process.env.PORT) || 3000;
 
-app.listen(process.env.PORT, () => {
-    console.log("Server running.");
-});
+if (require.main === module) {
+    app.listen(port, () => {
+        console.log(`Server running on port ${port}.`);
+    });
+}
+
+export default app;

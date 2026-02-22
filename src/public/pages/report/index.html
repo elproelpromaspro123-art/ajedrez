@@ -1,433 +1,243 @@
-<!DOCTYPE html>
-<html lang="en">
-    <head>
-        <title>Game Report</title>
+﻿<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Webapp personal para jugar, analizar y estudiar ajedrez sin login." />
+    <meta name="theme-color" content="#0c111b" />
+    <title>Ajedrez Lab</title>
 
-        <meta charset="UTF-8" />
-        <meta
-            name="viewport"
-            content="width=device-width, initial-scale=1.0,maximum-scale=1.0, user-scalable=no"
-        />
-        <meta name="og:title" content="♟️ WintrCat's Game Report" />
-        <meta name="og:url" content="https://chess.wintrcat.uk/" />
-        <meta name="og:image" content="/static/media/brilliant.png" />
-        <meta
-            name="og:description"
-            content="Analyse your games to find your mistakes and brilliancies."
-        />
-        <meta name="theme-color" content="#47acff" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="/static/pages/report/styles/app.css" />
+    <link rel="shortcut icon" href="/static/media/favicon-freechess.ico" type="image/x-icon" />
+</head>
+<body>
+    <div class="app-bg" aria-hidden="true">
+        <div class="orb orb-a"></div>
+        <div class="orb orb-b"></div>
+        <div class="orb orb-c"></div>
+    </div>
 
-        <meta name="google-adsense-account" content="ca-pub-3914142339921252">
-
-        <link rel="stylesheet" href="/static/global.css" />
-
-        <link rel="stylesheet" href="/static/pages/report/styles/index.css" />
-        <link
-            rel="stylesheet"
-            href="/static/pages/report/styles/announcement.css"
-        />
-        <link rel="stylesheet" href="/static/pages/report/styles/board.css" />
-        <link
-            rel="stylesheet"
-            href="/static/pages/report/styles/gameselect.css"
-        />
-        <link
-            rel="stylesheet"
-            href="/static/pages/report/styles/reviewpanel.css"
-        />
-        <link rel="stylesheet" href="/static/pages/report/styles/report.css" />
-
-        <link
-            rel="shortcut icon"
-            href="/static/media/favicon-freechess.ico"
-            type="image/x-icon"
-        />
-
-        <audio
-            id="sound-fx-move"
-            class="sound-fx-board"
-            src="/static/media/move.mp3"
-        ></audio>
-        <audio
-            id="sound-fx-capture"
-            class="sound-fx-board"
-            src="/static/media/capture.mp3"
-        ></audio>
-        <audio
-            id="sound-fx-check"
-            class="sound-fx-board"
-            src="/static/media/check.mp3"
-        ></audio>
-        <audio
-            id="sound-fx-castle"
-            class="sound-fx-board"
-            src="/static/media/castle.mp3"
-        ></audio>
-        <audio
-            id="sound-fx-promote"
-            class="sound-fx-board"
-            src="/static/media/promote.mp3"
-        ></audio>
-        <audio
-            id="sound-fx-game-end"
-            class="sound-fx-board"
-            src="/static/media/game_end.mp3"
-        ></audio>
-
-	<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3914142339921252"
-     crossorigin="anonymous"></script>
-        <script src="https://www.google.com/recaptcha/api.js"></script>
-        <script
-            src="https://kit.fontawesome.com/bb36c502e7.js"
-            crossorigin="anonymous"
-        ></script>
-    </head>
-
-    <body>
-        <div id="announcement">
-            <div class="wise-words">
-                <b
-                    >I pay to keep my app free for everyone. Any donations
-                    appreciated
-                    <i class="fa-solid fa-heart" style="color: #ffffff"></i
-                ></b>
-            </div>
-            <div class="wise-buttons">
-                <a
-                    id="kofi-a"
-                    href="https://ko-fi.com/N4N7SORCC"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                >
-                    <svg
-                        id="kofi"
-                        fill="#ffffff"
-                        width="24px"
-                        height="24px"
-                        viewBox="0 0 24 24"
-                        role="img"
-                        xmlns="http://www.w3.org/2000/svg"
-                        stroke="#ffffff"
-                    >
-                        <g id="SVGRepo_bgCarrier" stroke-width="0" />
-                        <g
-                            id="SVGRepo_tracerCarrier"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        />
-                        <g id="SVGRepo_iconCarrier">
-                            <path
-                                d="M23.881 8.948c-.773-4.085-4.859-4.593-4.859-4.593H.723c-.604 0-.679.798-.679.798s-.082 7.324-.022 11.822c.164 2.424 2.586 2.672 2.586 2.672s8.267-.023 11.966-.049c2.438-.426 2.683-2.566 2.658-3.734 4.352.24 7.422-2.831 6.649-6.916zm-11.062 3.511c-1.246 1.453-4.011 3.976-4.011 3.976s-.121.119-.31.023c-.076-.057-.108-.09-.108-.09-.443-.441-3.368-3.049-4.034-3.954-.709-.965-1.041-2.7-.091-3.71.951-1.01 3.005-1.086 4.363.407 0 0 1.565-1.782 3.468-.963 1.904.82 1.832 3.011.723 4.311zm6.173.478c-.928.116-1.682.028-1.682.028V7.284h1.77s1.971.551 1.971 2.638c0 1.913-.985 2.667-2.059 3.015z"
-                            />
-                        </g>
-                    </svg>
-                    <p class="ad-text">Buy Me a Coffee</p>
-                </a>
-                <a
-                    id="discord-a"
-                    href="https://discord.com/invite/XxtsAzPyCb"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                >
-                    <i
-                        id="discord"
-                        class="fa-brands fa-discord"
-                        style="color: #ffffff"
-                    ></i>
-                    <p class="ad-text">Join our Discord Server</p>
-                </a>
-            </div>
+    <header class="topbar">
+        <div class="brand">
+            <p class="kicker">Uso personal</p>
+            <h1>Ajedrez Lab</h1>
+            <p class="subtitle">Juega contra bots, analiza partidas y estudia patrones de forma directa.</p>
         </div>
-
-        <div id="review-container" class="center">
-            <div id="board-outer-container" class="center">
-                <svg
-                    id="evaluation-bar"
-                    width="40"
-                    height="730"
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="#fff"
-                >
-                    <rect
-                        id="black-rect"
-                        x="0"
-                        y="0"
-                        width="40"
-                        height="365"
-                        fill="#000000"
-                    />
-
-                    <rect
-                        id="white-rect"
-                        x="0"
-                        y="365"
-                        width="40"
-                        height="365"
-                        fill="#ffffff"
-                    />
-                    <text
-                        id="white-eval-text"
-                        x="20"
-                        y="720"
-                        fill="#000000"
-                        font-size="16"
-                        text-anchor="middle"
-                    >
-                        0.0
-                    </text>
-                    <text
-                        id="black-eval-text"
-                        x="20"
-                        y="20"
-                        fill="#fff"
-                        font-size="16"
-                        text-anchor="middle"
-                    >
-                        0.0
-                    </text>
-                </svg>
-
-                <div id="board-inner-container" class="center">
-                    <div id="top-player-profile" class="profile">
-                        Black Player (?)
-                    </div>
-
-                    <canvas id="board" width="1280" height="1280"></canvas>
-
-                    <div id="bottom-player-profile" class="profile">
-                        White Player (?)
-                    </div>
-                </div>
-            </div>
-
-            <div id="review-panel">
-                <div id="review-panel-main">
-                    <div id="review-panel-wrapper">
-                        <h1 class="logo" id="review-panel-title" class="white">
-                            <i
-                                class="knight fa-solid fa-chess-knight"
-                                style="color: #ffffff"
-                            ></i
-                            >Game Report
-                        </h1>
-                        <div id="load-type-dropdown-container" class="white">
-                            <select id="load-type-dropdown">
-                                <option value="pgn">PGN</option>
-                                <option value="chesscom">Chess.com</option>
-                                <option value="lichess">Lichess.org</option>
-                                <option value="json">JSON</option>
-                            </select>
-                        </div>
-                        <div id="gameInputContainer" class="gameInputContainer">
-                            <textarea
-                                id="pgn"
-                                class="white"
-                                cols="30"
-                                rows="10"
-                                spellcheck="false"
-                                placeholder="Enter PGN..."
-                            ></textarea>
-                        </div>
-
-                        <div
-                            id="gameInputContainer2"
-                            class="gameInputContainer"
-                        >
-                            <textarea
-                                id="chess-site-username"
-                                class="white"
-                                spellcheck="false"
-                                maxlength="48"
-                                placeholder="Username..."
-                            ></textarea>
-                            <button
-                                id="fetch-account-games-button"
-                                class="usernameVerifyBtn"
-                            >
-                                <i
-                                    class="usernameVerifyBtnIcon fa-solid fa-arrow-right contol-icons"
-                                    style="color: #ffffff"
-                                ></i>
-                            </button>
-                        </div>
-
-                        <button id="review-button" class="analyse">
-                            <i
-                                class="mag fa-solid fa-magnifying-glass"
-                                style="color: #ffffff"
-                            ></i>
-                            <b>Analyse</b>
-                        </button>
-
-                        <progress
-                            id="evaluation-progress-bar"
-                            max="100"
-                        ></progress>
-
-                        <b id="status-message"
-                            ><i
-                                class="fa-solid fa-circle-info"
-                                style="color: #ffffff"
-                            ></i
-                        ></b>
-
-                        <div
-                            class="g-recaptcha"
-                            data-sitekey="6LeCaR8pAAAAAGUKVSuZgZ73Kie3j2arG3qE74jA"
-                            data-theme="dark"
-                            data-callback="report"
-                        ></div>
-
-                        <b id="secondary-message" class="white"></b>
-
-                        <div id="report-cards">
-                            <div class="accuracyHolder">
-                                <h2 id="accuracies-title" class="white">
-                                    Accuracies
-                                    <div class="accuracyDiv">
-                                        <b
-                                            id="white-accuracy"
-                                            class="accuracies"
-                                            >0%</b
-                                        >
-                                        <b
-                                            id="black-accuracy"
-                                            class="accuracies"
-                                            >0%</b
-                                        >
-                                    </div>
-                                </h2>
-                                <span id="opening-name" class="white"></span>
-                            </div>
-                            <div id="classification-count-container"></div>
-                            <div id="classification-message-container">
-                                <img
-                                    id="classification-icon"
-                                    src="/static/media/book.png"
-                                    height="25"
-                                />
-                                <b id="classification-message"></b>
-                            </div>
-
-                            <b id="top-alternative-message"></b>
-
-                            <div id="engine-suggestions">
-                                <h2 id="engine-suggestions-title" class="white">
-                                    Engine:
-                                </h2>
-                            </div>
-                            <div id="evalgraph-container" class="report-card center">
-                                <canvas id="evaluation-graph" height="100"></canvas>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="big-depth-container">
-                        <span class="depthTitle" class="white">
-                            <i
-                                class="gear fa-solid fa-gear"
-                                style="color: #ffffff"
-                            ></i>
-                            <p>Depth</p>
-                        </span>
-                        <div class="badboystiff">
-                            <span>Arrows|</span>
-                            <label
-                                class="toggle"
-                                for="suggestion-arrows-setting"
-                            >
-                                <input
-                                    id="suggestion-arrows-setting"
-                                    type="checkbox"
-                                />
-                                <div class="toggle__fill"></div>
-                            </label>
-                        </div>
-                        <div id="depth-slider-container">
-                            <input
-                                id="depth-slider"
-                                type="range"
-                                min="14"
-                                max="20"
-                                value="16"
-                            />
-                            <span id="depth-counter" class="white"
-                                >16|<i
-                                    class="fa-solid fa-wind"
-                                    style="color: #ffffff"
-                                ></i
-                            ></span>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="review-panel-toolbar">
-                    <div id="review-panel-toolbar-buttons" class="center">
-                        <i
-                            id="flip-board-button"
-                            class="fa-solid fa-repeat"
-                            style="color: #ffffff"
-                            data-tooltip="Flip"
-                        ></i>
-
-                        <i
-                            id="back-start-move-button"
-                            class="fa-solid fa-backward-step"
-                            style="color: #ffffff"
-                            data-tooltip="Back to start"
-                        ></i>
-
-                        <i
-                            id="back-move-button"
-                            class="fa-solid fa-arrow-left"
-                            style="color: #ffffff"
-                            data-tooltip="Back"
-                        ></i>
-
-                        <i
-                            id="next-move-button"
-                            class="fa-solid fa-arrow-right"
-                            style="color: #ffffff"
-                            data-tooltip="Next"
-                        ></i>
-
-                        <i
-                            id="go-end-move-button"
-                            class="fa-solid fa-forward-step"
-                            style="color: #ffffff"
-                            data-tooltip="To the end"
-                        ></i>
-
-                        <i
-                            id="save-analysis-button"
-                            class="fa-solid fa-floppy-disk"
-                            style="color: #ffffff"
-                            data-tooltip="Save"
-                        ></i>
-                    </div>
-                    <div class="footer white privacyPolicyThingy">
-                        A website by wintrcat
-                        <a href="/privacy">Privacy Policy</a>
-                    </div>
-                </div>
-            </div>
+        <div class="topbar-meta">
+            <p id="last-update-label">Actualizado: 22 de febrero de 2026</p>
+            <a href="https://www.fide.com/FIDE/handbook/LawsOfChess.pdf" target="_blank" rel="noopener noreferrer">Reglas FIDE</a>
         </div>
+    </header>
 
-        <div id="game-select-menu-container"></div>
+    <nav class="tabs" aria-label="Secciones">
+        <button class="tab-btn is-active" data-tab-target="play-section">Jugar</button>
+        <button class="tab-btn" data-tab-target="analysis-section">Analizar</button>
+        <button class="tab-btn" data-tab-target="study-section">Estudio</button>
+    </nav>
 
-        <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
-        <script src="/static/scripts/SpeechBubble.js"></script>
+    <main class="content">
+        <section id="play-section" class="panel is-active">
+            <div class="panel-grid">
+                <article class="card board-card">
+                    <div class="card-header">
+                        <h2>Tablero de entrenamiento</h2>
+                        <div class="inline-actions">
+                            <button id="play-flip-btn" class="ghost-btn" type="button">Girar</button>
+                            <button id="play-new-game-btn" class="ghost-btn" type="button">Nueva partida</button>
+                        </div>
+                    </div>
+                    <div class="board-wrap">
+                        <div id="play-board" class="chessboard" aria-label="Tablero para jugar contra bot"></div>
+                    </div>
+                    <p id="play-status" class="status-line">Configura el bot y pulsa iniciar.</p>
+                    <ol id="play-move-list" class="move-list" aria-label="Historial de jugadas"></ol>
+                </article>
 
-        <script src="/static/pages/report/scripts/sprites.js"></script>
-        <script src="/static/pages/report/scripts/evalbar.js"></script>
-        <script src="/static/pages/report/scripts/evalgraph.js"></script>
-        <script src="/static/pages/report/scripts/board.js"></script>
-        <script src="/static/pages/report/scripts/report.js"></script>
+                <aside class="card control-card">
+                    <h3>Bot y ayudas</h3>
+                    <label for="bot-preset">Nivel bot (ELO)</label>
+                    <select id="bot-preset">
+                        <option value="600">Principiante 600</option>
+                        <option value="900">Basico 900</option>
+                        <option value="1200" selected>Intermedio 1200</option>
+                        <option value="1500">Club 1500</option>
+                        <option value="1800">Avanzado 1800</option>
+                        <option value="2100">Experto 2100</option>
+                    </select>
 
-        <script src="/static/pages/report/scripts/loadgame.js"></script>
+                    <label for="bot-custom-elo">ELO personalizado (400-2800)</label>
+                    <input id="bot-custom-elo" type="number" min="400" max="2800" step="50" placeholder="Opcional" />
 
-        <script src="/static/pages/report/scripts/engine.js"></script>
-        <script src="/static/pages/report/scripts/analysis.js"></script>
+                    <label for="player-color">Color de juego</label>
+                    <select id="player-color">
+                        <option value="white" selected>Blancas</option>
+                        <option value="black">Negras</option>
+                        <option value="random">Aleatorio</option>
+                    </select>
 
-        <script src="/static/pages/report/scripts/styles.js"></script>
-    </body>
+                    <label for="coach-depth">Profundidad del entrenador</label>
+                    <input id="coach-depth" type="range" min="8" max="18" value="12" />
+                    <p id="coach-depth-value" class="muted">12</p>
+
+                    <div class="toggle-grid">
+                        <label><input id="assist-legal" type="checkbox" checked /> Mostrar jugadas legales</label>
+                        <label><input id="assist-lastmove" type="checkbox" checked /> Resaltar ultima jugada</label>
+                        <label><input id="assist-coach-auto" type="checkbox" checked /> Entrenador automatico</label>
+                        <label><input id="assist-coordinates" type="checkbox" checked /> Mostrar coordenadas</label>
+                        <label><input id="assist-sound" type="checkbox" checked /> Sonidos</label>
+                        <label><input id="assist-autopromo" type="checkbox" checked /> Auto promocion a dama</label>
+                    </div>
+
+                    <div class="stack-buttons">
+                        <button id="play-start-btn" class="primary-btn" type="button">Iniciar partida</button>
+                        <button id="play-hint-btn" class="secondary-btn" type="button">Pedir pista</button>
+                        <button id="play-undo-btn" class="secondary-btn" type="button">Deshacer jugada</button>
+                    </div>
+
+                    <div class="coach-box">
+                        <h4>Entrenador</h4>
+                        <p id="coach-message">Las sugerencias apareceran aqui cuando sea tu turno.</p>
+                    </div>
+                </aside>
+            </div>
+        </section>
+
+        <section id="analysis-section" class="panel">
+            <div class="panel-grid analysis-grid">
+                <article class="card control-card">
+                    <h3>Analisis de partida</h3>
+                    <label for="analysis-pgn">PGN</label>
+                    <textarea id="analysis-pgn" rows="10" spellcheck="false" placeholder="Pega aqui tu PGN..."></textarea>
+
+                    <label for="analysis-depth">Profundidad de analisis</label>
+                    <input id="analysis-depth" type="range" min="8" max="18" value="12" />
+                    <p id="analysis-depth-value" class="muted">12</p>
+
+                    <button id="analysis-run-btn" class="primary-btn" type="button">Analizar partida</button>
+                    <progress id="analysis-progress" value="0" max="100"></progress>
+                    <p id="analysis-status" class="status-line">Esperando PGN.</p>
+
+                    <div class="summary-grid">
+                        <div class="summary-card">
+                            <span>Precision blancas</span>
+                            <strong id="analysis-white-accuracy">--</strong>
+                        </div>
+                        <div class="summary-card">
+                            <span>Precision negras</span>
+                            <strong id="analysis-black-accuracy">--</strong>
+                        </div>
+                        <div class="summary-card">
+                            <span>Apertura</span>
+                            <strong id="analysis-opening">--</strong>
+                        </div>
+                    </div>
+
+                    <h4>Clasificaciones</h4>
+                    <table class="classification-table">
+                        <thead>
+                            <tr>
+                                <th>Tipo</th>
+                                <th>Blancas</th>
+                                <th>Negras</th>
+                            </tr>
+                        </thead>
+                        <tbody id="classification-table-body"></tbody>
+                    </table>
+                </article>
+
+                <article class="card board-card">
+                    <div class="card-header">
+                        <h2>Revision jugada a jugada</h2>
+                        <div class="inline-actions">
+                            <button id="analysis-start-btn" class="ghost-btn" type="button">|&lt;</button>
+                            <button id="analysis-prev-btn" class="ghost-btn" type="button">&lt;</button>
+                            <button id="analysis-next-btn" class="ghost-btn" type="button">&gt;</button>
+                            <button id="analysis-end-btn" class="ghost-btn" type="button">&gt;|</button>
+                        </div>
+                    </div>
+                    <div class="board-wrap">
+                        <div id="analysis-board" class="chessboard" aria-label="Tablero de analisis"></div>
+                    </div>
+                    <p id="analysis-move-meta" class="status-line">No hay analisis cargado.</p>
+                    <ol id="analysis-move-list" class="move-list" aria-label="Lista de jugadas analizadas"></ol>
+                    <div class="coach-box">
+                        <h4>Mejores lineas del motor</h4>
+                        <ul id="analysis-top-lines" class="line-list"></ul>
+                    </div>
+                </article>
+            </div>
+        </section>
+
+        <section id="study-section" class="panel">
+            <header class="study-header">
+                <h2>Estudio rapido</h2>
+                <p>Bloques cortos con ideas practicas y posiciones de referencia.</p>
+            </header>
+
+            <div class="study-grid">
+                <article class="card study-card">
+                    <h3>Apertura: principios esenciales</h3>
+                    <p>Controla el centro, desarrolla piezas menores rapido y enroca antes de buscar tacticas forzadas.</p>
+                    <div class="study-diagram" data-fen="r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 2 4"></div>
+                    <ul class="compact-list">
+                        <li>No muevas la misma pieza muchas veces sin necesidad.</li>
+                        <li>No saques la dama temprano si no hay motivo tactico.</li>
+                        <li>Conecta torres antes del medio juego.</li>
+                    </ul>
+                </article>
+
+                <article class="card study-card">
+                    <h3>Tactica de referencia: Partida Opera (Morphy, 1858)</h3>
+                    <p>Ejemplo clasico de desarrollo, iniciativa y mate con torres coordinadas.</p>
+                    <div class="study-diagram" data-fen="1n1Rkb1r/p4ppp/4q3/4p1B1/4P3/8/PPP2PPP/2K5 b k - 1 17"></div>
+                    <ul class="compact-list">
+                        <li>El rival queda sin coordinacion defensiva.</li>
+                        <li>La actividad vale mas que el material en posiciones abiertas.</li>
+                        <li>Busca jugadas forzantes: jaques, capturas y amenazas directas.</li>
+                    </ul>
+                </article>
+
+                <article class="card study-card">
+                    <h3>Tactica de referencia: Mate de Legal</h3>
+                    <p>Un patron de sacrificio en apertura para explotar rey en el centro y piezas clavadas.</p>
+                    <div class="study-diagram" data-fen="r2q1bnr/ppp1kBpp/2np4/3NN3/4P3/7P/PPPP1PP1/R1BbK2R b KQ - 2 8"></div>
+                    <ul class="compact-list">
+                        <li>Confirma que la dama rival esta sobrecargada o clavada.</li>
+                        <li>Calcula hasta el mate antes de sacrificar.</li>
+                        <li>Entrena este patron para blitz y rapidas.</li>
+                    </ul>
+                </article>
+
+                <article class="card study-card">
+                    <h3>Finales: plan universal</h3>
+                    <p>Activa el rey, crea peon pasado y coloca torres detras del peon pasado.</p>
+                    <div class="study-diagram" data-fen="8/6kp/5pp1/8/3K4/5P2/5P1P/6R1 w - - 0 1"></div>
+                    <ul class="compact-list">
+                        <li>El rey activo gana finales igualados.</li>
+                        <li>Evita cambios que mejoren la actividad rival.</li>
+                        <li>Prioriza simplificar cuando tengas ventaja tecnica.</li>
+                    </ul>
+                </article>
+            </div>
+
+            <div class="resource-links">
+                <a href="https://www.fide.com/FIDE/handbook/LawsOfChess.pdf" target="_blank" rel="noopener noreferrer">Leyes oficiales FIDE</a>
+                <a href="https://lichess.org/study" target="_blank" rel="noopener noreferrer">Estudios interactivos (Lichess)</a>
+                <a href="https://www.chessprogramming.org/Main_Page" target="_blank" rel="noopener noreferrer">Referencia tecnica de motores</a>
+            </div>
+        </section>
+    </main>
+
+    <audio id="fx-move" src="/static/media/move.mp3"></audio>
+    <audio id="fx-capture" src="/static/media/capture.mp3"></audio>
+    <audio id="fx-check" src="/static/media/check.mp3"></audio>
+    <audio id="fx-castle" src="/static/media/castle.mp3"></audio>
+    <audio id="fx-promote" src="/static/media/promote.mp3"></audio>
+    <audio id="fx-end" src="/static/media/game_end.mp3"></audio>
+
+    <script type="module" src="/static/pages/report/scripts/app.js"></script>
+</body>
 </html>
