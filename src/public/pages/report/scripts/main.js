@@ -293,51 +293,126 @@ class BoardView {
             throw new Error("Board root not found.");
         }
 
+        this._wasDragging = false;
+
         this.root.addEventListener("click", (event) => {
             if (!this.interactive || !this.onSquareClick) return;
+            if (this._wasDragging) { this._wasDragging = false; return; }
             const target = event.target.closest(".square");
             if (target && target.dataset.square) {
                 this.onSquareClick(target.dataset.square);
             }
         });
 
-        this.root.addEventListener("dragstart", (event) => {
-            if (!this.interactive || !this.onSquareClick) return;
-            if (event.target.tagName === "IMG") {
-                const squareEl = event.target.closest(".square");
-                if (squareEl && squareEl.dataset.square) {
-                    this.root.classList.add("drag-active");
-                    squareEl.classList.add("drag-origin");
-                    event.dataTransfer.setData("text/plain", squareEl.dataset.square);
-                    event.dataTransfer.effectAllowed = "move";
-                    // Optionally fire click to show legal moves immediately
-                    this.onSquareClick(squareEl.dataset.square);
-                }
-            }
-        });
+        // --- Smooth pointer-based drag & drop ---
+        this._dragState = null;
+        this._dragGhost = null;
 
-        this.root.addEventListener("dragover", (event) => {
-            event.preventDefault(); // allow drop
-        });
+        this.root.addEventListener("pointerdown", (event) => {
+            if (!this.interactive) return;
+            const squareEl = event.target.closest(".square");
+            if (!squareEl || !squareEl.dataset.square) return;
+            const img = squareEl.querySelector("img");
+            if (!img) return;
 
-        this.root.addEventListener("drop", (event) => {
             event.preventDefault();
-            this.root.classList.remove("drag-active");
-            this.root.querySelectorAll(".drag-origin").forEach((el) => el.classList.remove("drag-origin"));
-            if (!this.interactive || !this.onDrop) return;
-            const target = event.target.closest(".square");
-            if (target && target.dataset.square) {
-                const from = event.dataTransfer.getData("text/plain");
-                const to = target.dataset.square;
-                if (from && to && from !== to) {
-                    this.onDrop(from, to);
-                }
+            squareEl.setPointerCapture(event.pointerId);
+
+            const rect = this.root.getBoundingClientRect();
+            const squareSize = rect.width / 8;
+
+            // Create ghost image for dragging
+            const ghost = img.cloneNode(true);
+            ghost.style.cssText = `
+                position: fixed;
+                pointer-events: none;
+                z-index: 9999;
+                width: ${squareSize * 1.15}px;
+                height: ${squareSize * 1.15}px;
+                opacity: 0.92;
+                filter: drop-shadow(0 8px 16px rgba(0,0,0,0.5));
+                transition: none;
+                will-change: transform;
+            `;
+            ghost.style.left = (event.clientX - squareSize * 0.575) + "px";
+            ghost.style.top = (event.clientY - squareSize * 0.575) + "px";
+            document.body.appendChild(ghost);
+
+            img.style.opacity = "0.3";
+            squareEl.classList.add("drag-origin");
+            this.root.classList.add("drag-active");
+
+            this._dragState = {
+                fromSquare: squareEl.dataset.square,
+                pointerId: event.pointerId,
+                originImg: img,
+                squareSize
+            };
+            this._dragGhost = ghost;
+
+            // Fire click to show legal moves
+            if (this.onSquareClick) {
+                this.onSquareClick(squareEl.dataset.square);
             }
         });
 
-        this.root.addEventListener("dragend", () => {
+        this.root.addEventListener("pointermove", (event) => {
+            if (!this._dragState || event.pointerId !== this._dragState.pointerId) return;
+            if (!this._dragGhost) return;
+            event.preventDefault();
+            const sz = this._dragState.squareSize;
+            this._dragGhost.style.left = (event.clientX - sz * 0.575) + "px";
+            this._dragGhost.style.top = (event.clientY - sz * 0.575) + "px";
+        });
+
+        this.root.addEventListener("pointerup", (event) => {
+            if (!this._dragState || event.pointerId !== this._dragState.pointerId) return;
+            event.preventDefault();
+
+            const state = this._dragState;
+            const ghost = this._dragGhost;
+
+            // Clean up ghost
+            if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+            this._dragGhost = null;
+
+            // Restore origin image
+            if (state.originImg) state.originImg.style.opacity = "";
+
+            // Remove classes
             this.root.classList.remove("drag-active");
             this.root.querySelectorAll(".drag-origin").forEach((el) => el.classList.remove("drag-origin"));
+
+            // Find target square
+            const target = document.elementFromPoint(event.clientX, event.clientY);
+            const targetSquare = target ? target.closest(".square") : null;
+
+            if (targetSquare && targetSquare.dataset.square && targetSquare.dataset.square !== state.fromSquare) {
+                this._wasDragging = true;
+                if (this.onDrop) {
+                    this.onDrop(state.fromSquare, targetSquare.dataset.square);
+                }
+            } else {
+                // Dropped on same square or outside - cancel
+                if (this.onSquareClick && targetSquare && targetSquare.dataset.square === state.fromSquare) {
+                    // Toggle selection off
+                }
+            }
+
+            this._dragState = null;
+        });
+
+        this.root.addEventListener("pointercancel", () => {
+            if (this._dragGhost && this._dragGhost.parentNode) {
+                this._dragGhost.parentNode.removeChild(this._dragGhost);
+            }
+            if (this._dragState && this._dragState.originImg) {
+                this._dragState.originImg.style.opacity = "";
+            }
+            this.root.classList.remove("drag-active");
+            this.root.querySelectorAll(".drag-origin").forEach((el) => el.classList.remove("drag-origin"));
+            this._dragState = null;
+            this._dragGhost = null;
         });
 
         this.buildSquares();
@@ -415,19 +490,26 @@ class BoardView {
         const map = fenMapFromFen(fen);
 
         this.squareMap.forEach((squareEl, square) => {
-            squareEl.innerHTML = "";
-            squareEl.classList.remove("occupied");
+            const newPiece = map.get(square) || null;
+            const currentImg = squareEl.querySelector("img");
+            const currentPiece = currentImg ? currentImg.alt : null;
 
-            const piece = map.get(square);
-            if (!piece) return;
+            if (newPiece === currentPiece) return;
 
-            squareEl.classList.add("occupied");
+            if (currentImg) {
+                currentImg.remove();
+            }
 
-            const img = document.createElement("img");
-            img.src = PIECE_IMAGE[piece];
-            img.alt = piece;
-            img.draggable = true; // allow dragging
-            squareEl.appendChild(img);
+            if (newPiece) {
+                squareEl.classList.add("occupied");
+                const img = document.createElement("img");
+                img.src = PIECE_IMAGE[newPiece];
+                img.alt = newPiece;
+                img.draggable = false;
+                squareEl.appendChild(img);
+            } else {
+                squareEl.classList.remove("occupied");
+            }
         });
     }
 
