@@ -1,4 +1,4 @@
-﻿
+
 const Chess = window.Chess;
 
 if (!Chess) {
@@ -40,8 +40,32 @@ const CLASSIFICATION_LABEL = {
     inaccuracy: "Inexactitud",
     mistake: "Error",
     blunder: "Blunder",
-    book: "Teoria",
+    book: "Teoría",
     forced: "Forzada"
+};
+
+const CLASSIFICATION_SYMBOL = {
+    brilliant: "!!",
+    great: "!",
+    best: "★",
+    excellent: "●",
+    good: "",
+    inaccuracy: "?!",
+    mistake: "?",
+    blunder: "??",
+    book: "≡",
+    forced: "⊕"
+};
+
+const CLASSIFICATION_DOT_COLOR = {
+    brilliant: "#1baca6",
+    great: "#5c8bb0",
+    best: "#96bc4b",
+    excellent: "#96bc4b",
+    good: "#a0a0a0",
+    inaccuracy: "#f7c631",
+    mistake: "#e58f2a",
+    blunder: "#ca3431"
 };
 
 const ENGINE_PRIMARY = "/static/scripts/stockfish-nnue-16.js";
@@ -94,6 +118,15 @@ const el = {
     analysisPrevBtn: document.querySelector("#analysis-prev-btn"),
     analysisNextBtn: document.querySelector("#analysis-next-btn"),
     analysisEndBtn: document.querySelector("#analysis-end-btn"),
+
+    evalBar: document.querySelector("#eval-bar"),
+    evalFill: document.querySelector("#eval-fill"),
+    evalLabelWhite: document.querySelector("#eval-label-white"),
+    evalLabelBlack: document.querySelector("#eval-label-black"),
+
+    promotionModal: document.querySelector("#promotion-modal"),
+    promoPieces: Array.from(document.querySelectorAll(".promo-piece")),
+    promoOverlay: document.querySelector(".promo-overlay"),
 
     studyDiagrams: Array.from(document.querySelectorAll(".study-diagram")),
 
@@ -169,6 +202,7 @@ function fenMapFromFen(fen) {
 
     return map;
 }
+
 class BoardView {
     constructor(root, options = {}) {
         this.root = root;
@@ -275,11 +309,14 @@ class BoardView {
 
         this.squareMap.forEach((squareEl, square) => {
             squareEl.innerHTML = "";
+            squareEl.classList.remove("occupied");
 
             const piece = map.get(square);
             if (!piece) {
                 return;
             }
+
+            squareEl.classList.add("occupied");
 
             const img = document.createElement("img");
             img.src = PIECE_IMAGE[piece];
@@ -291,7 +328,11 @@ class BoardView {
 
     clearHighlights() {
         this.squareMap.forEach((squareEl) => {
-            squareEl.classList.remove("selected", "legal", "last-from", "last-to", "hint-from", "hint-to");
+            squareEl.classList.remove("selected", "legal", "legal-capture", "last-from", "last-to", "hint-from", "hint-to");
+            const dot = squareEl.querySelector(".legal-dot");
+            if (dot) {
+                dot.remove();
+            }
         });
     }
 
@@ -303,6 +344,22 @@ class BoardView {
             }
         });
     }
+
+    highlightLegalMoves(squares, fen) {
+        const fenMap = fenMapFromFen(fen);
+        squares.forEach((square) => {
+            const squareEl = this.squareMap.get(square);
+            if (squareEl) {
+                squareEl.classList.add("legal");
+                if (fenMap.has(square)) {
+                    squareEl.classList.add("legal-capture");
+                }
+                const dot = document.createElement("div");
+                dot.className = "legal-dot";
+                squareEl.appendChild(dot);
+            }
+        });
+    }
 }
 
 function playAudio(audioElement) {
@@ -311,9 +368,7 @@ function playAudio(audioElement) {
     }
 
     audioElement.currentTime = 0;
-    audioElement.play().catch(() => {
-        // ignored
-    });
+    audioElement.play().catch(() => {});
 }
 
 function parseInfoLine(message, fen) {
@@ -364,6 +419,7 @@ function parseInfoLine(message, fen) {
 function eloToSkill(elo) {
     return clamp(Math.round((elo - 400) / 120), 0, 20);
 }
+
 function runStockfishInternal(options, enginePath) {
     const {
         fen,
@@ -482,6 +538,68 @@ function uciToSanFromFen(fen, uciMove) {
     return move ? move.san : uciMove;
 }
 
+/* ===== Promotion Modal ===== */
+
+let promotionResolve = null;
+
+function showPromotionModal(color) {
+    const prefix = color === "white" ? "white" : "black";
+    const pieceNames = { q: "queen", r: "rook", b: "bishop", n: "knight" };
+
+    el.promoPieces.forEach((btn) => {
+        const piece = btn.dataset.piece;
+        const img = btn.querySelector("img");
+        if (img && pieceNames[piece]) {
+            img.src = `/static/media/${prefix}_${pieceNames[piece]}.svg`;
+        }
+    });
+
+    el.promotionModal.classList.add("visible");
+
+    return new Promise((resolve) => {
+        promotionResolve = resolve;
+    });
+}
+
+function hidePromotionModal() {
+    el.promotionModal.classList.remove("visible");
+}
+
+/* ===== Eval Bar ===== */
+
+function updateEvalBar(evaluation) {
+    if (!el.evalBar || !el.evalFill) {
+        return;
+    }
+
+    let whitePercent = 50;
+
+    if (evaluation) {
+        if (evaluation.type === "mate") {
+            whitePercent = evaluation.value > 0 ? 100 : (evaluation.value < 0 ? 0 : 50);
+        } else {
+            const cp = evaluation.value / 100;
+            whitePercent = 50 + 50 * (2 / (1 + Math.exp(-0.4 * cp)) - 1);
+            whitePercent = clamp(whitePercent, 2, 98);
+        }
+    }
+
+    el.evalFill.style.height = `${whitePercent}%`;
+
+    if (el.evalLabelWhite && el.evalLabelBlack) {
+        const evalText = formatEval(evaluation);
+        if (!evaluation || evaluation.value >= 0) {
+            el.evalLabelWhite.textContent = evalText;
+            el.evalLabelBlack.textContent = "";
+        } else {
+            el.evalLabelBlack.textContent = evalText;
+            el.evalLabelWhite.textContent = "";
+        }
+    }
+}
+
+/* ===== Play State ===== */
+
 const playState = {
     board: new BoardView(el.playBoard, { orientation: "white", interactive: true, showCoordinates: true }),
     game: new Chess(),
@@ -536,7 +654,7 @@ function playMoveSound(move) {
 function formatGameOver(game) {
     if (game.isCheckmate()) {
         const winner = game.turn() === "w" ? "Negras" : "Blancas";
-        return `Jaque mate. Ganan ${winner}.`;
+        return `Jaque mate — ganan ${winner}.`;
     }
 
     if (game.isStalemate()) {
@@ -544,7 +662,7 @@ function formatGameOver(game) {
     }
 
     if (game.isThreefoldRepetition()) {
-        return "Tablas por repeticion.";
+        return "Tablas por repetición.";
     }
 
     if (game.isInsufficientMaterial()) {
@@ -557,6 +675,7 @@ function formatGameOver(game) {
 
     return "Partida finalizada.";
 }
+
 function renderPlayMoves() {
     const history = playState.game.history({ verbose: true });
     el.playMoveList.innerHTML = "";
@@ -574,12 +693,19 @@ function renderPlayMoves() {
         number.className = "move-num";
         number.textContent = `${Math.floor(i / 2) + 1}.`;
 
-        const notation = document.createElement("span");
-        notation.textContent = `${white ? white.san : ""}${black ? ` ${black.san}` : ""}`.trim();
+        const whiteSan = document.createElement("span");
+        whiteSan.className = "move-san";
+        whiteSan.textContent = white ? white.san : "";
 
-        item.append(number, notation);
+        const blackSan = document.createElement("span");
+        blackSan.className = "move-san";
+        blackSan.textContent = black ? black.san : "";
+
+        item.append(number, whiteSan, blackSan);
         el.playMoveList.appendChild(item);
     }
+
+    el.playMoveList.scrollTop = el.playMoveList.scrollHeight;
 }
 
 function renderPlayStatus() {
@@ -621,7 +747,7 @@ function renderPlayBoard() {
         playState.board.highlightSquares([playState.selectedSquare], "selected");
 
         if (settings.showLegal) {
-            playState.board.highlightSquares(playState.legalTargets, "legal");
+            playState.board.highlightLegalMoves(playState.legalTargets, playState.game.fen());
         }
     }
 
@@ -641,20 +767,6 @@ function currentBotElo() {
     }
 
     return clamp(parseInt(el.botPreset.value, 10), 400, 2800);
-}
-
-function maybeAskPromotion(defaultPromotion = "q") {
-    if (getPlaySettings().autoPromotion) {
-        return "q";
-    }
-
-    const raw = prompt("Promocion (q, r, b, n):", defaultPromotion);
-    const choice = (raw || defaultPromotion).toLowerCase().trim();
-    if (["q", "r", "b", "n"].includes(choice)) {
-        return choice;
-    }
-
-    return defaultPromotion;
 }
 
 async function maybeAutoCoach() {
@@ -735,7 +847,7 @@ async function requestCoachHint(isAuto = false) {
     }
 
     if (playState.game.isGameOver()) {
-        setCoachMessage("La partida termino. Inicia una nueva para seguir entrenando.");
+        setCoachMessage("La partida terminó. Inicia una nueva para seguir entrenando.");
         return;
     }
 
@@ -778,7 +890,7 @@ async function requestCoachHint(isAuto = false) {
         const bestSan = uciToSanFromFen(fen, result.bestMove);
         const evalText = bestLine ? formatEval(bestLine.evaluation) : "--";
 
-        let message = `Mejor jugada sugerida: ${bestSan} (eval ${evalText}).`;
+        let message = `Mejor jugada: ${bestSan} (eval ${evalText}).`;
 
         if (secondLine) {
             const alt = uciToSanFromFen(fen, secondLine.moveUCI);
@@ -793,6 +905,7 @@ async function requestCoachHint(isAuto = false) {
         playState.coaching = false;
     }
 }
+
 async function onPlaySquareClick(square) {
     if (playState.thinking || playState.game.isGameOver()) {
         return;
@@ -841,7 +954,11 @@ async function onPlaySquareClick(square) {
 
     let promotion;
     if (intendedMove.piece === "p" && (intendedMove.to.endsWith("8") || intendedMove.to.endsWith("1"))) {
-        promotion = maybeAskPromotion();
+        if (getPlaySettings().autoPromotion) {
+            promotion = "q";
+        } else {
+            promotion = await showPromotionModal(playState.playerColor);
+        }
     }
 
     const move = playState.game.move({
@@ -915,6 +1032,8 @@ function undoPlayMove() {
     renderPlayBoard();
 }
 
+/* ===== Analysis State ===== */
+
 const analysisState = {
     board: new BoardView(el.analysisBoard, { orientation: "white", interactive: false, showCoordinates: true }),
     report: null,
@@ -932,7 +1051,7 @@ function resetAnalysisSummary() {
     el.analysisBlackAccuracy.textContent = "--";
     el.analysisOpening.textContent = "--";
     el.analysisClassificationBody.innerHTML = "";
-    el.analysisMoveMeta.textContent = "No hay analisis cargado.";
+    el.analysisMoveMeta.textContent = "No hay análisis cargado.";
     el.analysisMoveList.innerHTML = "";
     el.analysisTopLines.innerHTML = "";
     el.analysisProgress.value = 0;
@@ -942,6 +1061,7 @@ function resetAnalysisSummary() {
 
     analysisState.board.setFen("8/8/8/8/8/8/8/8 w - - 0 1");
     analysisState.board.clearHighlights();
+    updateEvalBar(null);
 }
 
 function fillClassificationTable(classifications) {
@@ -951,7 +1071,16 @@ function fillClassificationTable(classifications) {
         const row = document.createElement("tr");
 
         const nameCell = document.createElement("td");
-        nameCell.textContent = CLASSIFICATION_LABEL[key] || key;
+
+        const dot = document.createElement("span");
+        dot.className = "cls-dot";
+        dot.style.backgroundColor = CLASSIFICATION_DOT_COLOR[key] || "#888";
+        dot.style.marginRight = "8px";
+
+        const symbol = CLASSIFICATION_SYMBOL[key] || "";
+        const labelText = CLASSIFICATION_LABEL[key] || key;
+        nameCell.appendChild(dot);
+        nameCell.appendChild(document.createTextNode(`${symbol ? symbol + " " : ""}${labelText}`));
 
         const whiteCell = document.createElement("td");
         whiteCell.textContent = String(classifications.white[key] || 0);
@@ -991,11 +1120,20 @@ function renderAnalysisMoveList() {
         moveNum.textContent = `${moveNumber}${suffix}`;
 
         const moveLabel = document.createElement("span");
-        const classification = position.classification ? (CLASSIFICATION_LABEL[position.classification] || position.classification) : "";
-
-        moveLabel.textContent = `${position.move ? position.move.san : "--"}${classification ? ` (${classification})` : ""}`;
+        moveLabel.className = "move-san";
+        moveLabel.textContent = position.move ? position.move.san : "--";
 
         item.append(moveNum, moveLabel);
+
+        if (position.classification) {
+            const badge = document.createElement("span");
+            badge.className = `cls-badge cls-${position.classification}`;
+            const symbol = CLASSIFICATION_SYMBOL[position.classification] || "";
+            const label = CLASSIFICATION_LABEL[position.classification] || position.classification;
+            badge.textContent = symbol ? `${symbol} ${label}` : label;
+            item.appendChild(badge);
+        }
+
         item.addEventListener("click", () => {
             analysisState.currentIndex = i;
             renderAnalysisPosition();
@@ -1003,13 +1141,19 @@ function renderAnalysisMoveList() {
 
         el.analysisMoveList.appendChild(item);
     }
+
+    const activeItem = el.analysisMoveList.querySelector(".is-active");
+    if (activeItem) {
+        activeItem.scrollIntoView({ block: "nearest" });
+    }
 }
+
 function renderAnalysisLines(lines, fen) {
     el.analysisTopLines.innerHTML = "";
 
     if (!lines || lines.length === 0) {
         const item = document.createElement("li");
-        item.textContent = "Sin lineas disponibles en esta posicion.";
+        item.textContent = "Sin líneas disponibles en esta posición.";
         el.analysisTopLines.appendChild(item);
         return;
     }
@@ -1020,7 +1164,7 @@ function renderAnalysisLines(lines, fen) {
         .forEach((line) => {
             const item = document.createElement("li");
             const san = line.moveSAN || uciToSanFromFen(fen, line.moveUCI);
-            item.textContent = `#${line.id} ${san} | Eval ${formatEval(line.evaluation)} | D${line.depth}`;
+            item.textContent = `#${line.id}  ${san}  |  Eval ${formatEval(line.evaluation)}  |  D${line.depth}`;
             el.analysisTopLines.appendChild(item);
         });
 }
@@ -1043,23 +1187,31 @@ function renderAnalysisPosition() {
         analysisState.board.highlightSquares([position.move.uci.slice(2, 4)], "last-to");
     }
 
-    const parts = [];
+    const topLine = position.topLines ? position.topLines.find((l) => l.id === 1) : null;
+    updateEvalBar(topLine ? topLine.evaluation : null);
+
+    el.analysisMoveMeta.innerHTML = "";
 
     if (analysisState.currentIndex === 0) {
-        parts.push("Posicion inicial");
+        el.analysisMoveMeta.textContent = "Posición inicial";
     } else {
-        parts.push(`Jugada ${analysisState.currentIndex}: ${position.move ? position.move.san : "--"}`);
+        const moveText = `Jugada ${analysisState.currentIndex}: ${position.move ? position.move.san : "--"}`;
+        el.analysisMoveMeta.appendChild(document.createTextNode(moveText));
 
         if (position.classification) {
-            parts.push(`Clasificacion: ${CLASSIFICATION_LABEL[position.classification] || position.classification}`);
+            const badge = document.createElement("span");
+            badge.className = `cls-badge cls-${position.classification}`;
+            badge.style.marginLeft = "8px";
+            const symbol = CLASSIFICATION_SYMBOL[position.classification] || "";
+            const label = CLASSIFICATION_LABEL[position.classification] || position.classification;
+            badge.textContent = symbol ? `${symbol} ${label}` : label;
+            el.analysisMoveMeta.appendChild(badge);
+        }
+
+        if (position.opening) {
+            el.analysisMoveMeta.appendChild(document.createTextNode(` | Apertura: ${position.opening}`));
         }
     }
-
-    if (position.opening) {
-        parts.push(`Apertura: ${position.opening}`);
-    }
-
-    el.analysisMoveMeta.textContent = parts.join(" | ");
 
     renderAnalysisLines(position.topLines || [], position.fen);
     renderAnalysisMoveList();
@@ -1103,7 +1255,7 @@ async function runAnalysis() {
 
         const positions = parsed.positions || [];
         if (!positions.length) {
-            throw new Error("No se detectaron posiciones validas en el PGN.");
+            throw new Error("No se detectaron posiciones válidas en el PGN.");
         }
 
         const depth = clamp(parseInt(el.analysisDepth.value, 10), 8, 20);
@@ -1115,7 +1267,7 @@ async function runAnalysis() {
 
             const progress = Math.round((i / positions.length) * 100);
             el.analysisProgress.value = progress;
-            setAnalysisStatus(`Evaluando posicion ${i + 1} de ${positions.length}...`);
+            setAnalysisStatus(`Evaluando posición ${i + 1} de ${positions.length}...`);
 
             const evaluation = await evaluateWithStockfish({
                 fen: positions[i].fen,
@@ -1168,9 +1320,9 @@ async function runAnalysis() {
         fillClassificationTable(analysisState.report.classifications);
         renderAnalysisPosition();
 
-        setAnalysisStatus("Analisis completado.");
+        setAnalysisStatus("Análisis completado.");
     } catch (error) {
-        setAnalysisStatus(error instanceof Error ? error.message : "Error inesperado en el analisis.");
+        setAnalysisStatus(error instanceof Error ? error.message : "Error inesperado en el análisis.");
     } finally {
         if (localRunId === analysisState.runId) {
             analysisState.running = false;
@@ -1178,6 +1330,9 @@ async function runAnalysis() {
         }
     }
 }
+
+/* ===== Study Diagrams ===== */
+
 function renderStudyDiagrams() {
     el.studyDiagrams.forEach((container) => {
         const fen = container.dataset.fen;
@@ -1194,6 +1349,8 @@ function renderStudyDiagrams() {
         board.setFen(fen);
     });
 }
+
+/* ===== Tabs ===== */
 
 function bindTabs() {
     el.tabs.forEach((button) => {
@@ -1215,6 +1372,8 @@ function bindTabs() {
         });
     });
 }
+
+/* ===== Event Binding ===== */
 
 function bindEvents() {
     playState.board.onSquareClick = onPlaySquareClick;
@@ -1253,35 +1412,77 @@ function bindEvents() {
     el.analysisRunBtn.addEventListener("click", runAnalysis);
 
     el.analysisStartBtn.addEventListener("click", () => {
-        if (!analysisState.report) {
-            return;
-        }
+        if (!analysisState.report) return;
         analysisState.currentIndex = 0;
         renderAnalysisPosition();
     });
 
     el.analysisPrevBtn.addEventListener("click", () => {
-        if (!analysisState.report) {
-            return;
-        }
+        if (!analysisState.report) return;
         analysisState.currentIndex -= 1;
         renderAnalysisPosition();
     });
 
     el.analysisNextBtn.addEventListener("click", () => {
-        if (!analysisState.report) {
-            return;
-        }
+        if (!analysisState.report) return;
         analysisState.currentIndex += 1;
         renderAnalysisPosition();
     });
 
     el.analysisEndBtn.addEventListener("click", () => {
+        if (!analysisState.report) return;
+        analysisState.currentIndex = analysisState.report.positions.length - 1;
+        renderAnalysisPosition();
+    });
+
+    // Promotion modal
+    el.promoPieces.forEach((btn) => {
+        btn.addEventListener("click", () => {
+            if (promotionResolve) {
+                promotionResolve(btn.dataset.piece);
+                promotionResolve = null;
+            }
+            hidePromotionModal();
+        });
+    });
+
+    if (el.promoOverlay) {
+        el.promoOverlay.addEventListener("click", () => {
+            if (promotionResolve) {
+                promotionResolve("q");
+                promotionResolve = null;
+            }
+            hidePromotionModal();
+        });
+    }
+
+    // Keyboard navigation for analysis
+    document.addEventListener("keydown", (e) => {
+        const analysisPanel = document.querySelector("#analysis-section");
+        if (!analysisPanel || !analysisPanel.classList.contains("is-active")) {
+            return;
+        }
         if (!analysisState.report) {
             return;
         }
-        analysisState.currentIndex = analysisState.report.positions.length - 1;
-        renderAnalysisPosition();
+
+        if (e.key === "ArrowLeft") {
+            e.preventDefault();
+            analysisState.currentIndex -= 1;
+            renderAnalysisPosition();
+        } else if (e.key === "ArrowRight") {
+            e.preventDefault();
+            analysisState.currentIndex += 1;
+            renderAnalysisPosition();
+        } else if (e.key === "Home") {
+            e.preventDefault();
+            analysisState.currentIndex = 0;
+            renderAnalysisPosition();
+        } else if (e.key === "End") {
+            e.preventDefault();
+            analysisState.currentIndex = analysisState.report.positions.length - 1;
+            renderAnalysisPosition();
+        }
     });
 }
 
@@ -1292,18 +1493,8 @@ function setTodayLabel() {
 
     const today = new Date();
     const monthNames = [
-        "enero",
-        "febrero",
-        "marzo",
-        "abril",
-        "mayo",
-        "junio",
-        "julio",
-        "agosto",
-        "septiembre",
-        "octubre",
-        "noviembre",
-        "diciembre"
+        "enero", "febrero", "marzo", "abril", "mayo", "junio",
+        "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"
     ];
 
     el.lastUpdateLabel.textContent = `Actualizado: ${today.getDate()} de ${monthNames[today.getMonth()]} de ${today.getFullYear()}`;

@@ -1,10 +1,10 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Webapp personal para jugar, analizar y estudiar ajedrez sin login." />
-    <meta name="theme-color" content="#0c111b" />
+    <meta name="theme-color" content="#141418" />
     <title>Ajedrez Lab</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -14,12 +14,6 @@
     <link rel="shortcut icon" href="/static/media/favicon-freechess.ico" type="image/x-icon" />
 </head>
 <body>
-    <div class="app-bg" aria-hidden="true">
-        <div class="orb orb-a"></div>
-        <div class="orb orb-b"></div>
-        <div class="orb orb-c"></div>
-    </div>
-
     <header class="topbar">
         <div class="brand">
             <p class="kicker">Uso personal</p>
@@ -43,7 +37,7 @@
             <div class="panel-grid">
                 <article class="card board-card">
                     <div class="card-header">
-                        <h2>Tablero de entrenamiento</h2>
+                        <h2>Tablero</h2>
                         <div class="inline-actions">
                             <button id="play-flip-btn" class="ghost-btn" type="button">Girar</button>
                             <button id="play-new-game-btn" class="ghost-btn" type="button">Nueva partida</button>
@@ -158,8 +152,15 @@
                             <button id="analysis-end-btn" class="ghost-btn" type="button">&gt;|</button>
                         </div>
                     </div>
-                    <div class="board-wrap">
-                        <div id="analysis-board" class="chessboard" aria-label="Tablero de analisis"></div>
+                    <div class="analysis-board-wrap">
+                        <div id="eval-bar" class="eval-bar-wrap">
+                            <div id="eval-fill" class="eval-fill"></div>
+                            <span id="eval-label-white" class="eval-label white-label"></span>
+                            <span id="eval-label-black" class="eval-label black-label"></span>
+                        </div>
+                        <div class="board-wrap">
+                            <div id="analysis-board" class="chessboard" aria-label="Tablero de analisis"></div>
+                        </div>
                     </div>
                     <p id="analysis-move-meta" class="status-line">No hay analisis cargado.</p>
                     <ol id="analysis-move-list" class="move-list" aria-label="Lista de jugadas analizadas"></ol>
@@ -179,46 +180,90 @@
 
             <div class="study-grid">
                 <article class="card study-card">
-                    <h3>Apertura: principios esenciales</h3>
-                    <p>Controla el centro, desarrolla piezas menores rapido y enroca antes de buscar tacticas forzadas.</p>
+                    <h3>Principios de apertura</h3>
+                    <p>Controla el centro, desarrolla piezas menores y enroca pronto. Evita mover la misma pieza dos veces sin necesidad.</p>
                     <div class="study-diagram" data-fen="r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 2 4"></div>
                     <ul class="compact-list">
-                        <li>No muevas la misma pieza muchas veces sin necesidad.</li>
-                        <li>No saques la dama temprano si no hay motivo tactico.</li>
-                        <li>Conecta torres antes del medio juego.</li>
+                        <li>No saques la dama demasiado pronto.</li>
+                        <li>Conecta las torres antes del medio juego.</li>
+                        <li>Prefiere e4/d4 o c4/Nf3 según tu estilo.</li>
                     </ul>
                 </article>
 
                 <article class="card study-card">
-                    <h3>Tactica de referencia: Partida Opera (Morphy, 1858)</h3>
-                    <p>Ejemplo clasico de desarrollo, iniciativa y mate con torres coordinadas.</p>
+                    <h3>Gambito de Dama</h3>
+                    <p>1.d4 d5 2.c4 — blancas ofrecen un peón para ganar control del centro. Negras pueden aceptar o rechazar.</p>
+                    <div class="study-diagram" data-fen="rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq c3 0 2"></div>
+                    <ul class="compact-list">
+                        <li>Si aceptas, no intentes mantener el peón extra.</li>
+                        <li>El Gambito de Dama Rehusado con ...e6 es sólido.</li>
+                        <li>Busca ...c5 para contragolpear en el centro.</li>
+                    </ul>
+                </article>
+
+                <article class="card study-card">
+                    <h3>Defensa Siciliana</h3>
+                    <p>1.e4 c5 — la defensa más popular contra e4. Crea asimetría desde el primer momento.</p>
+                    <div class="study-diagram" data-fen="rnbqkbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"></div>
+                    <ul class="compact-list">
+                        <li>La Najdorf (5...a6) es la variante más agresiva.</li>
+                        <li>Prepárate para un ataque en el flanco de rey.</li>
+                        <li>El peón extra en el centro compensa la estructura.</li>
+                    </ul>
+                </article>
+
+                <article class="card study-card">
+                    <h3>Tácticas: clavadas y horquillas</h3>
+                    <p>Una clavada inmoviliza una pieza que protege a otra más valiosa. La horquilla ataca dos piezas a la vez.</p>
+                    <div class="study-diagram" data-fen="r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"></div>
+                    <ul class="compact-list">
+                        <li>Busca clavadas de alfil contra el rey o la dama.</li>
+                        <li>Los caballos son las piezas que más horquillas crean.</li>
+                        <li>Antes de jugar, verifica si tienes piezas clavadas.</li>
+                    </ul>
+                </article>
+
+                <article class="card study-card">
+                    <h3>Partida de la Ópera (Morphy, 1858)</h3>
+                    <p>Ejemplo clásico de desarrollo rápido, iniciativa y mate con piezas coordinadas.</p>
                     <div class="study-diagram" data-fen="1n1Rkb1r/p4ppp/4q3/4p1B1/4P3/8/PPP2PPP/2K5 b k - 1 17"></div>
                     <ul class="compact-list">
-                        <li>El rival queda sin coordinacion defensiva.</li>
-                        <li>La actividad vale mas que el material en posiciones abiertas.</li>
-                        <li>Busca jugadas forzantes: jaques, capturas y amenazas directas.</li>
+                        <li>El rival pierde por falta de desarrollo.</li>
+                        <li>La actividad vale más que el material en posiciones abiertas.</li>
+                        <li>Busca jugadas forzantes: jaques, capturas, amenazas.</li>
                     </ul>
                 </article>
 
                 <article class="card study-card">
-                    <h3>Tactica de referencia: Mate de Legal</h3>
-                    <p>Un patron de sacrificio en apertura para explotar rey en el centro y piezas clavadas.</p>
+                    <h3>Mate de Legal</h3>
+                    <p>Patrón de sacrificio de dama en la apertura cuando el rival tiene el rey expuesto en el centro.</p>
                     <div class="study-diagram" data-fen="r2q1bnr/ppp1kBpp/2np4/3NN3/4P3/7P/PPPP1PP1/R1BbK2R b KQ - 2 8"></div>
                     <ul class="compact-list">
-                        <li>Confirma que la dama rival esta sobrecargada o clavada.</li>
+                        <li>Confirma que la dama rival está sobrecargada.</li>
                         <li>Calcula hasta el mate antes de sacrificar.</li>
-                        <li>Entrena este patron para blitz y rapidas.</li>
+                        <li>Patrón útil para partidas rápidas y blitz.</li>
+                    </ul>
+                </article>
+
+                <article class="card study-card">
+                    <h3>Estrategia de medio juego</h3>
+                    <p>Mejora tus piezas peores, controla casillas débiles y busca debilidades en la estructura de peones rival.</p>
+                    <div class="study-diagram" data-fen="r1bq1rk1/pp2ppbp/2np1np1/8/3NP3/2N1BP2/PPPQ2PP/R3KB1R w KQ - 0 8"></div>
+                    <ul class="compact-list">
+                        <li>Identifica tu pieza peor y mejórala primero.</li>
+                        <li>Las columnas abiertas son para las torres.</li>
+                        <li>No cambies alfiles buenos por caballos malos.</li>
                     </ul>
                 </article>
 
                 <article class="card study-card">
                     <h3>Finales: plan universal</h3>
-                    <p>Activa el rey, crea peon pasado y coloca torres detras del peon pasado.</p>
+                    <p>Activa el rey, crea peón pasado y coloca torres detrás del peón pasado — regla de Tarrasch.</p>
                     <div class="study-diagram" data-fen="8/6kp/5pp1/8/3K4/5P2/5P1P/6R1 w - - 0 1"></div>
                     <ul class="compact-list">
-                        <li>El rey activo gana finales igualados.</li>
-                        <li>Evita cambios que mejoren la actividad rival.</li>
-                        <li>Prioriza simplificar cuando tengas ventaja tecnica.</li>
+                        <li>El rey activo decide finales igualados.</li>
+                        <li>Evita cambios que activen al rival.</li>
+                        <li>Simplifica cuando tengas ventaja técnica clara.</li>
                     </ul>
                 </article>
             </div>
@@ -231,6 +276,16 @@
             <p class="study-note">Referencia actual: Stockfish 18 (31 enero 2026) y Leyes FIDE vigentes desde 2023.</p>
         </section>
     </main>
+
+    <div id="promotion-modal" class="promotion-modal">
+        <div class="promo-overlay"></div>
+        <div class="promo-content">
+            <button class="promo-piece" data-piece="q"><img src="/static/media/white_queen.svg" alt="Dama" /></button>
+            <button class="promo-piece" data-piece="r"><img src="/static/media/white_rook.svg" alt="Torre" /></button>
+            <button class="promo-piece" data-piece="b"><img src="/static/media/white_bishop.svg" alt="Alfil" /></button>
+            <button class="promo-piece" data-piece="n"><img src="/static/media/white_knight.svg" alt="Caballo" /></button>
+        </div>
+    </div>
 
     <audio id="fx-move" src="/static/media/move.mp3"></audio>
     <audio id="fx-capture" src="/static/media/capture.mp3"></audio>
