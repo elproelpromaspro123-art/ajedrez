@@ -2,8 +2,7 @@
   "version": 2,
   "functions": {
     "api/index.ts": {
-      "runtime": "@vercel/node@3.2.25",
-      "includeFiles": "src/{public,resources}/**"
+      "includeFiles": "src/**"
     }
   },
   "rewrites": [
