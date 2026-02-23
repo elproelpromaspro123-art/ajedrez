@@ -1,4 +1,4 @@
-
+﻿
 const Chess = window.Chess;
 
 if (!Chess) {
@@ -7,8 +7,8 @@ if (!Chess) {
 
 /* ===== Piece Names in Spanish ===== */
 const PIECE_NAME_ES = {
-    p: "Peón", n: "Caballo", b: "Alfil", r: "Torre", q: "Dama", k: "Rey",
-    P: "Peón", N: "Caballo", B: "Alfil", R: "Torre", Q: "Dama", K: "Rey"
+    p: "Pe\u00f3n", n: "Caballo", b: "Alfil", r: "Torre", q: "Dama", k: "Rey",
+    P: "Pe\u00f3n", N: "Caballo", B: "Alfil", R: "Torre", Q: "Dama", K: "Rey"
 };
 
 const SAN_PIECE_ES = {
@@ -24,7 +24,7 @@ function sanToSpanish(san) {
     if (SAN_PIECE_ES[pieceChar]) {
         desc = SAN_PIECE_ES[pieceChar] + " " + san.slice(1);
     } else if (/^[a-h]/.test(san)) {
-        desc = "Peón " + san;
+        desc = "Pe\u00f3n " + san;
     }
     desc = desc.replace("x", " captura en ").replace("+", " (jaque)").replace("#", " (jaque mate)");
     return desc;
@@ -109,6 +109,7 @@ const el = {
     playHintBtn: document.querySelector("#play-hint-btn"),
     playUndoBtn: document.querySelector("#play-undo-btn"),
     playFlipBtn: document.querySelector("#play-flip-btn"),
+    playBackBtn: document.querySelector("#play-back-btn"),
     playNewGameBtn: document.querySelector("#play-new-game-btn"),
 
     playSetupPanel: document.querySelector("#play-setup-panel"),
@@ -119,6 +120,7 @@ const el = {
 
     /* Computer panel */
     computerPanel: document.querySelector("#computer-panel"),
+    computerPanelTitle: document.querySelector("#computer-panel-title"),
     computerLines: document.querySelector("#computer-lines"),
 
     /* Move confirmation */
@@ -288,16 +290,23 @@ class BoardView {
         this.currentFen = "8/8/8/8/8/8/8/8 w - - 0 1";
         this.squareMap = new Map();
         this.onSquareClick = null;
+        this.canDragFrom = null;
 
         if (!this.root) {
             throw new Error("Board root not found.");
         }
 
         this._wasDragging = false;
+        this._pointerDownHandled = false;
 
         this.root.addEventListener("click", (event) => {
             if (!this.interactive || !this.onSquareClick) return;
-            if (this._wasDragging) { this._wasDragging = false; return; }
+            if (this._wasDragging) {
+                this._wasDragging = false;
+                this._pointerDownHandled = false;
+                return;
+            }
+            if (this._pointerDownHandled) { this._pointerDownHandled = false; return; }
             const target = event.target.closest(".square");
             if (target && target.dataset.square) {
                 this.onSquareClick(target.dataset.square);
@@ -314,6 +323,11 @@ class BoardView {
             if (!squareEl || !squareEl.dataset.square) return;
             const img = squareEl.querySelector("img");
             if (!img) return;
+            const square = squareEl.dataset.square;
+
+            if (this.canDragFrom && !this.canDragFrom(square)) {
+                return;
+            }
 
             event.preventDefault();
             squareEl.setPointerCapture(event.pointerId);
@@ -343,16 +357,16 @@ class BoardView {
             this.root.classList.add("drag-active");
 
             this._dragState = {
-                fromSquare: squareEl.dataset.square,
+                fromSquare: square,
                 pointerId: event.pointerId,
                 originImg: img,
                 squareSize
             };
             this._dragGhost = ghost;
 
-            // Fire click to show legal moves
+            // Fire click to show legal moves immediately on pointer down.
             if (this.onSquareClick) {
-                this.onSquareClick(squareEl.dataset.square);
+                this.onSquareClick(square);
             }
         });
 
@@ -386,16 +400,14 @@ class BoardView {
             // Find target square
             const target = document.elementFromPoint(event.clientX, event.clientY);
             const targetSquare = target ? target.closest(".square") : null;
+            const droppedOnSource = Boolean(targetSquare && targetSquare.dataset.square === state.fromSquare);
+            this._pointerDownHandled = droppedOnSource;
 
             if (targetSquare && targetSquare.dataset.square && targetSquare.dataset.square !== state.fromSquare) {
                 this._wasDragging = true;
+                this._pointerDownHandled = false;
                 if (this.onDrop) {
                     this.onDrop(state.fromSquare, targetSquare.dataset.square);
-                }
-            } else {
-                // Dropped on same square or outside - cancel
-                if (this.onSquareClick && targetSquare && targetSquare.dataset.square === state.fromSquare) {
-                    // Toggle selection off
                 }
             }
 
@@ -413,6 +425,8 @@ class BoardView {
             this.root.querySelectorAll(".drag-origin").forEach((el) => el.classList.remove("drag-origin"));
             this._dragState = null;
             this._dragGhost = null;
+            this._pointerDownHandled = false;
+            this._wasDragging = false;
         });
 
         this.buildSquares();
@@ -839,6 +853,39 @@ function getPlaySettings() {
     };
 }
 
+function getEvalValueForPlayer(evaluation) {
+    if (!evaluation) return 0;
+    const flip = playState.playerColor === "black" ? -1 : 1;
+    return evaluation.value * flip;
+}
+
+function formatEvalForPlayer(evaluation) {
+    if (!evaluation) return "--";
+    const playerValue = getEvalValueForPlayer(evaluation);
+    if (evaluation.type === "mate") {
+        if (playerValue === 0) return "M0";
+        return `${playerValue > 0 ? "+" : "-"}M${Math.abs(playerValue)}`;
+    }
+    return `${playerValue >= 0 ? "+" : "-"}${Math.abs(playerValue / 100).toFixed(2)}`;
+}
+
+const COACH_PREFIX = {
+    info: "\u2139\ufe0f",
+    tip: "\ud83d\udca1",
+    ok: "\u2713",
+    warn: "\u26a0\ufe0f",
+    error: "\u274c",
+    engine: "\u2699\ufe0f",
+    bot: "\ud83e\udd16",
+    game: "\u265f",
+    setup: "\u2726"
+};
+
+function coachNotice(type, text) {
+    const icon = COACH_PREFIX[type] || COACH_PREFIX.info;
+    return `${icon} ${text}`;
+}
+
 function setCoachMessage(message) {
     if (el.coachMessage) {
         el.coachMessage.textContent = message;
@@ -887,10 +934,11 @@ function evalToCp(evaluation) {
     return evaluation.value; // centipawns
 }
 
-function showMoveBadge(classification, sideLabel = "") {
+function showMoveBadge(classification, sideLabel = "", detail = "") {
     if (!el.playMoveBadge) return;
     el.playMoveBadge.className = `move-badge ${classification.key}`;
-    el.playMoveBadge.textContent = `${classification.icon} ${sideLabel ? `${sideLabel}: ` : ""}${classification.label}`;
+    const detailText = detail ? ` \u2022 ${detail}` : "";
+    el.playMoveBadge.textContent = `${classification.icon} ${sideLabel ? `${sideLabel}: ` : ""}${classification.label}${detailText}`;
     el.playMoveBadge.style.display = "inline-flex";
     // re-trigger animation
     el.playMoveBadge.style.animation = "none";
@@ -959,23 +1007,23 @@ function buildCoachComment(classification, move, evalAfter, openingName) {
 
     switch (classification.key) {
         case "brilliant":
-            return `${classification.icon} ${descStr} (${sanStr}) \u2014 \u00a1Brillante! Jugada excepcional. (${evalText})`;
+            return `${classification.icon} \u2726 ${descStr} (${sanStr}) \u2014 \u00a1Brillante! Jugada excepcional. \u2022 Eval: ${evalText}`;
         case "great":
-            return `${classification.icon} ${descStr} (${sanStr}) \u2014 \u00a1Gran jugada! Mejoraste tu posici\u00f3n. (${evalText})`;
+            return `${classification.icon} \u25b8 ${descStr} (${sanStr}) \u2014 \u00a1Gran jugada! Mejoraste tu posici\u00f3n. \u2022 Eval: ${evalText}`;
         case "best":
-            return `${classification.icon} ${descStr} (${sanStr}) \u2014 La mejor jugada aqu\u00ed. (${evalText})`;
+            return `${classification.icon} \u2713 ${descStr} (${sanStr}) \u2014 La mejor jugada aqu\u00ed. \u2022 Eval: ${evalText}`;
         case "good":
-            return `\ud83d\udc4d ${descStr} (${sanStr}) \u2014 Buena jugada. (${evalText})`;
+            return `\ud83d\udc4d ${descStr} (${sanStr}) \u2014 Buena jugada. \u2022 Eval: ${evalText}`;
         case "book":
-            return `\ud83d\udcda ${descStr} (${sanStr}) \u2014 Jugada te\u00f3rica${openingName ? ": " + openingName : " de apertura"}. (${evalText})`;
+            return `\ud83d\udcda \u2726 ${descStr} (${sanStr}) \u2014 Jugada te\u00f3rica${openingName ? ": " + openingName : " de apertura"}. \u2022 Eval: ${evalText}`;
         case "inaccuracy":
-            return `\u26a0\ufe0f ${descStr} (${sanStr}) \u2014 Imprecisi\u00f3n, hab\u00eda algo mejor. (${evalText})`;
+            return `\u26a0\ufe0f ${descStr} (${sanStr}) \u2014 Imprecisi\u00f3n, hab\u00eda algo mejor. \u2022 Eval: ${evalText}`;
         case "mistake":
-            return `\u274c ${descStr} (${sanStr}) \u2014 Error. Perdiste ventaja. (${evalText})`;
+            return `\u274c ${descStr} (${sanStr}) \u2014 Error. Perdiste ventaja. \u2022 Eval: ${evalText}`;
         case "blunder":
-            return `\ud83d\udca5 ${descStr} (${sanStr}) \u2014 \u00a1Desastre! Pierde material o posici\u00f3n cr\u00edtica. (${evalText})`;
+            return `\ud83d\udca5 ${descStr} (${sanStr}) \u2014 \u00a1Desastre! Pierde material o posici\u00f3n cr\u00edtica. \u2022 Eval: ${evalText}`;
         default:
-            return `${descStr} (${evalText})`;
+            return `${descStr} \u2022 Eval: ${evalText}`;
     }
 }
 
@@ -1090,7 +1138,7 @@ async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveInd
     const isPlayerMove = move.color === (playState.playerColor === "white" ? "w" : "b");
 
     if (isPlayerMove) {
-        setCoachMessage("Evaluando tu jugada...");
+        setCoachMessage(coachNotice("engine", "Evaluando tu jugada..."));
     }
 
     try {
@@ -1126,19 +1174,21 @@ async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveInd
         playState.moveClassifications[moveIndex] = cls.key;
         renderPlayMoveList();
 
+        const bookDetail = cls.key === "book" && bookResult.name ? bookResult.name : "";
+
         if (isPlayerMove) {
-            showMoveBadge(cls, "Tu jugada");
+            showMoveBadge(cls, "Tu jugada", bookDetail);
             setCoachMessage(buildCoachComment(cls, move, evalAfter, bookResult.name));
         } else {
-            showMoveBadge(cls, "Rival");
+            showMoveBadge(cls, "Rival", bookDetail);
             const baseComment = buildCoachComment(cls, move, evalAfter, bookResult.name);
-            setCoachMessage("Rival: " + baseComment + " Tu turno.");
+            setCoachMessage(`\ud83e\udd16 Rival \u2022 ${baseComment} \u2022 Tu turno.`);
         }
     } catch {
         if (isPlayerMove) {
-            setCoachMessage("Jugaste " + move.san + ". No se pudo evaluar.");
+            setCoachMessage(coachNotice("warn", "Jugaste " + move.san + ". No se pudo evaluar."));
         } else {
-            setCoachMessage("El rival jugo " + move.san + ". No se pudo evaluar su calidad.");
+            setCoachMessage(coachNotice("warn", "El rival jugo " + move.san + ". No se pudo evaluar su calidad."));
         }
     }
 }
@@ -1322,6 +1372,9 @@ function renderPlayBoard() {
     if (el.playEvalBar) {
         el.playEvalBar.style.display = settings.showEvalBar ? "" : "none";
     }
+    if (el.playFlipBtn) {
+        el.playFlipBtn.disabled = playState.thinking || playState.game.history().length > 0;
+    }
 
     renderPlayMoveList();
     renderPlayStatus();
@@ -1333,13 +1386,38 @@ function clearPlaySelection() {
     playState.legalTargets = [];
 }
 
+function canPlayerDragFrom(square) {
+    if (playState.thinking || playState.game.isGameOver()) {
+        return false;
+    }
+
+    if (sideFromTurn(playState.game.turn()) !== playState.playerColor) {
+        return false;
+    }
+
+    const piece = playState.game.get(square);
+    if (!piece) {
+        return false;
+    }
+
+    return piece.color === turnFromSide(playState.playerColor);
+}
+
 /* ===== Computer Panel (Stockfish best lines like chess.com) ===== */
+
+function updateComputerPanelTitle() {
+    if (!el.computerPanelTitle) return;
+    const colorLabel = playState.playerColor === "white" ? "Blancas" : "Negras";
+    el.computerPanelTitle.textContent = `\u26a1 Tus mejores jugadas (${colorLabel})`;
+}
 
 function renderComputerPanel() {
     const settings = getPlaySettings();
     if (!el.computerPanel || !el.computerLines) return;
+    updateComputerPanelTitle();
+    const isPlayerTurn = sideFromTurn(playState.game.turn()) === playState.playerColor;
 
-    if (!settings.computerEnabled || playState.computerTopLines.length === 0) {
+    if (!settings.computerEnabled || !isPlayerTurn || playState.computerTopLines.length === 0) {
         el.computerPanel.style.display = "none";
         return;
     }
@@ -1352,8 +1430,9 @@ function renderComputerPanel() {
         div.className = "engine-line";
 
         const evalSpan = document.createElement("span");
-        const evalText = formatEval(line.evaluation);
-        evalSpan.className = "engine-eval " + (line.evaluation && line.evaluation.value >= 0 ? "positive" : "negative");
+        const evalText = formatEvalForPlayer(line.evaluation);
+        const playerVal = line.evaluation ? getEvalValueForPlayer(line.evaluation) : 0;
+        evalSpan.className = "engine-eval " + (playerVal >= 0 ? "positive" : "negative");
         evalSpan.textContent = evalText;
 
         const movesSpan = document.createElement("span");
@@ -1423,7 +1502,7 @@ async function confirmSuggestedMove() {
     });
 
     if (!move) {
-        setCoachMessage("No se pudo ejecutar ese movimiento.");
+        setCoachMessage(coachNotice("error", "No se pudo ejecutar ese movimiento."));
         renderPlayBoard();
         return;
     }
@@ -1433,6 +1512,7 @@ async function confirmSuggestedMove() {
 
     playState.lastMove = move;
     playState.hintMove = null;
+    playState.computerTopLines = [];
     clearPlaySelection();
     playMoveSound(move);
     renderPlayBoard();
@@ -1441,7 +1521,7 @@ async function confirmSuggestedMove() {
     evaluateLastMove(move, fenBefore, fenAfter, localSession, moveIndex, historyAtMove);
 
     if (playState.game.isGameOver()) {
-        setCoachMessage(formatGameOver(playState.game));
+        setCoachMessage(coachNotice("game", formatGameOver(playState.game)));
         if (getPlaySettings().sound) playAudio(el.fxEnd);
         renderPlayStatus();
         return;
@@ -1457,6 +1537,12 @@ async function confirmSuggestedMove() {
 async function updateComputerLines(fen, localSession) {
     const settings = getPlaySettings();
     if (!settings.computerEnabled) return;
+    const turnFromFen = fen.includes(" w ") ? "white" : "black";
+    if (turnFromFen !== playState.playerColor) {
+        playState.computerTopLines = [];
+        renderComputerPanel();
+        return;
+    }
 
     try {
         const depth = clamp(parseInt(el.coachDepth.value, 10), 8, 18);
@@ -1504,7 +1590,7 @@ async function maybeAutoCoach() {
         await requestCoachHint(true);
     } else {
         // Give tip-only coaching without engine
-        setCoachMessage("Es tu turno. Analiza la posici\u00f3n y busca la mejor jugada.");
+        setCoachMessage(coachNotice("tip", "Es tu turno. Analiza la posicion y busca la mejor jugada."));
     }
 }
 
@@ -1566,7 +1652,7 @@ async function playBotMove() {
 
         await maybeAutoCoach();
     } catch {
-        setCoachMessage("No se pudo obtener jugada del bot. Intenta nueva partida.");
+        setCoachMessage(coachNotice("bot", "No se pudo obtener jugada del bot. Intenta nueva partida."));
     } finally {
         if (localSession === playState.sessionId) {
             playState.thinking = false;
@@ -1579,12 +1665,12 @@ async function requestCoachHint(isAuto = false) {
     const settings = getPlaySettings();
 
     if (!isAuto && !settings.hintsEnabled) {
-        setCoachMessage("Las pistas estan desactivadas. Activalas en Ajustes.");
+        setCoachMessage(coachNotice("warn", "Las pistas estan desactivadas. Activalas en Ajustes."));
         return;
     }
 
     if (!settings.computerEnabled) {
-        setCoachMessage("El motor esta desactivado. Activalo en Ajustes para obtener sugerencias.");
+        setCoachMessage(coachNotice("warn", "El motor esta desactivado. Activalo en Ajustes para obtener sugerencias."));
         return;
     }
 
@@ -1593,14 +1679,14 @@ async function requestCoachHint(isAuto = false) {
     }
 
     if (playState.game.isGameOver()) {
-        setCoachMessage("La partida termino. Inicia una nueva para seguir entrenando.");
+        setCoachMessage(coachNotice("info", "La partida termino. Inicia una nueva para seguir entrenando."));
         return;
     }
 
     const turn = sideFromTurn(playState.game.turn());
     if (turn !== playState.playerColor) {
         if (!isAuto) {
-            setCoachMessage("La pista aparece cuando es tu turno.");
+            setCoachMessage(coachNotice("info", "La pista aparece cuando es tu turno."));
         }
         return;
     }
@@ -1610,7 +1696,7 @@ async function requestCoachHint(isAuto = false) {
     const fen = playState.game.fen();
 
     if (!isAuto) {
-        setCoachMessage("Calculando pista...");
+        setCoachMessage(coachNotice("engine", "Calculando pista del entrenador..."));
     }
 
     try {
@@ -1638,25 +1724,28 @@ async function requestCoachHint(isAuto = false) {
 
         const bestSan = uciToSanFromFen(fen, result.bestMove);
         const bestDesc = sanToSpanish(bestSan);
-        const evalText = bestLine ? formatEval(bestLine.evaluation) : "--";
+        const evalText = bestLine ? formatEvalForPlayer(bestLine.evaluation) : "--";
+        const evalBias = bestLine
+            ? (getEvalValueForPlayer(bestLine.evaluation) >= 0 ? "a tu favor" : "a favor del rival")
+            : "";
 
         // Update eval bar
         if (getPlaySettings().showEvalBar && bestLine) {
             updatePlayEvalBar(bestLine.evaluation);
         }
 
-        let message = `Mejor: ${bestDesc} (${bestSan}), eval ${evalText}.`;
+        let message = `\u265f\ufe0f \u2726 Mejor para ti: ${bestDesc} (${bestSan}), eval ${evalText}${evalBias ? ` (${evalBias})` : ""}.`;
 
         if (secondLine) {
             const alt = uciToSanFromFen(fen, secondLine.moveUCI);
             const altDesc = sanToSpanish(alt);
-            message += ` Alt: ${altDesc} (${alt}).`;
+            message += ` \u2022 Alternativa: ${altDesc} (${alt}).`;
         }
 
         setCoachMessage(message);
         renderPlayBoard();
     } catch {
-        setCoachMessage("No se pudo calcular la pista del entrenador.");
+        setCoachMessage(coachNotice("warn", "No se pudo calcular la pista del entrenador."));
     } finally {
         playState.coaching = false;
     }
@@ -1736,6 +1825,7 @@ async function onPlaySquareClick(square) {
 
     playState.lastMove = move;
     playState.hintMove = null;
+    playState.computerTopLines = [];
     clearPlaySelection();
     playMoveSound(move);
     renderPlayBoard();
@@ -1744,7 +1834,7 @@ async function onPlaySquareClick(square) {
     evaluateLastMove(move, fenBeforeMove, fenAfterMove, localSession, moveIndex, historyAtMove);
 
     if (playState.game.isGameOver()) {
-        setCoachMessage(formatGameOver(playState.game));
+        setCoachMessage(coachNotice("game", formatGameOver(playState.game)));
         if (getPlaySettings().sound) playAudio(el.fxEnd);
         renderPlayStatus();
         return;
@@ -1754,7 +1844,7 @@ async function onPlaySquareClick(square) {
     if (getPlaySettings().computerEnabled) {
         await playBotMove();
     } else {
-        setCoachMessage("Modo sin motor. Mueve las negras manualmente.");
+        setCoachMessage(coachNotice("info", "Modo sin motor. Mueve las negras manualmente."));
     }
 }
 
@@ -1777,6 +1867,43 @@ async function handleBoardDrop(from, to) {
     await onPlaySquareClick(to); // Re-use the click logic to handle promotion and execution
 }
 
+function goToPlaySetup(message = coachNotice("setup", "Configura una nueva partida para empezar.")) {
+    playState.sessionId += 1;
+    playState.game = new Chess();
+    playState.lastMove = null;
+    playState.hintMove = null;
+    playState.thinking = false;
+    playState.coaching = false;
+    playState.lastEvalBefore = null;
+    playState.lastEvalAfter = null;
+    playState.moveClassifications = {};
+    playState.previewMove = null;
+    playState.pendingConfirmMove = null;
+    playState.computerTopLines = [];
+    playState.moveHistory = [];
+    playState.startTime = null;
+    playState.endgameShown = false;
+    clearPlaySelection();
+    cancelMoveConfirmation();
+    hideMoveBadge();
+
+    if (el.playSetupPanel) el.playSetupPanel.style.display = "";
+    if (el.playGamePanel) el.playGamePanel.style.display = "none";
+    if (el.playPanelGrid) el.playPanelGrid.classList.add("setup-mode");
+    if (el.playBoardCard) el.playBoardCard.style.display = "none";
+    if (el.playMoveList) el.playMoveList.innerHTML = "";
+    if (el.coachHistoryContainer) el.coachHistoryContainer.innerHTML = "";
+
+    if (el.endgameModal) {
+        el.endgameModal.style.opacity = "0";
+        el.endgameModal.style.pointerEvents = "none";
+        el.endgameModal.style.display = "none";
+    }
+
+    setCoachMessage(message);
+    renderPlayBoard();
+}
+
 function startNewGame() {
     playState.sessionId += 1;
     playState.game = new Chess();
@@ -1784,6 +1911,9 @@ function startNewGame() {
     const chosenColor = el.playerColor.value === "random"
         ? (Math.random() < 0.5 ? "white" : "black")
         : el.playerColor.value;
+    if (el.playerColor.value === "random") {
+        el.playerColor.value = chosenColor;
+    }
 
     playState.playerColor = chosenColor;
     playState.botColor = chosenColor === "white" ? "black" : "white";
@@ -1828,10 +1958,14 @@ function startNewGame() {
     const eloMsg = getPlaySettings().computerEnabled
         ? `Partida nueva. Bot configurado en ${playState.botElo} ELO. \u00a1Buena suerte!`
         : `Partida nueva. Motor desactivado \u2014 juega ambos lados.`;
-    setCoachMessage(eloMsg);
+    setCoachMessage(coachNotice("setup", eloMsg));
 
     if (getPlaySettings().computerEnabled) {
-        playBotMove();
+        if (sideFromTurn(playState.game.turn()) === playState.botColor) {
+            playBotMove();
+        } else {
+            updateComputerLines(playState.game.fen(), playState.sessionId);
+        }
     }
 }
 
@@ -1841,7 +1975,7 @@ function undoPlayMove() {
     }
 
     if (!getPlaySettings().takebacksEnabled) {
-        setCoachMessage("Los retrocesos estan desactivados. Activalos en Ajustes.");
+        setCoachMessage(coachNotice("warn", "Los retrocesos estan desactivados. Activalos en Ajustes."));
         return;
     }
 
@@ -1858,7 +1992,7 @@ function undoPlayMove() {
     playState.lastMove = null;
     playState.hintMove = null;
     clearPlaySelection();
-    setCoachMessage("Jugada deshecha. Es tu turno.");
+    setCoachMessage(coachNotice("ok", "Jugada deshecha. Es tu turno."));
     renderPlayBoard();
     renderPlayMoveList();
 }
@@ -1984,7 +2118,7 @@ function renderAnalysisLines(lines, fen) {
 
     if (!lines || lines.length === 0) {
         const item = document.createElement("li");
-        item.textContent = "Sin líneas disponibles en esta posición.";
+        item.textContent = "Sin l\u00edneas disponibles en esta posici\u00f3n.";
         el.analysisTopLines.appendChild(item);
         return;
     }
@@ -2024,7 +2158,7 @@ function renderAnalysisPosition() {
     el.analysisMoveMeta.innerHTML = "";
 
     if (analysisState.currentIndex === 0) {
-        el.analysisMoveMeta.textContent = "Posición inicial";
+        el.analysisMoveMeta.textContent = "Posici\u00f3n inicial";
     } else {
         const moveText = `Jugada ${analysisState.currentIndex}: ${position.move ? position.move.san : "--"}`;
         el.analysisMoveMeta.appendChild(document.createTextNode(moveText));
@@ -2086,7 +2220,7 @@ async function runAnalysis() {
 
         const positions = parsed.positions || [];
         if (!positions.length) {
-            throw new Error("No se detectaron posiciones válidas en el PGN.");
+            throw new Error("No se detectaron posiciones v\u00e1lidas en el PGN.");
         }
 
         const depth = clamp(parseInt(el.analysisDepth.value, 10), 8, 20);
@@ -2098,7 +2232,7 @@ async function runAnalysis() {
 
             const progress = Math.round((i / positions.length) * 100);
             el.analysisProgress.value = progress;
-            setAnalysisStatus(`Evaluando posición ${i + 1} de ${positions.length}...`);
+            setAnalysisStatus(`Evaluando posici\u00f3n ${i + 1} de ${positions.length}...`);
 
             const evaluation = await evaluateWithStockfish({
                 fen: positions[i].fen,
@@ -2153,7 +2287,7 @@ async function runAnalysis() {
 
         setAnalysisStatus("Analisis completado.");
     } catch (error) {
-        setAnalysisStatus(error instanceof Error ? error.message : "Error inesperado en el análisis.");
+        setAnalysisStatus(error instanceof Error ? error.message : "Error inesperado en el an\u00e1lisis.");
     } finally {
         if (localRunId === analysisState.runId) {
             analysisState.running = false;
@@ -2215,12 +2349,22 @@ function applySettingsToBoard() {
         el.evalBar.style.display = s.showEvalBar ? "" : "none";
     }
 
+    if (!s.computerEnabled) {
+        playState.computerTopLines = [];
+    } else if (playState.startTime
+        && !playState.game.isGameOver()
+        && sideFromTurn(playState.game.turn()) === playState.playerColor
+        && playState.computerTopLines.length === 0) {
+        updateComputerLines(playState.game.fen(), playState.sessionId);
+    }
+
     renderPlayBoard();
 }
 
 function bindEvents() {
     playState.board.onSquareClick = onPlaySquareClick;
     playState.board.onDrop = handleBoardDrop;
+    playState.board.canDragFrom = canPlayerDragFrom;
 
     if (el.endgameCloseBtn) {
         el.endgameCloseBtn.addEventListener("click", () => {
@@ -2264,13 +2408,51 @@ function bindEvents() {
     }
 
     el.playStartBtn.addEventListener("click", startNewGame);
-    el.playNewGameBtn.addEventListener("click", startNewGame);
+    if (el.playBackBtn) {
+        el.playBackBtn.addEventListener("click", () => {
+            goToPlaySetup(coachNotice("info", "Volviste al inicio. Ajusta color y nivel para una nueva partida."));
+        });
+    }
+    el.playNewGameBtn.addEventListener("click", () => {
+        goToPlaySetup(coachNotice("setup", "Partida cerrada. Configura una nueva partida."));
+    });
     el.playHintBtn.addEventListener("click", () => requestCoachHint(false));
     el.playUndoBtn.addEventListener("click", undoPlayMove);
 
-    el.playFlipBtn.addEventListener("click", () => {
-        playState.board.setOrientation(playState.board.getOrientation() === "white" ? "black" : "white");
+    el.playFlipBtn.addEventListener("click", async () => {
+        if (playState.thinking) {
+            return;
+        }
+
+        if (playState.game.history().length > 0) {
+            setCoachMessage(coachNotice("warn", "Solo puedes girar/cambiar color antes de la primera jugada."));
+            return;
+        }
+
+        playState.playerColor = playState.playerColor === "white" ? "black" : "white";
+        playState.botColor = playState.playerColor === "white" ? "black" : "white";
+        if (el.playerColor) {
+            el.playerColor.value = playState.playerColor;
+        }
+
+        playState.hintMove = null;
+        playState.computerTopLines = [];
+        clearPlaySelection();
+        playState.board.setOrientation(playState.playerColor);
         renderPlayBoard();
+
+        const sideText = playState.playerColor === "white" ? "blancas" : "negras";
+        setCoachMessage(coachNotice("ok", `Color cambiado: ahora juegas con ${sideText}.`));
+
+        if (!getPlaySettings().computerEnabled) {
+            return;
+        }
+
+        if (sideFromTurn(playState.game.turn()) === playState.botColor) {
+            await playBotMove();
+        } else {
+            updateComputerLines(playState.game.fen(), playState.sessionId);
+        }
     });
 
     /* Move confirmation buttons */
@@ -2297,6 +2479,11 @@ function bindEvents() {
             if (el.settingsModal) el.settingsModal.classList.remove("visible");
         });
     }
+    document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && el.settingsModal && el.settingsModal.classList.contains("visible")) {
+            el.settingsModal.classList.remove("visible");
+        }
+    });
 
     /* Wire ALL settings toggles to update the board live */
     const allSettings = [
@@ -2563,6 +2750,7 @@ REGLAS:
 3. Ejemplo: "Mueve el Caballo a f3 (Nf3)" o "Juega Peon a e4 (e4)".
 4. Si te piden ayuda, da la mejor jugada con el nombre de la pieza y una razon corta.
 5. Responde en espanol.
+6. Usa simbolos visuales de forma moderada para claridad: "\u2022", "\u2192", "\u2713", "\u26A0".
 
 Contexto de la partida:
 - Fase: ${phase} | Turno: ${turn} | Jugada #${moveNum}
@@ -2670,3 +2858,4 @@ function init() {
 }
 
 init();
+

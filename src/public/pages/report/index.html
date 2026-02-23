@@ -56,37 +56,41 @@
                 <aside class="card control-card sidebar-card">
                     <!-- Setup Panel (Shown before game starts) -->
                     <div id="play-setup-panel">
-                        <h3>&#9881;&#65039; Configuraci&oacute;n de Partida</h3>
+                        <h3>&#9814; Nueva Partida</h3>
 
-                        <label for="bot-preset">Nivel bot (ELO)</label>
-                        <select id="bot-preset">
-                            <option value="600">Principiante 600</option>
-                            <option value="900">Basico 900</option>
-                            <option value="1200" selected>Intermedio 1200</option>
-                            <option value="1500">Club 1500</option>
-                            <option value="1800">Avanzado 1800</option>
-                            <option value="2100">Experto 2100</option>
-                        </select>
+                        <div class="setup-group">
+                            <p class="setup-group-title">Rival</p>
+                            <label for="bot-preset">Nivel del bot</label>
+                            <select id="bot-preset">
+                                <option value="600">Principiante &mdash; 600 ELO</option>
+                                <option value="900">B&aacute;sico &mdash; 900 ELO</option>
+                                <option value="1200" selected>Intermedio &mdash; 1200 ELO</option>
+                                <option value="1500">Club &mdash; 1500 ELO</option>
+                                <option value="1800">Avanzado &mdash; 1800 ELO</option>
+                                <option value="2100">Experto &mdash; 2100 ELO</option>
+                            </select>
+                            <label for="bot-custom-elo">ELO personalizado (400-2800)</label>
+                            <input id="bot-custom-elo" type="number" min="400" max="2800" step="50"
+                                placeholder="Opcional" />
+                        </div>
 
-                        <label for="bot-custom-elo">ELO personalizado (400-2800)</label>
-                        <input id="bot-custom-elo" type="number" min="400" max="2800" step="50"
-                            placeholder="Opcional" />
-
-                        <label for="player-color">Color de juego</label>
-                        <select id="player-color">
-                            <option value="white" selected>Blancas</option>
-                            <option value="black">Negras</option>
-                            <option value="random">Aleatorio</option>
-                        </select>
-
-                        <label for="coach-depth">Profundidad del entrenador</label>
-                        <input id="coach-depth" type="range" min="8" max="18" value="12" />
-                        <p id="coach-depth-value" class="muted">12</p>
+                        <div class="setup-group">
+                            <p class="setup-group-title">Preferencias</p>
+                            <label for="player-color">Tu color</label>
+                            <select id="player-color">
+                                <option value="white" selected>&#9812; Blancas</option>
+                                <option value="black">&#9818; Negras</option>
+                                <option value="random">&#127922; Aleatorio</option>
+                            </select>
+                            <label for="coach-depth">Profundidad del entrenador</label>
+                            <input id="coach-depth" type="range" min="8" max="18" value="12" />
+                            <p id="coach-depth-value" class="muted">12</p>
+                        </div>
 
                         <div class="stack-buttons">
                             <button id="play-start-btn" class="primary-btn" type="button">&#9654; Jugar</button>
                             <button id="play-settings-btn" class="ghost-btn settings-launch-btn"
-                                type="button">&#9881;&#65039; Ajustes</button>
+                                type="button">&#9881;&#65039; Ajustes avanzados</button>
                         </div>
                     </div>
 
@@ -94,6 +98,7 @@
                     <div id="play-game-panel" class="play-game-panel" style="display: none;">
                         <!-- Top: Game controls -->
                         <div class="game-controls-row">
+                            <button id="play-back-btn" class="ghost-btn" type="button">&#11013; Volver</button>
                             <button id="play-new-game-btn" class="ghost-btn" type="button">&#10227; Nueva</button>
                             <button id="play-flip-btn" class="ghost-btn" type="button">&#8645; Girar</button>
                             <button id="play-hint-btn" class="ghost-btn" type="button">&#128161; Pista</button>
@@ -118,7 +123,7 @@
 
                         <!-- Computer Panel (Stockfish) -->
                         <div id="computer-panel" class="computer-panel" style="display:none;">
-                            <h4>&#128187; Ordenador (Stockfish)</h4>
+                            <h4 id="computer-panel-title">&#9889; Tus mejores jugadas</h4>
                             <div id="computer-lines"></div>
                         </div>
 
@@ -133,7 +138,7 @@
                             <!-- Coach Tab -->
                             <div id="coach-tab" class="sidebar-tab-content is-active">
                                 <div class="coach-feed" id="coach-history-container">
-                                    <p id="coach-message">Hola. &iexcl;Espero que est&eacute;s preparado para un ajedrez
+                                    <p id="coach-message">&#x2726; Hola. &iexcl;Espero que est&eacute;s preparado para un ajedrez
                                         picante!</p>
                                 </div>
                             </div>
@@ -210,21 +215,25 @@
                             <button id="analysis-end-btn" class="ghost-btn" type="button">&gt;|</button>
                         </div>
                     </div>
-                    <div class="analysis-board-wrap">
-                        <div id="eval-bar" class="eval-bar-wrap">
-                            <div id="eval-fill" class="eval-fill"></div>
-                            <span id="eval-label-white" class="eval-label white-label"></span>
-                            <span id="eval-label-black" class="eval-label black-label"></span>
+                    <div class="analysis-review-layout">
+                        <div class="analysis-board-wrap">
+                            <div id="eval-bar" class="eval-bar-wrap">
+                                <div id="eval-fill" class="eval-fill"></div>
+                                <span id="eval-label-white" class="eval-label white-label"></span>
+                                <span id="eval-label-black" class="eval-label black-label"></span>
+                            </div>
+                            <div class="board-wrap analysis-main-board-wrap">
+                                <div id="analysis-board" class="chessboard" aria-label="Tablero de analisis"></div>
+                            </div>
                         </div>
-                        <div class="board-wrap">
-                            <div id="analysis-board" class="chessboard" aria-label="Tablero de analisis"></div>
+                        <div class="analysis-review-side">
+                            <p id="analysis-move-meta" class="status-line">No hay analisis cargado.</p>
+                            <ol id="analysis-move-list" class="move-list" aria-label="Lista de jugadas analizadas"></ol>
+                            <div class="coach-box">
+                                <h4>Mejores lineas del motor</h4>
+                                <ul id="analysis-top-lines" class="line-list"></ul>
+                            </div>
                         </div>
-                    </div>
-                    <p id="analysis-move-meta" class="status-line">No hay analisis cargado.</p>
-                    <ol id="analysis-move-list" class="move-list" aria-label="Lista de jugadas analizadas"></ol>
-                    <div class="coach-box">
-                        <h4>Mejores lineas del motor</h4>
-                        <ul id="analysis-top-lines" class="line-list"></ul>
                     </div>
                 </article>
             </div>
@@ -264,6 +273,18 @@
                         <span class="study-cat-desc">Rey y pe&oacute;n, oposici&oacute;n, torres y t&eacute;cnicas
                             esenciales</span>
                     </button>
+                </div>
+                <div class="resource-links study-links">
+                    <a href="https://www.fide.com/FIDE/handbook/LawsOfChess.pdf" target="_blank"
+                        rel="noopener noreferrer">&#128220; Leyes oficiales FIDE</a>
+                    <a href="https://lichess.org/study" target="_blank" rel="noopener noreferrer">&#128218; Estudios interactivos
+                        (Lichess)</a>
+                    <a href="https://www.chessprogramming.org/Main_Page" target="_blank"
+                        rel="noopener noreferrer">&#9881;&#65039; Referencia t&eacute;cnica de motores</a>
+                    <a href="https://www.chess.com/lessons" target="_blank"
+                        rel="noopener noreferrer">&#127891; Lecciones Chess.com</a>
+                    <a href="https://lichess.org/practice" target="_blank"
+                        rel="noopener noreferrer">&#9823; Pr&aacute;ctica en Lichess</a>
                 </div>
             </div>
 
@@ -627,26 +648,16 @@
                 </div>
             </div>
 
-            <div class="resource-links" style="margin-top: 24px;">
-                <a href="https://www.fide.com/FIDE/handbook/LawsOfChess.pdf" target="_blank"
-                    rel="noopener noreferrer">&#128220; Leyes oficiales FIDE</a>
-                <a href="https://lichess.org/study" target="_blank" rel="noopener noreferrer">&#128218; Estudios interactivos
-                    (Lichess)</a>
-                <a href="https://www.chessprogramming.org/Main_Page" target="_blank"
-                    rel="noopener noreferrer">&#9881;&#65039; Referencia t&eacute;cnica de motores</a>
-                <a href="https://www.chess.com/lessons" target="_blank"
-                    rel="noopener noreferrer">&#127891; Lecciones Chess.com</a>
-                <a href="https://lichess.org/practice" target="_blank"
-                    rel="noopener noreferrer">&#9823; Pr&aacute;ctica en Lichess</a>
-            </div>
         </section>
     </main>
 
     <div id="settings-modal" class="settings-modal">
         <div class="settings-overlay" id="settings-overlay"></div>
         <div class="settings-content">
-            <button class="settings-close" id="settings-close-btn">&times;</button>
+            <button class="settings-close" id="settings-close-btn" aria-label="Cerrar ajustes">&times;</button>
             <h3>&#9881; Ajustes de partida</h3>
+
+            <p class="settings-section-title">Asistencia</p>
             <div class="settings-row has-border">
                 <label>Comentarios autom&aacute;ticos</label>
                 <input type="checkbox" class="chess-toggle" id="set-coach-auto" checked>
@@ -654,18 +665,6 @@
             <div class="settings-row has-border">
                 <label>Pistas</label>
                 <input type="checkbox" class="chess-toggle" id="set-hints" checked>
-            </div>
-            <div class="settings-row has-border">
-                <label>Barra de evaluaci&oacute;n</label>
-                <input type="checkbox" class="chess-toggle" id="set-eval-bar" checked>
-            </div>
-            <div class="settings-row has-border">
-                <label>Flechas de amenazas</label>
-                <input type="checkbox" class="chess-toggle" id="set-threat-arrows">
-            </div>
-            <div class="settings-row has-border">
-                <label>Flechas de sugerencias</label>
-                <input type="checkbox" class="chess-toggle" id="set-suggestion-arrows">
             </div>
             <div class="settings-row has-border">
                 <label>Comentarios de movimientos</label>
@@ -679,6 +678,12 @@
                 <label>Retrocesos</label>
                 <input type="checkbox" class="chess-toggle" id="set-takebacks" checked>
             </div>
+
+            <p class="settings-section-title">Tablero</p>
+            <div class="settings-row has-border">
+                <label>Barra de evaluaci&oacute;n</label>
+                <input type="checkbox" class="chess-toggle" id="set-eval-bar" checked>
+            </div>
             <div class="settings-row has-border">
                 <label>Mostrar jugadas legales</label>
                 <input type="checkbox" class="chess-toggle" id="set-legal" checked>
@@ -691,6 +696,16 @@
                 <label>Mostrar coordenadas</label>
                 <input type="checkbox" class="chess-toggle" id="set-coordinates" checked>
             </div>
+            <div class="settings-row has-border">
+                <label>Flechas de amenazas</label>
+                <input type="checkbox" class="chess-toggle" id="set-threat-arrows">
+            </div>
+            <div class="settings-row has-border">
+                <label>Flechas de sugerencias</label>
+                <input type="checkbox" class="chess-toggle" id="set-suggestion-arrows">
+            </div>
+
+            <p class="settings-section-title">General</p>
             <div class="settings-row has-border">
                 <label>Sonidos de piezas</label>
                 <input type="checkbox" class="chess-toggle" id="set-sound" checked>
