@@ -65,21 +65,21 @@ const CLASSIFICATION_LABEL = {
     inaccuracy: "Inexactitud",
     mistake: "Error",
     blunder: "Blunder",
-    book: "Teoría",
+    book: "Teoria",
     forced: "Forzada"
 };
 
 const CLASSIFICATION_SYMBOL = {
     brilliant: "!!",
     great: "!",
-    best: "★",
-    excellent: "●",
+    best: "*",
+    excellent: "+",
     good: "",
     inaccuracy: "?!",
     mistake: "?",
     blunder: "??",
-    book: "≡",
-    forced: "⊕"
+    book: "=",
+    forced: "F"
 };
 
 const CLASSIFICATION_DOT_COLOR = {
@@ -131,6 +131,10 @@ const el = {
     endgameModal: document.querySelector("#endgame-modal"),
     endgameTitle: document.querySelector("#endgame-title"),
     endgameReason: document.querySelector("#endgame-reason"),
+    endgameWinner: document.querySelector("#endgame-winner"),
+    endgameDuration: document.querySelector("#endgame-duration"),
+    endgameMoves: document.querySelector("#endgame-moves"),
+    endgameOpening: document.querySelector("#endgame-opening"),
     endgameAnalyzeBtn: document.querySelector("#endgame-analyze-btn"),
     endgamePgnBtn: document.querySelector("#endgame-pgn-btn"),
     endgameCloseBtn: document.querySelector("#endgame-close-btn"),
@@ -302,7 +306,10 @@ class BoardView {
             if (event.target.tagName === "IMG") {
                 const squareEl = event.target.closest(".square");
                 if (squareEl && squareEl.dataset.square) {
+                    this.root.classList.add("drag-active");
+                    squareEl.classList.add("drag-origin");
                     event.dataTransfer.setData("text/plain", squareEl.dataset.square);
+                    event.dataTransfer.effectAllowed = "move";
                     // Optionally fire click to show legal moves immediately
                     this.onSquareClick(squareEl.dataset.square);
                 }
@@ -315,6 +322,8 @@ class BoardView {
 
         this.root.addEventListener("drop", (event) => {
             event.preventDefault();
+            this.root.classList.remove("drag-active");
+            this.root.querySelectorAll(".drag-origin").forEach((el) => el.classList.remove("drag-origin"));
             if (!this.interactive || !this.onDrop) return;
             const target = event.target.closest(".square");
             if (target && target.dataset.square) {
@@ -324,6 +333,11 @@ class BoardView {
                     this.onDrop(from, to);
                 }
             }
+        });
+
+        this.root.addEventListener("dragend", () => {
+            this.root.classList.remove("drag-active");
+            this.root.querySelectorAll(".drag-origin").forEach((el) => el.classList.remove("drag-origin"));
         });
 
         this.buildSquares();
@@ -723,7 +737,8 @@ const playState = {
     pendingConfirmMove: null, // {from, to, san, promotion} awaiting yes/no
     computerTopLines: [],    // latest engine top lines for computer panel
     moveHistory: [],         // persistent move history until new game
-    startTime: null          // track game duration
+    startTime: null,         // track game duration
+    endgameShown: false
 };
 
 function getPlaySettings() {
@@ -790,10 +805,10 @@ function evalToCp(evaluation) {
     return evaluation.value; // centipawns
 }
 
-function showMoveBadge(classification) {
+function showMoveBadge(classification, sideLabel = "") {
     if (!el.playMoveBadge) return;
     el.playMoveBadge.className = `move-badge ${classification.key}`;
-    el.playMoveBadge.textContent = `${classification.icon} ${classification.label}`;
+    el.playMoveBadge.textContent = `${classification.icon} ${sideLabel ? `${sideLabel}: ` : ""}${classification.label}`;
     el.playMoveBadge.style.display = "inline-flex";
     // re-trigger animation
     el.playMoveBadge.style.animation = "none";
@@ -884,8 +899,8 @@ function buildCoachComment(classification, move, evalAfter, openingName) {
 
 /* ===== Opening book with names (chess.com style) ===== */
 const OPENING_BOOK = [
-    { moves: ["e4", "e5", "Nf3", "Nc6", "Bb5"], name: "Apertura Española (Ruy López)" },
-    { moves: ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6"], name: "Ruy López — Variante Morphy" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Bb5"], name: "Apertura Espanola (Ruy Lopez)" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6"], name: "Ruy Lopez - Variante Morphy" },
     { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4"], name: "Apertura Italiana" },
     { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"], name: "Giuoco Piano" },
     { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6"], name: "Defensa Dos Caballos" },
@@ -896,15 +911,15 @@ const OPENING_BOOK = [
     { moves: ["e4", "e5", "d4"], name: "Gambito del Centro" },
     { moves: ["e4", "e5", "Nc3"], name: "Apertura Viena" },
     { moves: ["e4", "c5"], name: "Defensa Siciliana" },
-    { moves: ["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3"], name: "Siciliana — Variante Najdorf" },
-    { moves: ["e4", "c5", "Nf3", "Nc6"], name: "Siciliana — Variante Clásica" },
-    { moves: ["e4", "c5", "Nf3", "e6"], name: "Siciliana — Variante Paulsen" },
-    { moves: ["e4", "c5", "c3"], name: "Siciliana — Variante Alapin" },
+    { moves: ["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3"], name: "Siciliana - Variante Najdorf" },
+    { moves: ["e4", "c5", "Nf3", "Nc6"], name: "Siciliana - Variante Clasica" },
+    { moves: ["e4", "c5", "Nf3", "e6"], name: "Siciliana - Variante Paulsen" },
+    { moves: ["e4", "c5", "c3"], name: "Siciliana - Variante Alapin" },
     { moves: ["e4", "e6"], name: "Defensa Francesa" },
-    { moves: ["e4", "e6", "d4", "d5"], name: "Defensa Francesa — Clásica" },
-    { moves: ["e4", "e6", "d4", "d5", "Nc3"], name: "Francesa — Variante Winawer" },
+    { moves: ["e4", "e6", "d4", "d5"], name: "Defensa Francesa - Clasica" },
+    { moves: ["e4", "e6", "d4", "d5", "Nc3"], name: "Francesa - Variante Winawer" },
     { moves: ["e4", "c6"], name: "Defensa Caro-Kann" },
-    { moves: ["e4", "c6", "d4", "d5"], name: "Caro-Kann — Línea Principal" },
+    { moves: ["e4", "c6", "d4", "d5"], name: "Caro-Kann - Linea Principal" },
     { moves: ["e4", "d5"], name: "Defensa Escandinava" },
     { moves: ["e4", "d6"], name: "Defensa Pirc" },
     { moves: ["e4", "g6"], name: "Defensa Moderna" },
@@ -918,32 +933,31 @@ const OPENING_BOOK = [
     { moves: ["d4", "Nf6", "c4", "e6", "Nc3", "Bb4"], name: "Defensa Nimzo-India" },
     { moves: ["d4", "Nf6", "c4", "e6", "Nf3", "b6"], name: "Defensa India de Dama" },
     { moves: ["d4", "Nf6", "c4", "c5"], name: "Defensa Benoni" },
-    { moves: ["d4", "Nf6", "Nf3", "g6", "c4", "Bg7"], name: "India de Rey — Sistema Clásico" },
+    { moves: ["d4", "Nf6", "Nf3", "g6", "c4", "Bg7"], name: "India de Rey - Sistema Clasico" },
     { moves: ["d4", "Nf6", "Bg5"], name: "Ataque Trompowsky" },
-    { moves: ["d4", "d5", "Nf3", "Nf6", "c4"], name: "Gambito de Dama Tardío" },
+    { moves: ["d4", "d5", "Nf3", "Nf6", "c4"], name: "Gambito de Dama Tardio" },
     { moves: ["d4", "d5", "Bf4"], name: "Sistema Londres" },
     { moves: ["d4", "d5", "Nf3", "Nf6", "Bf4"], name: "Sistema Londres" },
     { moves: ["d4", "f5"], name: "Defensa Holandesa" },
     { moves: ["c4"], name: "Apertura Inglesa" },
-    { moves: ["c4", "e5"], name: "Inglesa — Siciliana Invertida" },
-    { moves: ["c4", "c5"], name: "Inglesa — Simétrica" },
-    { moves: ["Nf3", "d5", "g3"], name: "Apertura Réti" },
-    { moves: ["Nf3", "Nf6", "g3", "g6", "Bg2", "Bg7"], name: "Apertura Réti — Doble Fianchetto" },
+    { moves: ["c4", "e5"], name: "Inglesa - Siciliana Invertida" },
+    { moves: ["c4", "c5"], name: "Inglesa - Simetrica" },
+    { moves: ["Nf3", "d5", "g3"], name: "Apertura Reti" },
+    { moves: ["Nf3", "Nf6", "g3", "g6", "Bg2", "Bg7"], name: "Apertura Reti - Doble Fianchetto" },
     { moves: ["g3"], name: "Sistema Barcza" },
     { moves: ["b3"], name: "Apertura Larsen" },
     { moves: ["f4"], name: "Apertura Bird" },
-    { moves: ["e4", "e5", "Nf3", "Nc6"], name: "Apertura Abierta — Juego Abierto" },
+    { moves: ["e4", "e5", "Nf3", "Nc6"], name: "Apertura Abierta - Juego Abierto" },
     { moves: ["e4", "e5", "Nf3"], name: "Juego Abierto" },
     { moves: ["d4", "d5"], name: "Juego Cerrado" },
-    { moves: ["e4"], name: "Apertura del Peón de Rey" },
-    { moves: ["d4"], name: "Apertura del Peón de Dama" }
+    { moves: ["e4"], name: "Apertura del Peon de Rey" },
+    { moves: ["d4"], name: "Apertura del Peon de Dama" }
 ];
 
 // Sort by longest first for best match
 OPENING_BOOK.sort((a, b) => b.moves.length - a.moves.length);
 
-function detectOpening(game) {
-    const history = game.history();
+function detectOpening(history) {
     for (const opening of OPENING_BOOK) {
         if (opening.moves.length > history.length) continue;
         let match = true;
@@ -955,8 +969,8 @@ function detectOpening(game) {
     return null;
 }
 
-function isLikelyBookMove(game, san) {
-    if (game.history().length > 16) return { isBook: false, name: null };
+function isLikelyBookMove(history, san) {
+    if (history.length > 16) return { isBook: false, name: null };
     const BOOK_MOVES_BASIC = new Set([
         "e4", "d4", "Nf3", "c4", "g3", "b3", "f4", "Nc3", "e3", "d3", "b4", "c3",
         "e5", "d5", "Nf6", "c5", "g6", "e6", "c6", "d6", "b6", "Nc6", "f5",
@@ -964,7 +978,7 @@ function isLikelyBookMove(game, san) {
         "O-O", "O-O-O", "a3", "a6", "h3", "h6", "Re1", "Qe2", "Qd2", "Qb3"
     ]);
     const isBook = BOOK_MOVES_BASIC.has(san);
-    const name = isBook ? detectOpening(game) : null;
+    const name = isBook ? detectOpening(history) : null;
     return { isBook, name };
 }
 
@@ -985,16 +999,16 @@ async function getPositionEval(fen, localSession) {
 }
 
 /** Full move evaluation: compare eval before vs after */
-async function evaluateLastMove(move, fenBefore, fenAfter, localSession) {
+async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveIndex, historyAtMove) {
     const settings = getPlaySettings();
     if (!settings.computerEnabled || !settings.moveComments) {
         return;
     }
 
-    const isPlayerMove = move.color === (playState.playerColor === 'white' ? 'w' : 'b');
+    const isPlayerMove = move.color === (playState.playerColor === "white" ? "w" : "b");
 
     if (isPlayerMove) {
-        setCoachMessage("\ud83e\udde0 Evaluando tu jugada...");
+        setCoachMessage("Evaluando tu jugada...");
     }
 
     try {
@@ -1016,30 +1030,33 @@ async function evaluateLastMove(move, fenBefore, fenAfter, localSession) {
         // Calculate centipawn loss from the perspective of the player who moved
         const cpBefore = evalToCp(evalBefore);
         const cpAfter = evalToCp(evalAfter);
-        const moverIsWhite = move.color === 'w';
+        const moverIsWhite = move.color === "w";
 
         // Positive cpLoss means the move was worse
         const cpLoss = moverIsWhite ? (cpBefore - cpAfter) : (cpAfter - cpBefore);
 
-        // Check book move
-        const bookResult = isLikelyBookMove(playState.game, move.san);
+        // Check book move with a snapshot of move history at evaluation time
+        const bookResult = isLikelyBookMove(historyAtMove, move.san);
         const bookMove = bookResult.isBook && cpLoss < 30;
 
-        // Classify and save
+        // Classify and save to the exact move index
         const cls = classifyMove(cpLoss, bookMove);
-        playState.moveClassifications[playState.game.history().length - 1] = cls.key;
+        playState.moveClassifications[moveIndex] = cls.key;
         renderPlayMoveList();
 
         if (isPlayerMove) {
-            showMoveBadge(cls);
+            showMoveBadge(cls, "Tu jugada");
             setCoachMessage(buildCoachComment(cls, move, evalAfter, bookResult.name));
         } else {
-            // For bot move, just show a general message or the classification without taking over
-            setCoachMessage(`El rival jugó ${move.san}. (${cls.key}). Tu turno.`);
+            showMoveBadge(cls, "Rival");
+            const baseComment = buildCoachComment(cls, move, evalAfter, bookResult.name);
+            setCoachMessage("Rival: " + baseComment + " Tu turno.");
         }
     } catch {
         if (isPlayerMove) {
-            setCoachMessage(`Jugaste ${move.san}. No se pudo evaluar.`);
+            setCoachMessage("Jugaste " + move.san + ". No se pudo evaluar.");
+        } else {
+            setCoachMessage("El rival jugo " + move.san + ". No se pudo evaluar su calidad.");
         }
     }
 }
@@ -1065,50 +1082,69 @@ function playMoveSound(move) {
     }
 }
 
-function playAudio(audioEl) {
-    if (audioEl) {
-        audioEl.currentTime = 0;
-        audioEl.play().catch(e => console.warn('Audio play failed:', e));
+function formatDurationFromStart() {
+    if (!playState.startTime) {
+        return "--";
     }
+
+    const durationSeconds = Math.max(0, Math.floor((Date.now() - playState.startTime) / 1000));
+    const hrs = Math.floor(durationSeconds / 3600);
+    const mins = Math.floor((durationSeconds % 3600) / 60);
+    const secs = durationSeconds % 60;
+
+    if (hrs > 0) {
+        return hrs + "h " + mins + "m " + secs + "s";
+    }
+
+    return mins + "m " + secs + "s";
 }
 
 function formatGameOver(game) {
-    let title = "¡Juego Terminado!";
-    let reason = "";
+    let title = "Juego terminado";
+    let reason = "Partida finalizada";
+    let winner = "Empate";
 
     if (game.isCheckmate()) {
-        const winner = game.turn() === "w" ? "Negras" : "Blancas";
-        const isPlayerWin = (winner === "Blancas" && playState.playerColor === "white") || (winner === "Negras" && playState.playerColor === "black");
+        winner = game.turn() === "w" ? "Negras" : "Blancas";
+        const isPlayerWin =
+            (winner === "Blancas" && playState.playerColor === "white")
+            || (winner === "Negras" && playState.playerColor === "black");
+
         if (getPlaySettings().computerEnabled) {
-            title = isPlayerWin ? "¡Victoria!" : "Derrota";
+            title = isPlayerWin ? "Victoria" : "Derrota";
         } else {
-            title = `Ganan las ${winner}`;
+            title = "Ganan las " + winner;
         }
-        reason = `por Jaque Mate`;
+        reason = "por jaque mate";
     } else if (game.isStalemate()) {
         title = "Empate";
-        reason = "por Ahogado";
+        reason = "por ahogado";
     } else if (game.isThreefoldRepetition()) {
         title = "Empate";
-        reason = "por Repetición";
+        reason = "por repeticion";
     } else if (game.isInsufficientMaterial()) {
         title = "Empate";
-        reason = "por Material Insuficiente";
+        reason = "por material insuficiente";
     } else if (game.isDraw()) {
         title = "Empate";
-        reason = "por límite de movimientos o mutuo acuerdo";
+        reason = "por tablas";
     }
 
-    if (playState.startTime) {
-        const durationSeconds = Math.floor((Date.now() - playState.startTime) / 1000);
-        const mins = Math.floor(durationSeconds / 60);
-        const secs = durationSeconds % 60;
-        reason += `<br/><br/>Duración: ${mins}m ${secs}s`;
-    }
+    if (!playState.endgameShown && el.endgameModal) {
+        playState.endgameShown = true;
 
-    if (el.endgameModal) {
-        el.endgameTitle.textContent = title;
-        el.endgameReason.innerHTML = reason;
+        const opening = detectOpening(playState.game.history()) || "Sin apertura detectada";
+        const totalPly = playState.game.history().length;
+        const totalMoves = Math.ceil(totalPly / 2);
+        const durationText = formatDurationFromStart();
+
+        if (el.endgameTitle) el.endgameTitle.textContent = title;
+        if (el.endgameReason) el.endgameReason.textContent = reason;
+        if (el.endgameWinner) el.endgameWinner.textContent = winner;
+        if (el.endgameDuration) el.endgameDuration.textContent = durationText;
+        if (el.endgameMoves) el.endgameMoves.textContent = String(totalMoves);
+        if (el.endgameOpening) el.endgameOpening.textContent = opening;
+
         el.endgameModal.style.display = "flex";
         setTimeout(() => {
             el.endgameModal.style.opacity = "1";
@@ -1116,7 +1152,7 @@ function formatGameOver(game) {
         }, 10);
     }
 
-    return `${title} - ${reason.replace(/<br\/><br\/>.*/, "")}`;
+    return title + " - " + reason;
 }
 
 function renderPlayMoves() {
@@ -1205,7 +1241,7 @@ function renderPlayBoard() {
         el.playEvalBar.style.display = settings.showEvalBar ? "" : "none";
     }
 
-    renderPlayMoves();
+    renderPlayMoveList();
     renderPlayStatus();
     renderComputerPanel();
 }
@@ -1310,13 +1346,17 @@ async function confirmSuggestedMove() {
         return;
     }
     const fenAfter = playState.game.fen();
+    const moveIndex = playState.game.history().length - 1;
+    const historyAtMove = playState.game.history().slice();
 
     playState.lastMove = move;
     playState.hintMove = null;
     clearPlaySelection();
     playMoveSound(move);
     renderPlayBoard();
-    renderPlayMoveList();
+
+    const localSession = playState.sessionId;
+    evaluateLastMove(move, fenBefore, fenAfter, localSession, moveIndex, historyAtMove);
 
     if (playState.game.isGameOver()) {
         setCoachMessage(formatGameOver(playState.game));
@@ -1324,9 +1364,6 @@ async function confirmSuggestedMove() {
         renderPlayStatus();
         return;
     }
-
-    const localSession = playState.sessionId;
-    evaluatePlayerMove(move, fenBefore, fenAfter, localSession);
 
     if (getPlaySettings().computerEnabled) {
         await playBotMove();
@@ -1403,9 +1440,10 @@ async function playBotMove() {
     try {
         const depth = clamp(Math.round(playState.botElo / 180), 8, 16);
         const moveTime = clamp(Math.round(260 + playState.botElo / 2), 320, 2200);
+        const fenBeforeMove = playState.game.fen();
 
         const result = await evaluateWithStockfish({
-            fen: playState.game.fen(),
+            fen: fenBeforeMove,
             depth,
             multipv: 1,
             movetime: moveTime,
@@ -1427,7 +1465,8 @@ async function playBotMove() {
         }
 
         const fenAfterMove = playState.game.fen();
-        const fenBeforeMove = fen;
+        const moveIndex = playState.game.history().length - 1;
+        const historyAtMove = playState.game.history().slice();
 
         playState.lastMove = move;
         playState.hintMove = null;
@@ -1435,10 +1474,9 @@ async function playBotMove() {
         clearPlaySelection();
         playMoveSound(move);
         renderPlayBoard();
-        renderPlayMoveList();
 
         // Evaluate bot's move
-        evaluateLastMove(move, fenBeforeMove, fenAfterMove, localSession);
+        evaluateLastMove(move, fenBeforeMove, fenAfterMove, localSession, moveIndex, historyAtMove);
 
 
         // Update computer lines for player's turn
@@ -1459,12 +1497,12 @@ async function requestCoachHint(isAuto = false) {
     const settings = getPlaySettings();
 
     if (!isAuto && !settings.hintsEnabled) {
-        setCoachMessage("Las pistas están desactivadas. Actívalas en Ajustes.");
+        setCoachMessage("Las pistas estan desactivadas. Activalas en Ajustes.");
         return;
     }
 
     if (!settings.computerEnabled) {
-        setCoachMessage("El motor está desactivado. Actívalo en Ajustes para obtener sugerencias.");
+        setCoachMessage("El motor esta desactivado. Activalo en Ajustes para obtener sugerencias.");
         return;
     }
 
@@ -1473,7 +1511,7 @@ async function requestCoachHint(isAuto = false) {
     }
 
     if (playState.game.isGameOver()) {
-        setCoachMessage("La partida terminó. Inicia una nueva para seguir entrenando.");
+        setCoachMessage("La partida termino. Inicia una nueva para seguir entrenando.");
         return;
     }
 
@@ -1597,6 +1635,7 @@ async function onPlaySquareClick(square) {
         }
     }
 
+    const fenBeforeMove = playState.game.fen();
     const move = playState.game.move({
         from: intendedMove.from,
         to: intendedMove.to,
@@ -1609,24 +1648,18 @@ async function onPlaySquareClick(square) {
         return;
     }
 
-    const fenBefore = playState.game.fen(); // FEN before player moves (wait, game already moved above!)
-    // Actually we need the FEN before the move happened. Let's undo temporarily.
-    playState.game.undo();
-    const fenBeforeMove = playState.game.fen();
-    // Re-apply
-    playState.game.move({
-        from: intendedMove.from,
-        to: intendedMove.to,
-        promotion
-    });
     const fenAfterMove = playState.game.fen();
+    const moveIndex = playState.game.history().length - 1;
+    const historyAtMove = playState.game.history().slice();
 
     playState.lastMove = move;
     playState.hintMove = null;
     clearPlaySelection();
     playMoveSound(move);
     renderPlayBoard();
-    renderPlayMoveList();
+
+    const localSession = playState.sessionId;
+    evaluateLastMove(move, fenBeforeMove, fenAfterMove, localSession, moveIndex, historyAtMove);
 
     if (playState.game.isGameOver()) {
         setCoachMessage(formatGameOver(playState.game));
@@ -1636,9 +1669,6 @@ async function onPlaySquareClick(square) {
     }
 
     // Start parallel: evaluate player move AND start bot move
-    const localSession = playState.sessionId;
-    evaluateLastMove(move, fenBeforeMove, fenAfterMove, localSession);
-
     if (getPlaySettings().computerEnabled) {
         await playBotMove();
     } else {
@@ -1687,6 +1717,7 @@ function startNewGame() {
     playState.computerTopLines = [];
     playState.moveHistory = [];
     playState.startTime = Date.now();
+    playState.endgameShown = false;
     clearPlaySelection();
     cancelMoveConfirmation();
 
@@ -1694,7 +1725,12 @@ function startNewGame() {
     hideMoveBadge();
     updatePlayEvalBar({ type: "cp", value: 0 });
     renderPlayBoard();
-    renderPlayMoveList();
+
+    if (el.endgameModal) {
+        el.endgameModal.style.opacity = "0";
+        el.endgameModal.style.pointerEvents = "none";
+        el.endgameModal.style.display = "none";
+    }
 
     // UI Layout Toggles
     if (el.playSetupPanel) el.playSetupPanel.style.display = "none";
@@ -1723,7 +1759,7 @@ function undoPlayMove() {
     }
 
     if (!getPlaySettings().takebacksEnabled) {
-        setCoachMessage("Los retrocesos están desactivados. Actívalos en Ajustes.");
+        setCoachMessage("Los retrocesos estan desactivados. Activalos en Ajustes.");
         return;
     }
 
@@ -1764,7 +1800,7 @@ function resetAnalysisSummary() {
     el.analysisBlackAccuracy.textContent = "--";
     el.analysisOpening.textContent = "--";
     el.analysisClassificationBody.innerHTML = "";
-    el.analysisMoveMeta.textContent = "No hay análisis cargado.";
+    el.analysisMoveMeta.textContent = "No hay analisis cargado.";
     el.analysisMoveList.innerHTML = "";
     el.analysisTopLines.innerHTML = "";
     el.analysisProgress.value = 0;
@@ -2033,7 +2069,7 @@ async function runAnalysis() {
         fillClassificationTable(analysisState.report.classifications);
         renderAnalysisPosition();
 
-        setAnalysisStatus("Análisis completado.");
+        setAnalysisStatus("Analisis completado.");
     } catch (error) {
         setAnalysisStatus(error instanceof Error ? error.message : "Error inesperado en el análisis.");
     } finally {

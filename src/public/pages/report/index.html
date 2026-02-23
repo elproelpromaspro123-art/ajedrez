@@ -13,7 +13,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
         rel="stylesheet" />
-    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260223_10" />
+    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260223_11" />
     <link rel="shortcut icon" href="/static/media/favicon-freechess.ico" type="image/x-icon" />
 </head>
 
@@ -47,10 +47,8 @@
                             <span id="play-eval-label-white" class="eval-label eval-label-white"></span>
                             <span id="play-eval-label-black" class="eval-label eval-label-black"></span>
                         </div>
-                        <div class="board-wrap"
-                            style="flex: 0 1 540px; display: flex; justify-content: center; align-items: center; max-width: 540px;">
-                            <div id="play-board" class="chessboard" aria-label="Tablero para jugar contra bot"
-                                style="width: 100%; aspect-ratio: 1/1;"></div>
+                        <div class="board-wrap play-board-wrap">
+                            <div id="play-board" class="chessboard" aria-label="Tablero para jugar contra bot"></div>
                         </div>
                     </div>
                 </article>
@@ -87,14 +85,13 @@
 
                         <div class="stack-buttons">
                             <button id="play-start-btn" class="primary-btn" type="button">&#9654; Jugar</button>
-                            <button id="play-settings-btn" class="ghost-btn"
-                                style="width: 100%; border: 1px solid var(--border); margin-top: 4px;"
+                            <button id="play-settings-btn" class="ghost-btn settings-launch-btn"
                                 type="button">&#9881;&#65039; Ajustes</button>
                         </div>
                     </div>
 
                     <!-- Game Panel (Shown during game) -->
-                    <div id="play-game-panel" style="display: none; flex-direction: column; height: 100%; gap: 0;">
+                    <div id="play-game-panel" class="play-game-panel" style="display: none;">
                         <!-- Top: Game controls -->
                         <div class="game-controls-row">
                             <button id="play-new-game-btn" class="ghost-btn" type="button">&#10227; Nueva</button>
@@ -108,8 +105,8 @@
 
                         <!-- Move Confirmation Bar -->
                         <div id="move-confirm-bar" class="move-confirm-bar">
-                            <span class="confirm-text" id="confirm-text">¿Jugar Caballo a f3?</span>
-                            <button class="confirm-yes" id="confirm-yes-btn" type="button">&#10004; Sí</button>
+                            <span class="confirm-text" id="confirm-text">&#191;Jugar Caballo a f3?</span>
+                            <button class="confirm-yes" id="confirm-yes-btn" type="button">&#10004; S&#237;</button>
                             <button class="confirm-no" id="confirm-no-btn" type="button">&#10008; No</button>
                         </div>
 
@@ -240,6 +237,15 @@
                     <h2>&#128218; Centro de Estudio</h2>
                     <p>Selecciona una categor&iacute;a para empezar a aprender.</p>
                 </header>
+                <div class="study-roadmap">
+                    <h3>Plan rapido de mejora (20-30 min)</h3>
+                    <ol>
+                        <li>5 min de aperturas: repasa principios y una linea principal.</li>
+                        <li>10-15 min de tacticas: busca amenazas, piezas colgando y mates cortos.</li>
+                        <li>10 min de finales: practica rey y peon, oposicion y actividad de torre.</li>
+                    </ol>
+                    <p class="muted">Consejo: analiza tus partidas justo al terminar para fijar errores y aciertos.</p>
+                </div>
                 <div class="study-categories">
                     <button class="study-cat-card" data-study-target="study-openings">
                         <span class="study-cat-icon">&#9823;</span>
@@ -662,17 +668,33 @@
     </div>
 
     <!-- End Game Modal -->
-    <div id="endgame-modal" class="modal-overlay"
-        style="display: none; opacity: 0; pointer-events: none; transition: opacity 0.3s ease;">
-        <div class="endgame-content"
-            style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; text-align: center; max-width: 320px; width: 90%; margin: 0 auto; box-shadow: var(--shadow); position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 2000;">
-            <h2 id="endgame-title" style="margin: 0 0 10px 0; color: var(--accent); font-size: 1.5rem;">¡Victoria!</h2>
-            <p id="endgame-reason" style="margin: 0 0 20px 0; color: var(--text-muted); font-size: 0.95rem;">por Jaque
-                Mate</p>
-            <div style="display: flex; flex-direction: column; gap: 8px;">
-                <button id="endgame-analyze-btn" class="primary-btn" type="button">&#128269; Analizar Partida</button>
-                <button id="endgame-pgn-btn" class="ghost-btn" style="border: 1px solid var(--border);"
-                    type="button">&#128190; Descargar PGN</button>
+    <div id="endgame-modal" class="modal-overlay endgame-modal">
+        <div class="endgame-content">
+            <h2 id="endgame-title">&#161;Victoria!</h2>
+            <p id="endgame-reason">por jaque mate</p>
+
+            <div class="endgame-meta-grid">
+                <div class="endgame-meta-item">
+                    <span>Ganador</span>
+                    <strong id="endgame-winner">Blancas</strong>
+                </div>
+                <div class="endgame-meta-item">
+                    <span>Duracion</span>
+                    <strong id="endgame-duration">0m 0s</strong>
+                </div>
+                <div class="endgame-meta-item">
+                    <span>Movimientos</span>
+                    <strong id="endgame-moves">0</strong>
+                </div>
+                <div class="endgame-meta-item">
+                    <span>Apertura</span>
+                    <strong id="endgame-opening">Sin detectar</strong>
+                </div>
+            </div>
+
+            <div class="endgame-actions">
+                <button id="endgame-analyze-btn" class="primary-btn" type="button">&#128269; Analizar partida</button>
+                <button id="endgame-pgn-btn" class="ghost-btn" type="button">&#128190; Descargar PGN</button>
                 <button id="endgame-close-btn" class="ghost-btn" type="button">Cerrar</button>
             </div>
         </div>
@@ -686,7 +708,7 @@
     <audio id="fx-end" src="/static/media/game_end.mp3"></audio>
 
     <script src="/static/scripts/vendor/chess.global.js?v=20260223"></script>
-    <script src="/static/pages/report/scripts/main.js?v=20260223_10"></script>
+    <script src="/static/pages/report/scripts/main.js?v=20260223_11"></script>
 </body>
 
 </html>
