@@ -1,5 +1,9 @@
 ﻿
-import { Chess } from "/static/scripts/vendor/chess.mjs";
+const Chess = window.Chess;
+
+if (!Chess) {
+    throw new Error("Chess library failed to load.");
+}
 
 const PIECE_IMAGE = {
     p: "/static/media/black_pawn.svg",
