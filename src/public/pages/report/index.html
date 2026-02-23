@@ -1,18 +1,22 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Webapp personal para jugar, analizar y estudiar ajedrez sin login." />
-    <meta name="theme-color" content="#141418" />
+    <meta name="theme-color" content="#0f1117" />
     <title>Ajedrez Lab</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260223" />
+    <link
+        href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
+        rel="stylesheet" />
+    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260223_10" />
     <link rel="shortcut icon" href="/static/media/favicon-freechess.ico" type="image/x-icon" />
 </head>
+
 <body>
     <header class="topbar">
         <div class="brand">
@@ -21,79 +25,135 @@
             <p class="subtitle">Juega contra bots, analiza partidas y estudia patrones de forma directa.</p>
         </div>
         <div class="topbar-meta">
-            <p id="last-update-label">Actualizado: 22 de febrero de 2026</p>
-            <a href="https://www.fide.com/FIDE/handbook/LawsOfChess.pdf" target="_blank" rel="noopener noreferrer">Reglas FIDE</a>
+            <p id="last-update-label">Actualizado: 23 de febrero de 2026</p>
+            <a href="https://www.fide.com/FIDE/handbook/LawsOfChess.pdf" target="_blank"
+                rel="noopener noreferrer">Reglas FIDE</a>
         </div>
     </header>
 
     <nav class="tabs" aria-label="Secciones">
-        <button class="tab-btn is-active" data-tab-target="play-section">Jugar</button>
-        <button class="tab-btn" data-tab-target="analysis-section">Analizar</button>
-        <button class="tab-btn" data-tab-target="study-section">Estudio</button>
+        <button class="tab-btn is-active" data-tab-target="play-section">&#9823; Jugar</button>
+        <button class="tab-btn" data-tab-target="analysis-section">&#128269; Analizar</button>
+        <button class="tab-btn" data-tab-target="study-section">&#128218; Estudio</button>
     </nav>
 
     <main class="content">
         <section id="play-section" class="panel is-active">
-            <div class="panel-grid">
-                <article class="card board-card">
-                    <div class="card-header">
-                        <h2>Tablero</h2>
-                        <div class="inline-actions">
-                            <button id="play-flip-btn" class="ghost-btn" type="button">Girar</button>
-                            <button id="play-new-game-btn" class="ghost-btn" type="button">Nueva partida</button>
+            <div id="play-panel-grid" class="panel-grid setup-mode">
+                <article id="play-board-card" class="card board-card" style="display: none;">
+                    <div class="board-with-eval">
+                        <div id="play-eval-bar" class="eval-bar">
+                            <div id="play-eval-fill" class="eval-fill"></div>
+                            <span id="play-eval-label-white" class="eval-label eval-label-white"></span>
+                            <span id="play-eval-label-black" class="eval-label eval-label-black"></span>
+                        </div>
+                        <div class="board-wrap"
+                            style="flex: 0 1 540px; display: flex; justify-content: center; align-items: center; max-width: 540px;">
+                            <div id="play-board" class="chessboard" aria-label="Tablero para jugar contra bot"
+                                style="width: 100%; aspect-ratio: 1/1;"></div>
                         </div>
                     </div>
-                    <div class="board-wrap">
-                        <div id="play-board" class="chessboard" aria-label="Tablero para jugar contra bot"></div>
-                    </div>
-                    <p id="play-status" class="status-line">Configura el bot y pulsa iniciar.</p>
-                    <ol id="play-move-list" class="move-list" aria-label="Historial de jugadas"></ol>
                 </article>
 
-                <aside class="card control-card">
-                    <h3>Bot y ayudas</h3>
-                    <label for="bot-preset">Nivel bot (ELO)</label>
-                    <select id="bot-preset">
-                        <option value="600">Principiante 600</option>
-                        <option value="900">Basico 900</option>
-                        <option value="1200" selected>Intermedio 1200</option>
-                        <option value="1500">Club 1500</option>
-                        <option value="1800">Avanzado 1800</option>
-                        <option value="2100">Experto 2100</option>
-                    </select>
+                <aside class="card control-card sidebar-card">
+                    <!-- Setup Panel (Shown before game starts) -->
+                    <div id="play-setup-panel">
+                        <h3>&#9881;&#65039; Configuraci&oacute;n de Partida</h3>
 
-                    <label for="bot-custom-elo">ELO personalizado (400-2800)</label>
-                    <input id="bot-custom-elo" type="number" min="400" max="2800" step="50" placeholder="Opcional" />
+                        <label for="bot-preset">Nivel bot (ELO)</label>
+                        <select id="bot-preset">
+                            <option value="600">Principiante 600</option>
+                            <option value="900">Basico 900</option>
+                            <option value="1200" selected>Intermedio 1200</option>
+                            <option value="1500">Club 1500</option>
+                            <option value="1800">Avanzado 1800</option>
+                            <option value="2100">Experto 2100</option>
+                        </select>
 
-                    <label for="player-color">Color de juego</label>
-                    <select id="player-color">
-                        <option value="white" selected>Blancas</option>
-                        <option value="black">Negras</option>
-                        <option value="random">Aleatorio</option>
-                    </select>
+                        <label for="bot-custom-elo">ELO personalizado (400-2800)</label>
+                        <input id="bot-custom-elo" type="number" min="400" max="2800" step="50"
+                            placeholder="Opcional" />
 
-                    <label for="coach-depth">Profundidad del entrenador</label>
-                    <input id="coach-depth" type="range" min="8" max="18" value="12" />
-                    <p id="coach-depth-value" class="muted">12</p>
+                        <label for="player-color">Color de juego</label>
+                        <select id="player-color">
+                            <option value="white" selected>Blancas</option>
+                            <option value="black">Negras</option>
+                            <option value="random">Aleatorio</option>
+                        </select>
 
-                    <div class="toggle-grid">
-                        <label><input id="assist-legal" type="checkbox" checked /> Mostrar jugadas legales</label>
-                        <label><input id="assist-lastmove" type="checkbox" checked /> Resaltar ultima jugada</label>
-                        <label><input id="assist-coach-auto" type="checkbox" checked /> Entrenador automatico</label>
-                        <label><input id="assist-coordinates" type="checkbox" checked /> Mostrar coordenadas</label>
-                        <label><input id="assist-sound" type="checkbox" checked /> Sonidos</label>
-                        <label><input id="assist-autopromo" type="checkbox" checked /> Auto promocion a dama</label>
+                        <label for="coach-depth">Profundidad del entrenador</label>
+                        <input id="coach-depth" type="range" min="8" max="18" value="12" />
+                        <p id="coach-depth-value" class="muted">12</p>
+
+                        <div class="stack-buttons">
+                            <button id="play-start-btn" class="primary-btn" type="button">&#9654; Jugar</button>
+                            <button id="play-settings-btn" class="ghost-btn"
+                                style="width: 100%; border: 1px solid var(--border); margin-top: 4px;"
+                                type="button">&#9881;&#65039; Ajustes</button>
+                        </div>
                     </div>
 
-                    <div class="stack-buttons">
-                        <button id="play-start-btn" class="primary-btn" type="button">Iniciar partida</button>
-                        <button id="play-hint-btn" class="secondary-btn" type="button">Pedir pista</button>
-                        <button id="play-undo-btn" class="secondary-btn" type="button">Deshacer jugada</button>
-                    </div>
+                    <!-- Game Panel (Shown during game) -->
+                    <div id="play-game-panel" style="display: none; flex-direction: column; height: 100%; gap: 0;">
+                        <!-- Top: Game controls -->
+                        <div class="game-controls-row">
+                            <button id="play-new-game-btn" class="ghost-btn" type="button">&#10227; Nueva</button>
+                            <button id="play-flip-btn" class="ghost-btn" type="button">&#8645; Girar</button>
+                            <button id="play-hint-btn" class="ghost-btn" type="button">&#128161; Pista</button>
+                            <button id="play-undo-btn" class="ghost-btn" type="button">&#8617; Deshacer</button>
+                        </div>
 
-                    <div class="coach-box">
-                        <h4>Entrenador</h4>
-                        <p id="coach-message">Las sugerencias apareceran aqui cuando sea tu turno.</p>
+                        <p id="play-status" class="status-line">Partida en curso</p>
+                        <div id="play-move-badge" class="move-badge" style="display:none;"></div>
+
+                        <!-- Move Confirmation Bar -->
+                        <div id="move-confirm-bar" class="move-confirm-bar">
+                            <span class="confirm-text" id="confirm-text">¿Jugar Caballo a f3?</span>
+                            <button class="confirm-yes" id="confirm-yes-btn" type="button">&#10004; Sí</button>
+                            <button class="confirm-no" id="confirm-no-btn" type="button">&#10008; No</button>
+                        </div>
+
+                        <!-- Move History -->
+                        <div class="sidebar-section">
+                            <p class="sidebar-section-title">Historial de jugadas</p>
+                            <ol id="play-move-list" class="move-list" aria-label="Historial de jugadas"></ol>
+                        </div>
+
+                        <!-- Computer Panel (Stockfish) -->
+                        <div id="computer-panel" class="computer-panel" style="display:none;">
+                            <h4>&#128187; Ordenador (Stockfish)</h4>
+                            <div id="computer-lines"></div>
+                        </div>
+
+                        <!-- Tabbed Panel: Coach / AI Assistant -->
+                        <div class="sidebar-tabs-container">
+                            <div class="sidebar-tabs">
+                                <button class="sidebar-tab is-active" data-sidebar-tab="coach-tab">&#128105;&#127997;
+                                    Entrenador</button>
+                                <button class="sidebar-tab" data-sidebar-tab="ai-tab">&#x1F916; Asistente IA</button>
+                            </div>
+
+                            <!-- Coach Tab -->
+                            <div id="coach-tab" class="sidebar-tab-content is-active">
+                                <div class="coach-feed" id="coach-history-container">
+                                    <p id="coach-message">Hola. &iexcl;Espero que est&eacute;s preparado para un ajedrez
+                                        picante!</p>
+                                </div>
+                            </div>
+
+                            <!-- AI Tab -->
+                            <div id="ai-tab" class="sidebar-tab-content">
+                                <div id="ai-chat-messages" class="ai-chat-messages">
+                                    <div class="ai-msg ai-bot">Hola, soy tu asistente de ajedrez con IA.
+                                        Preg&uacute;ntame lo que quieras.</div>
+                                </div>
+                                <div class="ai-chat-input-wrap">
+                                    <input id="ai-chat-input" type="text" placeholder="Preg&uacute;ntame algo..."
+                                        autocomplete="off" />
+                                    <button id="ai-chat-send" class="primary-btn" type="button">Enviar</button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </aside>
             </div>
@@ -102,15 +162,16 @@
         <section id="analysis-section" class="panel">
             <div class="panel-grid analysis-grid">
                 <article class="card control-card">
-                    <h3>Analisis de partida</h3>
+                    <h3>&#128269; Analisis de partida</h3>
                     <label for="analysis-pgn">PGN</label>
-                    <textarea id="analysis-pgn" rows="10" spellcheck="false" placeholder="Pega aqui tu PGN..."></textarea>
+                    <textarea id="analysis-pgn" rows="8" spellcheck="false"
+                        placeholder="Pega aqui tu PGN..."></textarea>
 
                     <label for="analysis-depth">Profundidad de analisis</label>
                     <input id="analysis-depth" type="range" min="8" max="18" value="12" />
                     <p id="analysis-depth-value" class="muted">12</p>
 
-                    <button id="analysis-run-btn" class="primary-btn" type="button">Analizar partida</button>
+                    <button id="analysis-run-btn" class="primary-btn" type="button">&#9654; Analizar partida</button>
                     <progress id="analysis-progress" value="0" max="100"></progress>
                     <p id="analysis-status" class="status-line">Esperando PGN.</p>
 
@@ -173,109 +234,421 @@
         </section>
 
         <section id="study-section" class="panel">
-            <header class="study-header">
-                <h2>Estudio rapido</h2>
-                <p>Bloques cortos con ideas practicas y posiciones de referencia.</p>
-            </header>
-
-            <div class="study-grid">
-                <article class="card study-card">
-                    <h3>Principios de apertura</h3>
-                    <p>Controla el centro, desarrolla piezas menores y enroca pronto. Evita mover la misma pieza dos veces sin necesidad.</p>
-                    <div class="study-diagram" data-fen="r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 2 4"></div>
-                    <ul class="compact-list">
-                        <li>No saques la dama demasiado pronto.</li>
-                        <li>Conecta las torres antes del medio juego.</li>
-                        <li>Prefiere e4/d4 o c4/Nf3 según tu estilo.</li>
-                    </ul>
-                </article>
-
-                <article class="card study-card">
-                    <h3>Gambito de Dama</h3>
-                    <p>1.d4 d5 2.c4 — blancas ofrecen un peón para ganar control del centro. Negras pueden aceptar o rechazar.</p>
-                    <div class="study-diagram" data-fen="rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq c3 0 2"></div>
-                    <ul class="compact-list">
-                        <li>Si aceptas, no intentes mantener el peón extra.</li>
-                        <li>El Gambito de Dama Rehusado con ...e6 es sólido.</li>
-                        <li>Busca ...c5 para contragolpear en el centro.</li>
-                    </ul>
-                </article>
-
-                <article class="card study-card">
-                    <h3>Defensa Siciliana</h3>
-                    <p>1.e4 c5 — la defensa más popular contra e4. Crea asimetría desde el primer momento.</p>
-                    <div class="study-diagram" data-fen="rnbqkbnr/pp1ppppp/8/2p5/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2"></div>
-                    <ul class="compact-list">
-                        <li>La Najdorf (5...a6) es la variante más agresiva.</li>
-                        <li>Prepárate para un ataque en el flanco de rey.</li>
-                        <li>El peón extra en el centro compensa la estructura.</li>
-                    </ul>
-                </article>
-
-                <article class="card study-card">
-                    <h3>Tácticas: clavadas y horquillas</h3>
-                    <p>Una clavada inmoviliza una pieza que protege a otra más valiosa. La horquilla ataca dos piezas a la vez.</p>
-                    <div class="study-diagram" data-fen="r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"></div>
-                    <ul class="compact-list">
-                        <li>Busca clavadas de alfil contra el rey o la dama.</li>
-                        <li>Los caballos son las piezas que más horquillas crean.</li>
-                        <li>Antes de jugar, verifica si tienes piezas clavadas.</li>
-                    </ul>
-                </article>
-
-                <article class="card study-card">
-                    <h3>Partida de la Ópera (Morphy, 1858)</h3>
-                    <p>Ejemplo clásico de desarrollo rápido, iniciativa y mate con piezas coordinadas.</p>
-                    <div class="study-diagram" data-fen="1n1Rkb1r/p4ppp/4q3/4p1B1/4P3/8/PPP2PPP/2K5 b k - 1 17"></div>
-                    <ul class="compact-list">
-                        <li>El rival pierde por falta de desarrollo.</li>
-                        <li>La actividad vale más que el material en posiciones abiertas.</li>
-                        <li>Busca jugadas forzantes: jaques, capturas, amenazas.</li>
-                    </ul>
-                </article>
-
-                <article class="card study-card">
-                    <h3>Mate de Legal</h3>
-                    <p>Patrón de sacrificio de dama en la apertura cuando el rival tiene el rey expuesto en el centro.</p>
-                    <div class="study-diagram" data-fen="r2q1bnr/ppp1kBpp/2np4/3NN3/4P3/7P/PPPP1PP1/R1BbK2R b KQ - 2 8"></div>
-                    <ul class="compact-list">
-                        <li>Confirma que la dama rival está sobrecargada.</li>
-                        <li>Calcula hasta el mate antes de sacrificar.</li>
-                        <li>Patrón útil para partidas rápidas y blitz.</li>
-                    </ul>
-                </article>
-
-                <article class="card study-card">
-                    <h3>Estrategia de medio juego</h3>
-                    <p>Mejora tus piezas peores, controla casillas débiles y busca debilidades en la estructura de peones rival.</p>
-                    <div class="study-diagram" data-fen="r1bq1rk1/pp2ppbp/2np1np1/8/3NP3/2N1BP2/PPPQ2PP/R3KB1R w KQ - 0 8"></div>
-                    <ul class="compact-list">
-                        <li>Identifica tu pieza peor y mejórala primero.</li>
-                        <li>Las columnas abiertas son para las torres.</li>
-                        <li>No cambies alfiles buenos por caballos malos.</li>
-                    </ul>
-                </article>
-
-                <article class="card study-card">
-                    <h3>Finales: plan universal</h3>
-                    <p>Activa el rey, crea peón pasado y coloca torres detrás del peón pasado — regla de Tarrasch.</p>
-                    <div class="study-diagram" data-fen="8/6kp/5pp1/8/3K4/5P2/5P1P/6R1 w - - 0 1"></div>
-                    <ul class="compact-list">
-                        <li>El rey activo decide finales igualados.</li>
-                        <li>Evita cambios que activen al rival.</li>
-                        <li>Simplifica cuando tengas ventaja técnica clara.</li>
-                    </ul>
-                </article>
+            <!-- Study Landing: 3 Big Category Icons -->
+            <div id="study-landing" class="study-landing">
+                <header class="study-header">
+                    <h2>&#128218; Centro de Estudio</h2>
+                    <p>Selecciona una categor&iacute;a para empezar a aprender.</p>
+                </header>
+                <div class="study-categories">
+                    <button class="study-cat-card" data-study-target="study-openings">
+                        <span class="study-cat-icon">&#9823;</span>
+                        <span class="study-cat-title">Aperturas</span>
+                        <span class="study-cat-desc">Principios, sistemas cl&aacute;sicos y l&iacute;neas
+                            principales</span>
+                    </button>
+                    <button class="study-cat-card" data-study-target="study-tactics">
+                        <span class="study-cat-icon">&#9876;</span>
+                        <span class="study-cat-title">T&aacute;cticas</span>
+                        <span class="study-cat-desc">Mates, celadas, clavadas, horquillas y sacrificios</span>
+                    </button>
+                    <button class="study-cat-card" data-study-target="study-endgames">
+                        <span class="study-cat-icon">&#9812;</span>
+                        <span class="study-cat-title">Finales</span>
+                        <span class="study-cat-desc">Rey y pe&oacute;n, oposici&oacute;n, torres y t&eacute;cnicas
+                            esenciales</span>
+                    </button>
+                </div>
             </div>
 
-            <div class="resource-links">
-                <a href="https://www.fide.com/FIDE/handbook/LawsOfChess.pdf" target="_blank" rel="noopener noreferrer">Leyes oficiales FIDE</a>
-                <a href="https://lichess.org/study" target="_blank" rel="noopener noreferrer">Estudios interactivos (Lichess)</a>
-                <a href="https://www.chessprogramming.org/Main_Page" target="_blank" rel="noopener noreferrer">Referencia tecnica de motores</a>
+            <!-- OPENINGS SECTION -->
+            <div id="study-openings" class="study-detail" style="display:none;">
+                <button class="study-back-btn" data-study-back>&larr; Volver al Centro de Estudio</button>
+                <h2>&#9823; Aperturas</h2>
+                <p class="study-intro">Dominar las aperturas te da una base s&oacute;lida para el medio juego.
+                    Aqu&iacute; encontrar&aacute;s principios fundamentales y las l&iacute;neas m&aacute;s importantes.
+                </p>
+
+                <div class="study-grid">
+                    <article class="card study-card">
+                        <h3>Principios de Apertura</h3>
+                        <p>Reglas fundamentales que todo jugador debe conocer desde el primer movimiento.</p>
+                        <div class="study-diagram"
+                            data-fen="r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 2 4"></div>
+                        <ul class="compact-list">
+                            <li><strong>Controla el centro</strong> con peones en e4/d4 o c4/Nf3.</li>
+                            <li><strong>Desarrolla piezas menores</strong> (caballos y alfiles) antes que torres.</li>
+                            <li><strong>Enroca pronto</strong> para proteger al rey.</li>
+                            <li>No saques la dama demasiado pronto.</li>
+                            <li>Conecta las torres antes del medio juego.</li>
+                            <li>No muevas la misma pieza dos veces si no es necesario.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Apertura Espa&ntilde;ola (Ruy L&oacute;pez)</h3>
+                        <p>1.e4 e5 2.Cf3 Cc6 3.Ab5 &mdash; Presi&oacute;n indirecta sobre el centro. Una de las
+                            m&aacute;s estudiadas en la historia.</p>
+                        <div class="study-diagram"
+                            data-fen="r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"></div>
+                        <ul class="compact-list">
+                            <li>Las negras responden con ...a6 (Morphy) o ...Nf6 (Berlinesa).</li>
+                            <li>Busca mantener la tensi&oacute;n central.</li>
+                            <li>Ideal para aprender estrategia a largo plazo.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Apertura Italiana</h3>
+                        <p>1.e4 e5 2.Cf3 Cc6 3.Ac4 &mdash; El alfil apunta a f7. Juego natural, t&aacute;ctico y
+                            din&aacute;mico.</p>
+                        <div class="study-diagram"
+                            data-fen="r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3"></div>
+                        <ul class="compact-list">
+                            <li>Variante Giuoco Piano (...Bc5) para juego posicional.</li>
+                            <li>Defensa Dos Caballos (...Nf6) para juego agudo.</li>
+                            <li>Controla d4 para estabilizar el centro.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Defensa Siciliana</h3>
+                        <p>1.e4 c5 &mdash; La respuesta m&aacute;s popular y agresiva contra 1.e4. Juego
+                            asim&eacute;trico y combativo.</p>
+                        <div class="study-diagram"
+                            data-fen="rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq c6 0 2"></div>
+                        <ul class="compact-list">
+                            <li><strong>Najdorf</strong> (...a6): La variante m&aacute;s popular, flexible y
+                                din&aacute;mica.</li>
+                            <li><strong>Drag&oacute;n</strong> (...g6): Fianchetto agresivo del alfil.</li>
+                            <li><strong>Cl&aacute;sica</strong> (...Nc6): Desarrollo s&oacute;lido.</li>
+                            <li><strong>Alapin</strong> (c3): L&iacute;nea antiSiciliana para evitar teor&iacute;a.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Defensa Francesa</h3>
+                        <p>1.e4 e6 2.d4 d5 &mdash; S&oacute;lida y estrat&eacute;gica. Las negras aceptan un alfil
+                            &ldquo;malo&rdquo; a cambio de contra-ataque.</p>
+                        <div class="study-diagram"
+                            data-fen="rnbqkbnr/ppp2ppp/4p3/3p4/3PP3/8/PPP2PPP/RNBQKBNR w KQkq d6 0 3"></div>
+                        <ul class="compact-list">
+                            <li><strong>Variante del Avance</strong> (e5): Espacio pero alfil encerrado.</li>
+                            <li><strong>Variante del Cambio</strong> (exd5): Posici&oacute;n sim&eacute;trica.</li>
+                            <li>La clave es liberar el alfil de c8.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Caro-Kann</h3>
+                        <p>1.e4 c6 &mdash; S&oacute;lida como la Francesa pero sin encerrar el alfil. Ideal para juego
+                            posicional.</p>
+                        <div class="study-diagram"
+                            data-fen="rnbqkbnr/pp1ppppp/2p5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2"></div>
+                        <ul class="compact-list">
+                            <li>Tras 2.d4 d5, las negras tienen una estructura sana.</li>
+                            <li>El alfil de c8 se desarrolla antes que en la Francesa.</li>
+                            <li>Favorita de jugadores posicionales como Karpov.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Gambito de Dama</h3>
+                        <p>1.d4 d5 2.c4 &mdash; La apertura m&aacute;s jugada a nivel profesional. El blanco lucha por
+                            ventaja de espacio.</p>
+                        <div class="study-diagram"
+                            data-fen="rnbqkbnr/ppp1pppp/8/3p4/2PP4/8/PP2PPPP/RNBQKBNR b KQkq c3 0 2"></div>
+                        <ul class="compact-list">
+                            <li><strong>Rehusado</strong> (...e6): S&oacute;lido pero pasivo.</li>
+                            <li><strong>Aceptado</strong> (...dxc4): Activo, el negro devuelve el pe&oacute;n luego.
+                            </li>
+                            <li><strong>Eslava</strong> (...c6): Mantiene estructura flexible.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Sistema Londres</h3>
+                        <p>1.d4 d5 2.Af4 &mdash; Sistema universal f&aacute;cil de aprender. El blanco juega los mismos
+                            movimientos contra casi todo.</p>
+                        <div class="study-diagram"
+                            data-fen="rnbqkbnr/ppp1pppp/8/3p4/3P1B2/8/PPP1PPPP/RN1QKBNR b KQkq - 1 2"></div>
+                        <ul class="compact-list">
+                            <li>Desarrollo: Af4, e3, Cf3, Ad3, 0-0.</li>
+                            <li>Plan sencillo: c3, Cbd2, avanzar e4.</li>
+                            <li>Perfecto para principiantes e intermedios.</li>
+                        </ul>
+                    </article>
+                </div>
             </div>
-            <p class="study-note">Referencia actual: Stockfish 18 (31 enero 2026) y Leyes FIDE vigentes desde 2023.</p>
+
+            <!-- TACTICS SECTION -->
+            <div id="study-tactics" class="study-detail" style="display:none;">
+                <button class="study-back-btn" data-study-back>&larr; Volver al Centro de Estudio</button>
+                <h2>&#9876; T&aacute;cticas</h2>
+                <p class="study-intro">Las t&aacute;cticas son la base del ajedrez. Aprender estos patrones te
+                    permitir&aacute; ganar material y crear ataques devastadores.</p>
+
+                <div class="study-grid">
+                    <article class="card study-card">
+                        <h3>Mate del Pastor</h3>
+                        <p>Un patr&oacute;n de mate en 4 jugadas: 1.e4 e5 2.Ac4 Cc6 3.Dh5 Cf6?? 4.Dxf7#. Ataca f7.</p>
+                        <div class="study-diagram"
+                            data-fen="r1bqkb1r/pppp1Qpp/2n5/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4"></div>
+                        <ul class="compact-list">
+                            <li>Nunca saques la dama tan r&aacute;pido si no hay un error claro.</li>
+                            <li>Se defiende f&aacute;cilmente con ...g6 o ...De7.</li>
+                            <li>No lo uses como arma principal &mdash; solo funciona contra errores.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Clavadas</h3>
+                        <p>Una pieza no puede moverse porque expondría una pieza m&aacute;s valiosa detr&aacute;s de
+                            ella (o el rey).</p>
+                        <div class="study-diagram"
+                            data-fen="r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"></div>
+                        <ul class="compact-list">
+                            <li><strong>Clavada absoluta:</strong> La pieza protege al rey y no puede moverse.</li>
+                            <li><strong>Clavada relativa:</strong> Moverse pierde material valioso.</li>
+                            <li>Los alfiles son los principales creadores de clavadas.</li>
+                            <li>Busca clavadas contra el rey o la dama rival.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Horquillas (Tenedores)</h3>
+                        <p>Una pieza ataca a dos o m&aacute;s piezas enemigas simult&aacute;neamente. Ganas material
+                            inevitablemente.</p>
+                        <div class="study-diagram"
+                            data-fen="r1bqkb1r/pppp1ppp/2n5/4p2n/4P3/3B1N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"></div>
+                        <ul class="compact-list">
+                            <li>Los <strong>caballos</strong> crean las horquillas m&aacute;s mort&iacute;feras.</li>
+                            <li>Los peones tambi&eacute;n pueden crear horquillas devastadoras.</li>
+                            <li>Busca siempre incluir al rey o la dama en la horquilla.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Descubiertas y Doble Jaque</h3>
+                        <p>Al mover una pieza, se &ldquo;descubre&rdquo; un ataque de otra pieza detr&aacute;s.
+                            Devastador cuando ambas atacan.</p>
+                        <div class="study-diagram"
+                            data-fen="r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"></div>
+                        <ul class="compact-list">
+                            <li><strong>Doble jaque:</strong> Dos piezas dan jaque a la vez &mdash; solo se puede mover
+                                el rey.</li>
+                            <li>Busca l&iacute;neas abiertas donde puedas descubrir ataques.</li>
+                            <li>A menudo lleva a ganar material decisivo.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Sacrificios T&aacute;cticos</h3>
+                        <p>Entregar material a cambio de un ataque imparable o mate. El arte supremo del ajedrez.</p>
+                        <div class="study-diagram"
+                            data-fen="r2q1bnr/ppp1kBpp/2np4/3NN3/4P3/7P/PPPP1PP1/R1BbK2R b KQ - 2 8"></div>
+                        <ul class="compact-list">
+                            <li><strong>Sacrificio de alfil en h7:</strong> Patr&oacute;n cl&aacute;sico contra enroque
+                                corto.</li>
+                            <li><strong>Sacrificio de torre en c3/c6:</strong> Destruye la estructura de peones.</li>
+                            <li>Calcula hasta el final antes de sacrificar.</li>
+                            <li>Mate de Legal: sacrificio de dama en la apertura.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Mates B&aacute;sicos</h3>
+                        <p>Patrones de mate que todo jugador debe reconocer en milisegundos.</p>
+                        <div class="study-diagram" data-fen="6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1"></div>
+                        <ul class="compact-list">
+                            <li><strong>Mate de pasillo:</strong> Torre da mate en la &uacute;ltima fila.</li>
+                            <li><strong>Mate ahogado:</strong> Cuidado con dejar al rey sin movimientos legales.</li>
+                            <li><strong>Mate &aacute;rabe:</strong> Caballo y torre cooperan para dar mate.</li>
+                            <li><strong>Mate de anastasia:</strong> Caballo en e7 y torre en la columna h.</li>
+                        </ul>
+                    </article>
+                </div>
+            </div>
+
+            <!-- ENDGAMES SECTION -->
+            <div id="study-endgames" class="study-detail" style="display:none;">
+                <button class="study-back-btn" data-study-back>&larr; Volver al Centro de Estudio</button>
+                <h2>&#9812; Finales</h2>
+                <p class="study-intro">Los finales son donde se ganan o pierden la mayor&iacute;a de partidas. Dominar
+                    estas t&eacute;cnicas te dar&aacute; puntos ELO inmediatos.</p>
+
+                <div class="study-grid">
+                    <article class="card study-card">
+                        <h3>Rey y Pe&oacute;n vs Rey</h3>
+                        <p>El final m&aacute;s b&aacute;sico y esencial. La regla de la oposici&oacute;n decide
+                            qui&eacute;n gana.</p>
+                        <div class="study-diagram" data-fen="8/8/8/8/8/4k3/4P3/4K3 w - - 0 1"></div>
+                        <ul class="compact-list">
+                            <li><strong>Oposici&oacute;n:</strong> El rey que est&eacute; frente al otro con un
+                                n&uacute;mero impar de casillas entre ellos tiene la oposici&oacute;n.</li>
+                            <li>Si tu rey est&aacute; delante del pe&oacute;n, generalmente ganas.</li>
+                            <li>Si el rey rival tiene la oposici&oacute;n, generalmente son tablas.</li>
+                            <li>Excepto con pe&oacute;n de torre: siempre tablas si el rey defensor llega a la esquina.
+                            </li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Cuadrado del Pe&oacute;n</h3>
+                        <p>Regla visual para saber si el rey rival puede alcanzar un pe&oacute;n pasado antes de que
+                            corone.</p>
+                        <div class="study-diagram" data-fen="8/8/8/8/4P3/8/k7/4K3 w - - 0 1"></div>
+                        <ul class="compact-list">
+                            <li>Dibuja un cuadrado desde el pe&oacute;n hasta la fila 8.</li>
+                            <li>Si el rey est&aacute; <strong>dentro</strong> del cuadrado (al mover), atrapa el
+                                pe&oacute;n.</li>
+                            <li>Si el rey est&aacute; <strong>fuera</strong>, el pe&oacute;n corona.</li>
+                            <li>Recuerda: desde la fila 2, el pe&oacute;n puede avanzar 2 casillas.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Finales de Torres</h3>
+                        <p>El 50% de los finales involucran torres. Dominar estos principios es cr&iacute;tico.</p>
+                        <div class="study-diagram" data-fen="8/8/8/4k3/R7/4PK2/8/4r3 w - - 0 1"></div>
+                        <ul class="compact-list">
+                            <li><strong>Posici&oacute;n Lucena:</strong> T&eacute;cnica del puente para ganar con torre
+                                y pe&oacute;n.</li>
+                            <li><strong>Posici&oacute;n Philidor:</strong> T&eacute;cnica defensiva, mantener torre en
+                                6a fila.</li>
+                            <li>Torres activas &gt; material extra.</li>
+                            <li>Cortar al rey rival es prioridad.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Mate con Torre y Rey</h3>
+                        <p>T&eacute;cnica b&aacute;sica que debes dominar: forzar al rey rival a la orilla.</p>
+                        <div class="study-diagram" data-fen="8/8/8/4k3/8/8/R7/4K3 w - - 0 1"></div>
+                        <ul class="compact-list">
+                            <li>Paso 1: Corta casillas con la torre (barreras).</li>
+                            <li>Paso 2: Acerca tu rey para crear oposici&oacute;n.</li>
+                            <li>Paso 3: Empuja al rey rival a la &uacute;ltima fila.</li>
+                            <li>Paso 4: Da mate con la torre. M&aacute;ximo 15-20 movimientos.</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Peones Pasados</h3>
+                        <p>Un pe&oacute;n pasado es aquel que no tiene peones enemigos que lo bloqueen. Son
+                            extremadamente poderosos.</p>
+                        <div class="study-diagram" data-fen="8/5pk1/8/3P4/8/8/5PK1/8 w - - 0 1"></div>
+                        <ul class="compact-list">
+                            <li>Un pe&oacute;n pasado protegido es una gran ventaja.</li>
+                            <li>Dos peones pasados conectados a menudo ganan.</li>
+                            <li>Sacrifica material para crear peones pasados en finales.</li>
+                            <li>El candidato m&aacute;s lejano primero (regla de Capablanca).</li>
+                        </ul>
+                    </article>
+
+                    <article class="card study-card">
+                        <h3>Zugzwang</h3>
+                        <p>Situaci&oacute;n donde cualquier movimiento empeora la posici&oacute;n. Domina esta idea y
+                            ganar&aacute;s finales &ldquo;imposibles&rdquo;.</p>
+                        <div class="study-diagram" data-fen="8/8/1p6/1P2k3/1K6/8/8/8 b - - 0 1"></div>
+                        <ul class="compact-list">
+                            <li>Com&uacute;n en finales de rey y pe&oacute;n.</li>
+                            <li>El bando que tiene que mover pierde.</li>
+                            <li>Busca triangulaciones para forzar zugzwang al rival.</li>
+                            <li>En finales de alfiles del mismo color, el zugzwang es decisivo.</li>
+                        </ul>
+                    </article>
+                </div>
+            </div>
+
+            <div class="resource-links" style="margin-top: 20px;">
+                <a href="https://www.fide.com/FIDE/handbook/LawsOfChess.pdf" target="_blank"
+                    rel="noopener noreferrer">Leyes oficiales FIDE</a>
+                <a href="https://lichess.org/study" target="_blank" rel="noopener noreferrer">Estudios interactivos
+                    (Lichess)</a>
+                <a href="https://www.chessprogramming.org/Main_Page" target="_blank"
+                    rel="noopener noreferrer">Referencia t&eacute;cnica de motores</a>
+            </div>
         </section>
     </main>
+
+    <div id="settings-modal" class="settings-modal">
+        <div class="settings-overlay" id="settings-overlay"></div>
+        <div class="settings-content">
+            <button class="settings-close" id="settings-close-btn">&times;</button>
+            <h3>&#9881; Ajustes de partida</h3>
+            <div class="settings-row has-border">
+                <label>Comentarios autom&aacute;ticos</label>
+                <input type="checkbox" class="chess-toggle" id="set-coach-auto" checked>
+            </div>
+            <div class="settings-row has-border">
+                <label>Pistas</label>
+                <input type="checkbox" class="chess-toggle" id="set-hints" checked>
+            </div>
+            <div class="settings-row has-border">
+                <label>Barra de evaluaci&oacute;n</label>
+                <input type="checkbox" class="chess-toggle" id="set-eval-bar" checked>
+            </div>
+            <div class="settings-row has-border">
+                <label>Flechas de amenazas</label>
+                <input type="checkbox" class="chess-toggle" id="set-threat-arrows">
+            </div>
+            <div class="settings-row has-border">
+                <label>Flechas de sugerencias</label>
+                <input type="checkbox" class="chess-toggle" id="set-suggestion-arrows">
+            </div>
+            <div class="settings-row has-border">
+                <label>Comentarios de movimientos</label>
+                <input type="checkbox" class="chess-toggle" id="set-move-comments" checked>
+            </div>
+            <div class="settings-row has-border">
+                <label>Ordenador (motor)</label>
+                <input type="checkbox" class="chess-toggle" id="set-computer" checked>
+            </div>
+            <div class="settings-row has-border">
+                <label>Retrocesos</label>
+                <input type="checkbox" class="chess-toggle" id="set-takebacks" checked>
+            </div>
+            <div class="settings-row has-border">
+                <label>Mostrar jugadas legales</label>
+                <input type="checkbox" class="chess-toggle" id="set-legal" checked>
+            </div>
+            <div class="settings-row has-border">
+                <label>Resaltar &uacute;ltima jugada</label>
+                <input type="checkbox" class="chess-toggle" id="set-lastmove" checked>
+            </div>
+            <div class="settings-row has-border">
+                <label>Mostrar coordenadas</label>
+                <input type="checkbox" class="chess-toggle" id="set-coordinates" checked>
+            </div>
+            <div class="settings-row has-border">
+                <label>Sonidos de piezas</label>
+                <input type="checkbox" class="chess-toggle" id="set-sound" checked>
+            </div>
+            <div class="settings-row has-border">
+                <label>Auto promoci&oacute;n a dama</label>
+                <input type="checkbox" class="chess-toggle" id="set-autopromo" checked>
+            </div>
+            <div class="settings-row has-border">
+                <label>Control de Tiempo</label>
+                <select class="chess-select" id="set-time-control">
+                    <option value="0">Ninguna</option>
+                    <option value="60">1 min (Bullet)</option>
+                    <option value="180">3 min (Blitz)</option>
+                    <option value="300">5 min (Blitz)</option>
+                    <option value="600">10 min (R&aacute;pida)</option>
+                    <option value="900">15 min (R&aacute;pida)</option>
+                    <option value="1800">30 min (Cl&aacute;sica)</option>
+                </select>
+            </div>
+            <div class="settings-row">
+                <label>Tipo</label>
+                <select class="chess-select" id="set-game-type">
+                    <option value="standard">Est&aacute;ndar</option>
+                </select>
+            </div>
+        </div>
+    </div>
 
     <div id="promotion-modal" class="promotion-modal">
         <div class="promo-overlay"></div>
@@ -283,7 +656,25 @@
             <button class="promo-piece" data-piece="q"><img src="/static/media/white_queen.svg" alt="Dama" /></button>
             <button class="promo-piece" data-piece="r"><img src="/static/media/white_rook.svg" alt="Torre" /></button>
             <button class="promo-piece" data-piece="b"><img src="/static/media/white_bishop.svg" alt="Alfil" /></button>
-            <button class="promo-piece" data-piece="n"><img src="/static/media/white_knight.svg" alt="Caballo" /></button>
+            <button class="promo-piece" data-piece="n"><img src="/static/media/white_knight.svg"
+                    alt="Caballo" /></button>
+        </div>
+    </div>
+
+    <!-- End Game Modal -->
+    <div id="endgame-modal" class="modal-overlay"
+        style="display: none; opacity: 0; pointer-events: none; transition: opacity 0.3s ease;">
+        <div class="endgame-content"
+            style="background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; text-align: center; max-width: 320px; width: 90%; margin: 0 auto; box-shadow: var(--shadow); position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 2000;">
+            <h2 id="endgame-title" style="margin: 0 0 10px 0; color: var(--accent); font-size: 1.5rem;">¡Victoria!</h2>
+            <p id="endgame-reason" style="margin: 0 0 20px 0; color: var(--text-muted); font-size: 0.95rem;">por Jaque
+                Mate</p>
+            <div style="display: flex; flex-direction: column; gap: 8px;">
+                <button id="endgame-analyze-btn" class="primary-btn" type="button">&#128269; Analizar Partida</button>
+                <button id="endgame-pgn-btn" class="ghost-btn" style="border: 1px solid var(--border);"
+                    type="button">&#128190; Descargar PGN</button>
+                <button id="endgame-close-btn" class="ghost-btn" type="button">Cerrar</button>
+            </div>
         </div>
     </div>
 
@@ -295,6 +686,7 @@
     <audio id="fx-end" src="/static/media/game_end.mp3"></audio>
 
     <script src="/static/scripts/vendor/chess.global.js?v=20260223"></script>
-    <script src="/static/pages/report/scripts/main.js?v=20260223"></script>
+    <script src="/static/pages/report/scripts/main.js?v=20260223_10"></script>
 </body>
+
 </html>

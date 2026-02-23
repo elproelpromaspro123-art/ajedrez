@@ -13,6 +13,11 @@ No requiere login.
 - Frontend vanilla JS/CSS
 - Stockfish en navegador (worker)
 
+## Variables de entorno
+- `PORT` (opcional): puerto del servidor (default `3000`).
+- `GROQ_API_KEY` (opcional): habilita el chat IA desde backend.
+- `GROQ_MODEL` (opcional): modelo Groq para `/api/ai-chat` (default `groq/compound`).
+
 ## Ejecutar local
 1. Instala dependencias:
    - `npm install`

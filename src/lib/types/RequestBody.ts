@@ -7,3 +7,8 @@ export interface ParseRequestBody {
 export interface ReportRequestBody {
     positions?: EvaluatedPosition[]
 }
+
+export interface AIChatRequestBody {
+    systemPrompt?: string,
+    question?: string
+}

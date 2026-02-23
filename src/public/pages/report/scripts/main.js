@@ -5,6 +5,31 @@ if (!Chess) {
     throw new Error("Chess library failed to load.");
 }
 
+/* ===== Piece Names in Spanish ===== */
+const PIECE_NAME_ES = {
+    p: "Peón", n: "Caballo", b: "Alfil", r: "Torre", q: "Dama", k: "Rey",
+    P: "Peón", N: "Caballo", B: "Alfil", R: "Torre", Q: "Dama", K: "Rey"
+};
+
+const SAN_PIECE_ES = {
+    "K": "Rey", "Q": "Dama", "R": "Torre", "B": "Alfil", "N": "Caballo"
+};
+
+function sanToSpanish(san) {
+    if (!san) return san;
+    let desc = san;
+    if (san === "O-O") return "Enroque corto";
+    if (san === "O-O-O") return "Enroque largo";
+    const pieceChar = san[0];
+    if (SAN_PIECE_ES[pieceChar]) {
+        desc = SAN_PIECE_ES[pieceChar] + " " + san.slice(1);
+    } else if (/^[a-h]/.test(san)) {
+        desc = "Peón " + san;
+    }
+    desc = desc.replace("x", " captura en ").replace("+", " (jaque)").replace("#", " (jaque mate)");
+    return desc;
+}
+
 const PIECE_IMAGE = {
     p: "/static/media/black_pawn.svg",
     n: "/static/media/black_knight.svg",
@@ -86,6 +111,31 @@ const el = {
     playFlipBtn: document.querySelector("#play-flip-btn"),
     playNewGameBtn: document.querySelector("#play-new-game-btn"),
 
+    playSetupPanel: document.querySelector("#play-setup-panel"),
+    playGamePanel: document.querySelector("#play-game-panel"),
+    playPanelGrid: document.querySelector("#play-panel-grid"),
+    playBoardCard: document.querySelector("#play-board-card"),
+    coachHistoryContainer: document.querySelector("#coach-history-container"),
+
+    /* Computer panel */
+    computerPanel: document.querySelector("#computer-panel"),
+    computerLines: document.querySelector("#computer-lines"),
+
+    /* Move confirmation */
+    moveConfirmBar: document.querySelector("#move-confirm-bar"),
+    confirmText: document.querySelector("#confirm-text"),
+    confirmYesBtn: document.querySelector("#confirm-yes-btn"),
+    confirmNoBtn: document.querySelector("#confirm-no-btn"),
+
+    /* Endgame Modal */
+    endgameModal: document.querySelector("#endgame-modal"),
+    endgameTitle: document.querySelector("#endgame-title"),
+    endgameReason: document.querySelector("#endgame-reason"),
+    endgameAnalyzeBtn: document.querySelector("#endgame-analyze-btn"),
+    endgamePgnBtn: document.querySelector("#endgame-pgn-btn"),
+    endgameCloseBtn: document.querySelector("#endgame-close-btn"),
+
+
     botPreset: document.querySelector("#bot-preset"),
     botCustomElo: document.querySelector("#bot-custom-elo"),
     playerColor: document.querySelector("#player-color"),
@@ -93,12 +143,27 @@ const el = {
     coachDepthValue: document.querySelector("#coach-depth-value"),
     coachMessage: document.querySelector("#coach-message"),
 
-    assistLegal: document.querySelector("#assist-legal"),
-    assistLastMove: document.querySelector("#assist-lastmove"),
-    assistCoachAuto: document.querySelector("#assist-coach-auto"),
-    assistCoordinates: document.querySelector("#assist-coordinates"),
-    assistSound: document.querySelector("#assist-sound"),
-    assistAutoPromotion: document.querySelector("#assist-autopromo"),
+    /* --- All settings now from the modal with set- prefix --- */
+    setCoachAuto: document.querySelector("#set-coach-auto"),
+    setHints: document.querySelector("#set-hints"),
+    setEvalBar: document.querySelector("#set-eval-bar"),
+    setThreatArrows: document.querySelector("#set-threat-arrows"),
+    setSuggestionArrows: document.querySelector("#set-suggestion-arrows"),
+    setMoveComments: document.querySelector("#set-move-comments"),
+    setComputer: document.querySelector("#set-computer"),
+    setTakebacks: document.querySelector("#set-takebacks"),
+    setLegal: document.querySelector("#set-legal"),
+    setLastMove: document.querySelector("#set-lastmove"),
+    setCoordinates: document.querySelector("#set-coordinates"),
+    setSound: document.querySelector("#set-sound"),
+    setAutoPromo: document.querySelector("#set-autopromo"),
+    setTimeControl: document.querySelector("#set-time-control"),
+    setGameType: document.querySelector("#set-game-type"),
+
+    settingsBtn: document.querySelector("#play-settings-btn"),
+    settingsModal: document.querySelector("#settings-modal"),
+    settingsCloseBtn: document.querySelector("#settings-close-btn"),
+    settingsOverlay: document.querySelector("#settings-overlay"),
 
     analysisBoard: document.querySelector("#analysis-board"),
     analysisPgn: document.querySelector("#analysis-pgn"),
@@ -123,6 +188,12 @@ const el = {
     evalFill: document.querySelector("#eval-fill"),
     evalLabelWhite: document.querySelector("#eval-label-white"),
     evalLabelBlack: document.querySelector("#eval-label-black"),
+
+    playEvalBar: document.querySelector("#play-eval-bar"),
+    playEvalFill: document.querySelector("#play-eval-fill"),
+    playEvalLabelWhite: document.querySelector("#play-eval-label-white"),
+    playEvalLabelBlack: document.querySelector("#play-eval-label-black"),
+    playMoveBadge: document.querySelector("#play-move-badge"),
 
     promotionModal: document.querySelector("#promotion-modal"),
     promoPieces: Array.from(document.querySelectorAll(".promo-piece")),
@@ -206,6 +277,7 @@ function fenMapFromFen(fen) {
 class BoardView {
     constructor(root, options = {}) {
         this.root = root;
+        this.root.classList.add("chessboard");
         this.orientation = options.orientation || "white";
         this.interactive = Boolean(options.interactive);
         this.showCoordinates = options.showCoordinates !== false;
@@ -218,18 +290,39 @@ class BoardView {
         }
 
         this.root.addEventListener("click", (event) => {
-            if (!this.interactive || !this.onSquareClick) {
-                return;
-            }
-
+            if (!this.interactive || !this.onSquareClick) return;
             const target = event.target.closest(".square");
-            if (!target) {
-                return;
+            if (target && target.dataset.square) {
+                this.onSquareClick(target.dataset.square);
             }
+        });
 
-            const square = target.dataset.square;
-            if (square) {
-                this.onSquareClick(square);
+        this.root.addEventListener("dragstart", (event) => {
+            if (!this.interactive || !this.onSquareClick) return;
+            if (event.target.tagName === "IMG") {
+                const squareEl = event.target.closest(".square");
+                if (squareEl && squareEl.dataset.square) {
+                    event.dataTransfer.setData("text/plain", squareEl.dataset.square);
+                    // Optionally fire click to show legal moves immediately
+                    this.onSquareClick(squareEl.dataset.square);
+                }
+            }
+        });
+
+        this.root.addEventListener("dragover", (event) => {
+            event.preventDefault(); // allow drop
+        });
+
+        this.root.addEventListener("drop", (event) => {
+            event.preventDefault();
+            if (!this.interactive || !this.onDrop) return;
+            const target = event.target.closest(".square");
+            if (target && target.dataset.square) {
+                const from = event.dataTransfer.getData("text/plain");
+                const to = target.dataset.square;
+                if (from && to && from !== to) {
+                    this.onDrop(from, to);
+                }
             }
         });
 
@@ -312,23 +405,21 @@ class BoardView {
             squareEl.classList.remove("occupied");
 
             const piece = map.get(square);
-            if (!piece) {
-                return;
-            }
+            if (!piece) return;
 
             squareEl.classList.add("occupied");
 
             const img = document.createElement("img");
             img.src = PIECE_IMAGE[piece];
             img.alt = piece;
-            img.draggable = false;
+            img.draggable = true; // allow dragging
             squareEl.appendChild(img);
         });
     }
 
     clearHighlights() {
         this.squareMap.forEach((squareEl) => {
-            squareEl.classList.remove("selected", "legal", "legal-capture", "last-from", "last-to", "hint-from", "hint-to");
+            squareEl.classList.remove("selected", "legal", "legal-capture", "last-from", "last-to", "hint-from", "hint-to", "preview-from", "preview-to");
             const dot = squareEl.querySelector(".legal-dot");
             if (dot) {
                 dot.remove();
@@ -368,7 +459,7 @@ function playAudio(audioElement) {
     }
 
     audioElement.currentTime = 0;
-    audioElement.play().catch(() => {});
+    audioElement.play().catch(() => { });
 }
 
 function parseInfoLine(message, fen) {
@@ -533,9 +624,13 @@ function uciToSanFromFen(fen, uciMove) {
         return uciMove;
     }
 
-    const game = new Chess(fen);
-    const move = game.move(parsed);
-    return move ? move.san : uciMove;
+    try {
+        const game = new Chess(fen);
+        const move = game.move(parsed);
+        return move ? move.san : uciMove;
+    } catch {
+        return uciMove;
+    }
 }
 
 /* ===== Promotion Modal ===== */
@@ -568,7 +663,15 @@ function hidePromotionModal() {
 /* ===== Eval Bar ===== */
 
 function updateEvalBar(evaluation) {
-    if (!el.evalBar || !el.evalFill) {
+    updateEvalBarElements(evaluation, el.evalBar, el.evalFill, el.evalLabelWhite, el.evalLabelBlack);
+}
+
+function updatePlayEvalBar(evaluation) {
+    updateEvalBarElements(evaluation, el.playEvalBar, el.playEvalFill, el.playEvalLabelWhite, el.playEvalLabelBlack);
+}
+
+function updateEvalBarElements(evaluation, barEl, fillEl, whiteLbl, blackLbl) {
+    if (!barEl || !fillEl) {
         return;
     }
 
@@ -584,16 +687,16 @@ function updateEvalBar(evaluation) {
         }
     }
 
-    el.evalFill.style.height = `${whitePercent}%`;
+    fillEl.style.height = `${whitePercent}%`;
 
-    if (el.evalLabelWhite && el.evalLabelBlack) {
+    if (whiteLbl && blackLbl) {
         const evalText = formatEval(evaluation);
         if (!evaluation || evaluation.value >= 0) {
-            el.evalLabelWhite.textContent = evalText;
-            el.evalLabelBlack.textContent = "";
+            whiteLbl.textContent = evalText;
+            blackLbl.textContent = "";
         } else {
-            el.evalLabelBlack.textContent = evalText;
-            el.evalLabelWhite.textContent = "";
+            blackLbl.textContent = evalText;
+            whiteLbl.textContent = "";
         }
     }
 }
@@ -612,22 +715,333 @@ const playState = {
     lastMove: null,
     thinking: false,
     coaching: false,
-    sessionId: 0
+    sessionId: 0,
+    lastEvalBefore: null,
+    lastEvalAfter: null,
+    moveClassifications: {},
+    previewMove: null,       // {from, to} for visual preview highlight
+    pendingConfirmMove: null, // {from, to, san, promotion} awaiting yes/no
+    computerTopLines: [],    // latest engine top lines for computer panel
+    moveHistory: [],         // persistent move history until new game
+    startTime: null          // track game duration
 };
 
 function getPlaySettings() {
     return {
-        showLegal: el.assistLegal.checked,
-        showLastMove: el.assistLastMove.checked,
-        autoCoach: el.assistCoachAuto.checked,
-        showCoordinates: el.assistCoordinates.checked,
-        sound: el.assistSound.checked,
-        autoPromotion: el.assistAutoPromotion.checked
+        showLegal: el.setLegal ? el.setLegal.checked : true,
+        showLastMove: el.setLastMove ? el.setLastMove.checked : true,
+        autoCoach: el.setCoachAuto ? el.setCoachAuto.checked : true,
+        showCoordinates: el.setCoordinates ? el.setCoordinates.checked : true,
+        sound: el.setSound ? el.setSound.checked : true,
+        autoPromotion: el.setAutoPromo ? el.setAutoPromo.checked : true,
+        showEvalBar: el.setEvalBar ? el.setEvalBar.checked : true,
+        hintsEnabled: el.setHints ? el.setHints.checked : true,
+        takebacksEnabled: el.setTakebacks ? el.setTakebacks.checked : true,
+        computerEnabled: el.setComputer ? el.setComputer.checked : true,
+        moveComments: el.setMoveComments ? el.setMoveComments.checked : true
     };
 }
 
 function setCoachMessage(message) {
-    el.coachMessage.textContent = message;
+    if (el.coachMessage) {
+        el.coachMessage.textContent = message;
+    }
+    if (el.coachHistoryContainer) {
+        const msgEl = document.createElement("p");
+        msgEl.style.fontSize = "0.88rem";
+        msgEl.style.margin = "4px 0";
+        msgEl.style.borderBottom = "1px solid rgba(255,255,255,0.05)";
+        msgEl.style.paddingBottom = "4px";
+        msgEl.textContent = message;
+        el.coachHistoryContainer.appendChild(msgEl);
+        el.coachHistoryContainer.scrollTop = el.coachHistoryContainer.scrollHeight;
+    }
+}
+
+/* ===== Move Classification (chess.com style) ===== */
+
+const MOVE_CLASSES = [
+    { key: "brilliant", label: "\u00a1Brillante!", icon: "\u2b50", maxLoss: -30 },  // gained >30 cp unexpectedly
+    { key: "great", label: "\u00a1Gran jugada!", icon: "\ud83d\udd25", maxLoss: 0 },
+    { key: "best", label: "Mejor jugada", icon: "\u2705", maxLoss: 10 },
+    { key: "good", label: "Buena jugada", icon: "\ud83d\udc4d", maxLoss: 30 },
+    { key: "book", label: "Jugada te\u00f3rica", icon: "\ud83d\udcda", maxLoss: 0 }, // special
+    { key: "inaccuracy", label: "Imprecisi\u00f3n", icon: "\u26a0\ufe0f", maxLoss: 100 },
+    { key: "mistake", label: "Error", icon: "\u274c", maxLoss: 250 },
+    { key: "blunder", label: "\u00a1Desastre!", icon: "\ud83d\udca5", maxLoss: Infinity }
+];
+
+function classifyMove(cpLoss, isBookMove) {
+    if (isBookMove) return MOVE_CLASSES.find(c => c.key === "book");
+    if (cpLoss <= -30) return MOVE_CLASSES.find(c => c.key === "brilliant");
+    if (cpLoss <= 0) return MOVE_CLASSES.find(c => c.key === "great");
+    if (cpLoss <= 10) return MOVE_CLASSES.find(c => c.key === "best");
+    if (cpLoss <= 30) return MOVE_CLASSES.find(c => c.key === "good");
+    if (cpLoss <= 100) return MOVE_CLASSES.find(c => c.key === "inaccuracy");
+    if (cpLoss <= 250) return MOVE_CLASSES.find(c => c.key === "mistake");
+    return MOVE_CLASSES.find(c => c.key === "blunder");
+}
+
+function evalToCp(evaluation) {
+    if (!evaluation) return 0;
+    if (evaluation.type === "mate") {
+        return evaluation.value > 0 ? 10000 : -10000;
+    }
+    return evaluation.value; // centipawns
+}
+
+function showMoveBadge(classification) {
+    if (!el.playMoveBadge) return;
+    el.playMoveBadge.className = `move-badge ${classification.key}`;
+    el.playMoveBadge.textContent = `${classification.icon} ${classification.label}`;
+    el.playMoveBadge.style.display = "inline-flex";
+    // re-trigger animation
+    el.playMoveBadge.style.animation = "none";
+    void el.playMoveBadge.offsetHeight;
+    el.playMoveBadge.style.animation = "";
+}
+
+function hideMoveBadge() {
+    if (el.playMoveBadge) el.playMoveBadge.style.display = "none";
+}
+
+function renderPlayMoveList() {
+    if (!el.playMoveList) return;
+    const history = playState.game.history({ verbose: true });
+    el.playMoveList.innerHTML = "";
+
+    for (let i = 0; i < history.length; i += 2) {
+        const moveNumber = Math.floor(i / 2) + 1;
+        const wMove = history[i];
+        const bMove = history[i + 1];
+
+        const li = document.createElement("li");
+
+        const numSpan = document.createElement("span");
+        numSpan.className = "move-num";
+        numSpan.textContent = `${moveNumber}.`;
+
+        const wSpan = document.createElement("span");
+        wSpan.className = "move-san";
+        let wCls = playState.moveClassifications[i];
+        if (wCls) {
+            const dotColor = CLASSIFICATION_DOT_COLOR[wCls] || "#888";
+            const symbol = CLASSIFICATION_SYMBOL[wCls] || "";
+            wSpan.innerHTML = `<span class="move-cls-dot" style="background:${dotColor}"></span><span>${wMove.san}</span>${symbol ? `<span class="move-cls-sym" style="color:${dotColor}">${symbol}</span>` : ""}`;
+            wSpan.classList.add(`cls-${wCls}`);
+        } else {
+            wSpan.textContent = wMove.san;
+        }
+
+        const bSpan = document.createElement("span");
+        bSpan.className = "move-san";
+        if (bMove) {
+            let bCls = playState.moveClassifications[i + 1];
+            if (bCls) {
+                const dotColor = CLASSIFICATION_DOT_COLOR[bCls] || "#888";
+                const symbol = CLASSIFICATION_SYMBOL[bCls] || "";
+                bSpan.innerHTML = `<span class="move-cls-dot" style="background:${dotColor}"></span><span>${bMove.san}</span>${symbol ? `<span class="move-cls-sym" style="color:${dotColor}">${symbol}</span>` : ""}`;
+                bSpan.classList.add(`cls-${bCls}`);
+            } else {
+                bSpan.textContent = bMove.san;
+            }
+        }
+
+        li.appendChild(numSpan);
+        li.appendChild(wSpan);
+        li.appendChild(bSpan);
+        el.playMoveList.appendChild(li);
+    }
+    el.playMoveList.scrollTop = el.playMoveList.scrollHeight;
+}
+
+function buildCoachComment(classification, move, evalAfter, openingName) {
+    const evalText = formatEval(evalAfter);
+    const sanStr = move ? move.san : "";
+    const descStr = move ? sanToSpanish(move.san) : "";
+
+    switch (classification.key) {
+        case "brilliant":
+            return `${classification.icon} ${descStr} (${sanStr}) \u2014 \u00a1Brillante! Jugada excepcional. (${evalText})`;
+        case "great":
+            return `${classification.icon} ${descStr} (${sanStr}) \u2014 \u00a1Gran jugada! Mejoraste tu posici\u00f3n. (${evalText})`;
+        case "best":
+            return `${classification.icon} ${descStr} (${sanStr}) \u2014 La mejor jugada aqu\u00ed. (${evalText})`;
+        case "good":
+            return `\ud83d\udc4d ${descStr} (${sanStr}) \u2014 Buena jugada. (${evalText})`;
+        case "book":
+            return `\ud83d\udcda ${descStr} (${sanStr}) \u2014 Jugada te\u00f3rica${openingName ? ": " + openingName : " de apertura"}. (${evalText})`;
+        case "inaccuracy":
+            return `\u26a0\ufe0f ${descStr} (${sanStr}) \u2014 Imprecisi\u00f3n, hab\u00eda algo mejor. (${evalText})`;
+        case "mistake":
+            return `\u274c ${descStr} (${sanStr}) \u2014 Error. Perdiste ventaja. (${evalText})`;
+        case "blunder":
+            return `\ud83d\udca5 ${descStr} (${sanStr}) \u2014 \u00a1Desastre! Pierde material o posici\u00f3n cr\u00edtica. (${evalText})`;
+        default:
+            return `${descStr} (${evalText})`;
+    }
+}
+
+/* ===== Opening book with names (chess.com style) ===== */
+const OPENING_BOOK = [
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Bb5"], name: "Apertura Española (Ruy López)" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6"], name: "Ruy López — Variante Morphy" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4"], name: "Apertura Italiana" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"], name: "Giuoco Piano" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6"], name: "Defensa Dos Caballos" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "d4"], name: "Apertura Escocesa" },
+    { moves: ["e4", "e5", "Nf3", "Nf6"], name: "Defensa Petrov" },
+    { moves: ["e4", "e5", "Nf3", "d6"], name: "Defensa Philidor" },
+    { moves: ["e4", "e5", "f4"], name: "Gambito de Rey" },
+    { moves: ["e4", "e5", "d4"], name: "Gambito del Centro" },
+    { moves: ["e4", "e5", "Nc3"], name: "Apertura Viena" },
+    { moves: ["e4", "c5"], name: "Defensa Siciliana" },
+    { moves: ["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3"], name: "Siciliana — Variante Najdorf" },
+    { moves: ["e4", "c5", "Nf3", "Nc6"], name: "Siciliana — Variante Clásica" },
+    { moves: ["e4", "c5", "Nf3", "e6"], name: "Siciliana — Variante Paulsen" },
+    { moves: ["e4", "c5", "c3"], name: "Siciliana — Variante Alapin" },
+    { moves: ["e4", "e6"], name: "Defensa Francesa" },
+    { moves: ["e4", "e6", "d4", "d5"], name: "Defensa Francesa — Clásica" },
+    { moves: ["e4", "e6", "d4", "d5", "Nc3"], name: "Francesa — Variante Winawer" },
+    { moves: ["e4", "c6"], name: "Defensa Caro-Kann" },
+    { moves: ["e4", "c6", "d4", "d5"], name: "Caro-Kann — Línea Principal" },
+    { moves: ["e4", "d5"], name: "Defensa Escandinava" },
+    { moves: ["e4", "d6"], name: "Defensa Pirc" },
+    { moves: ["e4", "g6"], name: "Defensa Moderna" },
+    { moves: ["e4", "Nf6"], name: "Defensa Alekhine" },
+    { moves: ["d4", "d5", "c4"], name: "Gambito de Dama" },
+    { moves: ["d4", "d5", "c4", "e6"], name: "Gambito de Dama Rehusado" },
+    { moves: ["d4", "d5", "c4", "dxc4"], name: "Gambito de Dama Aceptado" },
+    { moves: ["d4", "d5", "c4", "c6"], name: "Defensa Eslava" },
+    { moves: ["d4", "Nf6", "c4", "g6", "Nc3", "Bg7"], name: "Defensa India de Rey" },
+    { moves: ["d4", "Nf6", "c4", "g6"], name: "Sistema Indio de Rey" },
+    { moves: ["d4", "Nf6", "c4", "e6", "Nc3", "Bb4"], name: "Defensa Nimzo-India" },
+    { moves: ["d4", "Nf6", "c4", "e6", "Nf3", "b6"], name: "Defensa India de Dama" },
+    { moves: ["d4", "Nf6", "c4", "c5"], name: "Defensa Benoni" },
+    { moves: ["d4", "Nf6", "Nf3", "g6", "c4", "Bg7"], name: "India de Rey — Sistema Clásico" },
+    { moves: ["d4", "Nf6", "Bg5"], name: "Ataque Trompowsky" },
+    { moves: ["d4", "d5", "Nf3", "Nf6", "c4"], name: "Gambito de Dama Tardío" },
+    { moves: ["d4", "d5", "Bf4"], name: "Sistema Londres" },
+    { moves: ["d4", "d5", "Nf3", "Nf6", "Bf4"], name: "Sistema Londres" },
+    { moves: ["d4", "f5"], name: "Defensa Holandesa" },
+    { moves: ["c4"], name: "Apertura Inglesa" },
+    { moves: ["c4", "e5"], name: "Inglesa — Siciliana Invertida" },
+    { moves: ["c4", "c5"], name: "Inglesa — Simétrica" },
+    { moves: ["Nf3", "d5", "g3"], name: "Apertura Réti" },
+    { moves: ["Nf3", "Nf6", "g3", "g6", "Bg2", "Bg7"], name: "Apertura Réti — Doble Fianchetto" },
+    { moves: ["g3"], name: "Sistema Barcza" },
+    { moves: ["b3"], name: "Apertura Larsen" },
+    { moves: ["f4"], name: "Apertura Bird" },
+    { moves: ["e4", "e5", "Nf3", "Nc6"], name: "Apertura Abierta — Juego Abierto" },
+    { moves: ["e4", "e5", "Nf3"], name: "Juego Abierto" },
+    { moves: ["d4", "d5"], name: "Juego Cerrado" },
+    { moves: ["e4"], name: "Apertura del Peón de Rey" },
+    { moves: ["d4"], name: "Apertura del Peón de Dama" }
+];
+
+// Sort by longest first for best match
+OPENING_BOOK.sort((a, b) => b.moves.length - a.moves.length);
+
+function detectOpening(game) {
+    const history = game.history();
+    for (const opening of OPENING_BOOK) {
+        if (opening.moves.length > history.length) continue;
+        let match = true;
+        for (let i = 0; i < opening.moves.length; i++) {
+            if (history[i] !== opening.moves[i]) { match = false; break; }
+        }
+        if (match) return opening.name;
+    }
+    return null;
+}
+
+function isLikelyBookMove(game, san) {
+    if (game.history().length > 16) return { isBook: false, name: null };
+    const BOOK_MOVES_BASIC = new Set([
+        "e4", "d4", "Nf3", "c4", "g3", "b3", "f4", "Nc3", "e3", "d3", "b4", "c3",
+        "e5", "d5", "Nf6", "c5", "g6", "e6", "c6", "d6", "b6", "Nc6", "f5",
+        "Bb5", "Bc4", "Be2", "Bd3", "Bg2", "Bb2", "Bf4", "Bg5", "Be7", "Bb4", "Bc5", "Bb7",
+        "O-O", "O-O-O", "a3", "a6", "h3", "h6", "Re1", "Qe2", "Qd2", "Qb3"
+    ]);
+    const isBook = BOOK_MOVES_BASIC.has(san);
+    const name = isBook ? detectOpening(game) : null;
+    return { isBook, name };
+}
+
+/** Evaluate position BEFORE player move to get baseline eval */
+async function getPositionEval(fen, localSession) {
+    try {
+        const result = await evaluateWithStockfish({
+            fen,
+            depth: 12,
+            multipv: 1,
+            movetime: 800
+        });
+        if (localSession !== playState.sessionId) return null;
+        return result.lines[0] ? result.lines[0].evaluation : null;
+    } catch {
+        return null;
+    }
+}
+
+/** Full move evaluation: compare eval before vs after */
+async function evaluateLastMove(move, fenBefore, fenAfter, localSession) {
+    const settings = getPlaySettings();
+    if (!settings.computerEnabled || !settings.moveComments) {
+        return;
+    }
+
+    const isPlayerMove = move.color === (playState.playerColor === 'white' ? 'w' : 'b');
+
+    if (isPlayerMove) {
+        setCoachMessage("\ud83e\udde0 Evaluando tu jugada...");
+    }
+
+    try {
+        // Get eval BEFORE (from white's perspective)
+        const evalBefore = await getPositionEval(fenBefore, localSession);
+        if (localSession !== playState.sessionId) return;
+
+        // Get eval AFTER
+        const evalAfter = await getPositionEval(fenAfter, localSession);
+        if (localSession !== playState.sessionId) return;
+
+        // Update eval bar
+        if (settings.showEvalBar) {
+            updatePlayEvalBar(evalAfter);
+        }
+        playState.lastEvalBefore = evalBefore;
+        playState.lastEvalAfter = evalAfter;
+
+        // Calculate centipawn loss from the perspective of the player who moved
+        const cpBefore = evalToCp(evalBefore);
+        const cpAfter = evalToCp(evalAfter);
+        const moverIsWhite = move.color === 'w';
+
+        // Positive cpLoss means the move was worse
+        const cpLoss = moverIsWhite ? (cpBefore - cpAfter) : (cpAfter - cpBefore);
+
+        // Check book move
+        const bookResult = isLikelyBookMove(playState.game, move.san);
+        const bookMove = bookResult.isBook && cpLoss < 30;
+
+        // Classify and save
+        const cls = classifyMove(cpLoss, bookMove);
+        playState.moveClassifications[playState.game.history().length - 1] = cls.key;
+        renderPlayMoveList();
+
+        if (isPlayerMove) {
+            showMoveBadge(cls);
+            setCoachMessage(buildCoachComment(cls, move, evalAfter, bookResult.name));
+        } else {
+            // For bot move, just show a general message or the classification without taking over
+            setCoachMessage(`El rival jugó ${move.san}. (${cls.key}). Tu turno.`);
+        }
+    } catch {
+        if (isPlayerMove) {
+            setCoachMessage(`Jugaste ${move.san}. No se pudo evaluar.`);
+        }
+    }
 }
 
 function playMoveSound(move) {
@@ -651,29 +1065,58 @@ function playMoveSound(move) {
     }
 }
 
+function playAudio(audioEl) {
+    if (audioEl) {
+        audioEl.currentTime = 0;
+        audioEl.play().catch(e => console.warn('Audio play failed:', e));
+    }
+}
+
 function formatGameOver(game) {
+    let title = "¡Juego Terminado!";
+    let reason = "";
+
     if (game.isCheckmate()) {
         const winner = game.turn() === "w" ? "Negras" : "Blancas";
-        return `Jaque mate — ganan ${winner}.`;
+        const isPlayerWin = (winner === "Blancas" && playState.playerColor === "white") || (winner === "Negras" && playState.playerColor === "black");
+        if (getPlaySettings().computerEnabled) {
+            title = isPlayerWin ? "¡Victoria!" : "Derrota";
+        } else {
+            title = `Ganan las ${winner}`;
+        }
+        reason = `por Jaque Mate`;
+    } else if (game.isStalemate()) {
+        title = "Empate";
+        reason = "por Ahogado";
+    } else if (game.isThreefoldRepetition()) {
+        title = "Empate";
+        reason = "por Repetición";
+    } else if (game.isInsufficientMaterial()) {
+        title = "Empate";
+        reason = "por Material Insuficiente";
+    } else if (game.isDraw()) {
+        title = "Empate";
+        reason = "por límite de movimientos o mutuo acuerdo";
     }
 
-    if (game.isStalemate()) {
-        return "Tablas por ahogado.";
+    if (playState.startTime) {
+        const durationSeconds = Math.floor((Date.now() - playState.startTime) / 1000);
+        const mins = Math.floor(durationSeconds / 60);
+        const secs = durationSeconds % 60;
+        reason += `<br/><br/>Duración: ${mins}m ${secs}s`;
     }
 
-    if (game.isThreefoldRepetition()) {
-        return "Tablas por repetición.";
+    if (el.endgameModal) {
+        el.endgameTitle.textContent = title;
+        el.endgameReason.innerHTML = reason;
+        el.endgameModal.style.display = "flex";
+        setTimeout(() => {
+            el.endgameModal.style.opacity = "1";
+            el.endgameModal.style.pointerEvents = "auto";
+        }, 10);
     }
 
-    if (game.isInsufficientMaterial()) {
-        return "Tablas por material insuficiente.";
-    }
-
-    if (game.isDraw()) {
-        return "Tablas.";
-    }
-
-    return "Partida finalizada.";
+    return `${title} - ${reason.replace(/<br\/><br\/>.*/, "")}`;
 }
 
 function renderPlayMoves() {
@@ -743,6 +1186,12 @@ function renderPlayBoard() {
         playState.board.highlightSquares([playState.hintMove.to], "hint-to");
     }
 
+    // Preview highlights for suggested moves
+    if (playState.previewMove) {
+        playState.board.highlightSquares([playState.previewMove.from], "preview-from");
+        playState.board.highlightSquares([playState.previewMove.to], "preview-to");
+    }
+
     if (playState.selectedSquare) {
         playState.board.highlightSquares([playState.selectedSquare], "selected");
 
@@ -751,13 +1200,161 @@ function renderPlayBoard() {
         }
     }
 
+    // Eval bar visibility
+    if (el.playEvalBar) {
+        el.playEvalBar.style.display = settings.showEvalBar ? "" : "none";
+    }
+
     renderPlayMoves();
     renderPlayStatus();
+    renderComputerPanel();
 }
 
 function clearPlaySelection() {
     playState.selectedSquare = null;
     playState.legalTargets = [];
+}
+
+/* ===== Computer Panel (Stockfish best lines like chess.com) ===== */
+
+function renderComputerPanel() {
+    const settings = getPlaySettings();
+    if (!el.computerPanel || !el.computerLines) return;
+
+    if (!settings.computerEnabled || playState.computerTopLines.length === 0) {
+        el.computerPanel.style.display = "none";
+        return;
+    }
+    el.computerPanel.style.display = "";
+    el.computerLines.innerHTML = "";
+
+    const fen = playState.game.fen();
+    playState.computerTopLines.forEach((line) => {
+        const div = document.createElement("div");
+        div.className = "engine-line";
+
+        const evalSpan = document.createElement("span");
+        const evalText = formatEval(line.evaluation);
+        evalSpan.className = "engine-eval " + (line.evaluation && line.evaluation.value >= 0 ? "positive" : "negative");
+        evalSpan.textContent = evalText;
+
+        const movesSpan = document.createElement("span");
+        movesSpan.className = "engine-moves";
+        const san = line.moveSAN || uciToSanFromFen(fen, line.moveUCI);
+        const desc = sanToSpanish(san);
+        movesSpan.textContent = `${desc} (${san})`;
+
+        const depthSpan = document.createElement("span");
+        depthSpan.className = "engine-depth";
+        depthSpan.textContent = `D${line.depth}`;
+
+        div.append(evalSpan, movesSpan, depthSpan);
+
+        // Click to preview this move
+        div.addEventListener("click", () => {
+            const parsed = parseUciMove(line.moveUCI);
+            if (parsed) {
+                showMoveConfirmation(parsed.from, parsed.to, san, parsed.promotion);
+            }
+        });
+
+        el.computerLines.appendChild(div);
+    });
+}
+
+/* ===== Move Preview & Confirmation ===== */
+
+function showMoveConfirmation(from, to, san, promotion) {
+    playState.previewMove = { from, to };
+    playState.pendingConfirmMove = { from, to, san, promotion };
+
+    if (el.confirmText) {
+        el.confirmText.textContent = `\u00bfJugar ${sanToSpanish(san)} (${san})?`;
+    }
+    if (el.moveConfirmBar) {
+        el.moveConfirmBar.classList.add("visible");
+    }
+
+    renderPlayBoard();
+}
+
+function cancelMoveConfirmation() {
+    playState.previewMove = null;
+    playState.pendingConfirmMove = null;
+    if (el.moveConfirmBar) {
+        el.moveConfirmBar.classList.remove("visible");
+    }
+    renderPlayBoard();
+}
+
+async function confirmSuggestedMove() {
+    const pending = playState.pendingConfirmMove;
+    if (!pending) return;
+
+    playState.previewMove = null;
+    playState.pendingConfirmMove = null;
+    if (el.moveConfirmBar) {
+        el.moveConfirmBar.classList.remove("visible");
+    }
+
+    const fenBefore = playState.game.fen();
+    const move = playState.game.move({
+        from: pending.from,
+        to: pending.to,
+        promotion: pending.promotion || "q"
+    });
+
+    if (!move) {
+        setCoachMessage("No se pudo ejecutar ese movimiento.");
+        renderPlayBoard();
+        return;
+    }
+    const fenAfter = playState.game.fen();
+
+    playState.lastMove = move;
+    playState.hintMove = null;
+    clearPlaySelection();
+    playMoveSound(move);
+    renderPlayBoard();
+    renderPlayMoveList();
+
+    if (playState.game.isGameOver()) {
+        setCoachMessage(formatGameOver(playState.game));
+        if (getPlaySettings().sound) playAudio(el.fxEnd);
+        renderPlayStatus();
+        return;
+    }
+
+    const localSession = playState.sessionId;
+    evaluatePlayerMove(move, fenBefore, fenAfter, localSession);
+
+    if (getPlaySettings().computerEnabled) {
+        await playBotMove();
+    }
+}
+
+/* ===== Update Computer Lines ===== */
+
+async function updateComputerLines(fen, localSession) {
+    const settings = getPlaySettings();
+    if (!settings.computerEnabled) return;
+
+    try {
+        const depth = clamp(parseInt(el.coachDepth.value, 10), 8, 18);
+        const result = await evaluateWithStockfish({
+            fen,
+            depth,
+            multipv: 3,
+            movetime: 1000
+        });
+        if (localSession !== playState.sessionId) return;
+
+        playState.computerTopLines = result.lines || [];
+        renderComputerPanel();
+    } catch {
+        playState.computerTopLines = [];
+        renderComputerPanel();
+    }
 }
 
 function currentBotElo() {
@@ -770,7 +1367,8 @@ function currentBotElo() {
 }
 
 async function maybeAutoCoach() {
-    if (!getPlaySettings().autoCoach) {
+    const settings = getPlaySettings();
+    if (!settings.autoCoach) {
         return;
     }
 
@@ -783,7 +1381,12 @@ async function maybeAutoCoach() {
         return;
     }
 
-    await requestCoachHint(true);
+    if (settings.computerEnabled) {
+        await requestCoachHint(true);
+    } else {
+        // Give tip-only coaching without engine
+        setCoachMessage("Es tu turno. Analiza la posici\u00f3n y busca la mejor jugada.");
+    }
 }
 
 async function playBotMove() {
@@ -823,12 +1426,23 @@ async function playBotMove() {
             throw new Error("Could not apply bot move.");
         }
 
+        const fenAfterMove = playState.game.fen();
+        const fenBeforeMove = fen;
+
         playState.lastMove = move;
         playState.hintMove = null;
+        hideMoveBadge();
         clearPlaySelection();
         playMoveSound(move);
-
         renderPlayBoard();
+        renderPlayMoveList();
+
+        // Evaluate bot's move
+        evaluateLastMove(move, fenBeforeMove, fenAfterMove, localSession);
+
+
+        // Update computer lines for player's turn
+        updateComputerLines(playState.game.fen(), localSession);
 
         await maybeAutoCoach();
     } catch {
@@ -842,6 +1456,18 @@ async function playBotMove() {
 }
 
 async function requestCoachHint(isAuto = false) {
+    const settings = getPlaySettings();
+
+    if (!isAuto && !settings.hintsEnabled) {
+        setCoachMessage("Las pistas están desactivadas. Actívalas en Ajustes.");
+        return;
+    }
+
+    if (!settings.computerEnabled) {
+        setCoachMessage("El motor está desactivado. Actívalo en Ajustes para obtener sugerencias.");
+        return;
+    }
+
     if (playState.thinking || playState.coaching) {
         return;
     }
@@ -873,13 +1499,16 @@ async function requestCoachHint(isAuto = false) {
         const result = await evaluateWithStockfish({
             fen,
             depth,
-            multipv: 2,
+            multipv: 3,
             movetime: 1200
         });
 
         if (localSession !== playState.sessionId) {
             return;
         }
+
+        // Update computer panel with engine lines
+        playState.computerTopLines = result.lines || [];
 
         const bestParsed = parseUciMove(result.bestMove);
         playState.hintMove = bestParsed ? { from: bestParsed.from, to: bestParsed.to } : null;
@@ -888,13 +1517,20 @@ async function requestCoachHint(isAuto = false) {
         const secondLine = result.lines[1];
 
         const bestSan = uciToSanFromFen(fen, result.bestMove);
+        const bestDesc = sanToSpanish(bestSan);
         const evalText = bestLine ? formatEval(bestLine.evaluation) : "--";
 
-        let message = `Mejor jugada: ${bestSan} (eval ${evalText}).`;
+        // Update eval bar
+        if (getPlaySettings().showEvalBar && bestLine) {
+            updatePlayEvalBar(bestLine.evaluation);
+        }
+
+        let message = `Mejor: ${bestDesc} (${bestSan}), eval ${evalText}.`;
 
         if (secondLine) {
             const alt = uciToSanFromFen(fen, secondLine.moveUCI);
-            message += ` Alternativa: ${alt}.`;
+            const altDesc = sanToSpanish(alt);
+            message += ` Alt: ${altDesc} (${alt}).`;
         }
 
         setCoachMessage(message);
@@ -973,18 +1609,60 @@ async function onPlaySquareClick(square) {
         return;
     }
 
+    const fenBefore = playState.game.fen(); // FEN before player moves (wait, game already moved above!)
+    // Actually we need the FEN before the move happened. Let's undo temporarily.
+    playState.game.undo();
+    const fenBeforeMove = playState.game.fen();
+    // Re-apply
+    playState.game.move({
+        from: intendedMove.from,
+        to: intendedMove.to,
+        promotion
+    });
+    const fenAfterMove = playState.game.fen();
+
     playState.lastMove = move;
     playState.hintMove = null;
     clearPlaySelection();
     playMoveSound(move);
     renderPlayBoard();
+    renderPlayMoveList();
 
     if (playState.game.isGameOver()) {
+        setCoachMessage(formatGameOver(playState.game));
+        if (getPlaySettings().sound) playAudio(el.fxEnd);
         renderPlayStatus();
         return;
     }
 
-    await playBotMove();
+    // Start parallel: evaluate player move AND start bot move
+    const localSession = playState.sessionId;
+    evaluateLastMove(move, fenBeforeMove, fenAfterMove, localSession);
+
+    if (getPlaySettings().computerEnabled) {
+        await playBotMove();
+    } else {
+        setCoachMessage("Modo sin motor. Mueve las negras manualmente.");
+    }
+}
+
+async function handleBoardDrop(from, to) {
+    if (playState.thinking || playState.game.isGameOver()) return;
+    const currentTurn = sideFromTurn(playState.game.turn());
+    if (currentTurn !== playState.playerColor) return;
+
+    const legalMoves = playState.game.moves({ square: from, verbose: true });
+    const intendedMove = legalMoves.find((move) => move.to === to);
+
+    if (!intendedMove) {
+        clearPlaySelection();
+        renderPlayBoard();
+        return;
+    }
+
+    // Set selection manually to the dropped square so variables are matched
+    playState.selectedSquare = from;
+    await onPlaySquareClick(to); // Re-use the click logic to handle promotion and execution
 }
 
 function startNewGame() {
@@ -1001,18 +1679,51 @@ function startNewGame() {
     playState.lastMove = null;
     playState.hintMove = null;
     playState.thinking = false;
+    playState.lastEvalBefore = null;
+    playState.lastEvalAfter = null;
+    playState.moveClassifications = {};
+    playState.previewMove = null;
+    playState.pendingConfirmMove = null;
+    playState.computerTopLines = [];
+    playState.moveHistory = [];
+    playState.startTime = Date.now();
     clearPlaySelection();
+    cancelMoveConfirmation();
 
     playState.board.setOrientation(playState.playerColor);
+    hideMoveBadge();
+    updatePlayEvalBar({ type: "cp", value: 0 });
     renderPlayBoard();
+    renderPlayMoveList();
 
-    setCoachMessage(`Partida nueva. Bot configurado en ${playState.botElo} ELO.`);
+    // UI Layout Toggles
+    if (el.playSetupPanel) el.playSetupPanel.style.display = "none";
+    if (el.playGamePanel) el.playGamePanel.style.display = "flex";
+    if (el.playPanelGrid) el.playPanelGrid.classList.remove("setup-mode");
+    if (el.playBoardCard) el.playBoardCard.style.display = "";
+    if (el.coachHistoryContainer) el.coachHistoryContainer.innerHTML = "";
 
-    playBotMove();
+    if (el.playEvalBar) {
+        el.playEvalBar.style.display = getPlaySettings().showEvalBar ? "" : "none";
+    }
+
+    const eloMsg = getPlaySettings().computerEnabled
+        ? `Partida nueva. Bot configurado en ${playState.botElo} ELO. \u00a1Buena suerte!`
+        : `Partida nueva. Motor desactivado \u2014 juega ambos lados.`;
+    setCoachMessage(eloMsg);
+
+    if (getPlaySettings().computerEnabled) {
+        playBotMove();
+    }
 }
 
 function undoPlayMove() {
     if (playState.thinking) {
+        return;
+    }
+
+    if (!getPlaySettings().takebacksEnabled) {
+        setCoachMessage("Los retrocesos están desactivados. Actívalos en Ajustes.");
         return;
     }
 
@@ -1029,7 +1740,9 @@ function undoPlayMove() {
     playState.lastMove = null;
     playState.hintMove = null;
     clearPlaySelection();
+    setCoachMessage("Jugada deshecha. Es tu turno.");
     renderPlayBoard();
+    renderPlayMoveList();
 }
 
 /* ===== Analysis State ===== */
@@ -1375,8 +2088,62 @@ function bindTabs() {
 
 /* ===== Event Binding ===== */
 
+function applySettingsToBoard() {
+    const s = getPlaySettings();
+    playState.board.setCoordinatesVisible(s.showCoordinates);
+
+    /* Eval bar visibility in analysis */
+    if (el.evalBar) {
+        el.evalBar.style.display = s.showEvalBar ? "" : "none";
+    }
+
+    renderPlayBoard();
+}
+
 function bindEvents() {
     playState.board.onSquareClick = onPlaySquareClick;
+    playState.board.onDrop = handleBoardDrop;
+
+    if (el.endgameCloseBtn) {
+        el.endgameCloseBtn.addEventListener("click", () => {
+            el.endgameModal.style.opacity = "0";
+            el.endgameModal.style.pointerEvents = "none";
+            setTimeout(() => el.endgameModal.style.display = "none", 300);
+        });
+    }
+
+    if (el.endgamePgnBtn) {
+        el.endgamePgnBtn.addEventListener("click", () => {
+            const pgn = playState.game.pgn();
+            const blob = new Blob([pgn], { type: "text/plain" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `ajedrez_lab_${Date.now()}.pgn`;
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+    }
+
+    if (el.endgameAnalyzeBtn) {
+        el.endgameAnalyzeBtn.addEventListener("click", () => {
+            const pgn = playState.game.pgn();
+            if (el.analysisPgn) {
+                el.analysisPgn.value = pgn;
+            }
+
+            el.endgameModal.style.opacity = "0";
+            el.endgameModal.style.pointerEvents = "none";
+            setTimeout(() => el.endgameModal.style.display = "none", 300);
+
+            // Switch to analysis tab automatically
+            const tabBtn = document.querySelector('[data-tab-target="analysis-section"]');
+            if (tabBtn) tabBtn.click();
+
+            // Trigger analysis loading
+            if (el.analysisRunBtn) el.analysisRunBtn.click();
+        });
+    }
 
     el.playStartBtn.addEventListener("click", startNewGame);
     el.playNewGameBtn.addEventListener("click", startNewGame);
@@ -1388,21 +2155,59 @@ function bindEvents() {
         renderPlayBoard();
     });
 
-    [
-        el.assistLegal,
-        el.assistLastMove,
-        el.assistCoachAuto,
-        el.assistCoordinates,
-        el.assistSound,
-        el.assistAutoPromotion
-    ].forEach((input) => {
-        input.addEventListener("change", () => {
-            renderPlayBoard();
+    /* Move confirmation buttons */
+    if (el.confirmYesBtn) {
+        el.confirmYesBtn.addEventListener("click", () => confirmSuggestedMove());
+    }
+    if (el.confirmNoBtn) {
+        el.confirmNoBtn.addEventListener("click", () => cancelMoveConfirmation());
+    }
+
+    /* Settings modal open/close */
+    if (el.settingsBtn) {
+        el.settingsBtn.addEventListener("click", () => {
+            if (el.settingsModal) el.settingsModal.classList.add("visible");
         });
+    }
+    if (el.settingsCloseBtn) {
+        el.settingsCloseBtn.addEventListener("click", () => {
+            if (el.settingsModal) el.settingsModal.classList.remove("visible");
+        });
+    }
+    if (el.settingsOverlay) {
+        el.settingsOverlay.addEventListener("click", () => {
+            if (el.settingsModal) el.settingsModal.classList.remove("visible");
+        });
+    }
+
+    /* Wire ALL settings toggles to update the board live */
+    const allSettings = [
+        el.setCoachAuto, el.setHints, el.setEvalBar,
+        el.setThreatArrows, el.setSuggestionArrows,
+        el.setMoveComments, el.setComputer, el.setTakebacks,
+        el.setLegal, el.setLastMove, el.setCoordinates,
+        el.setSound, el.setAutoPromo
+    ];
+    allSettings.forEach((toggle) => {
+        if (toggle) {
+            toggle.addEventListener("change", applySettingsToBoard);
+        }
     });
 
     el.coachDepth.addEventListener("input", () => {
         el.coachDepthValue.textContent = el.coachDepth.value;
+    });
+
+    /* Sidebar tabs (Coach / AI) */
+    document.querySelectorAll("[data-sidebar-tab]").forEach(tab => {
+        tab.addEventListener("click", () => {
+            const targetId = tab.getAttribute("data-sidebar-tab");
+            document.querySelectorAll(".sidebar-tab").forEach(t => t.classList.remove("is-active"));
+            document.querySelectorAll(".sidebar-tab-content").forEach(c => c.classList.remove("is-active"));
+            tab.classList.add("is-active");
+            const panel = document.getElementById(targetId);
+            if (panel) panel.classList.add("is-active");
+        });
     });
 
     el.analysisDepth.addEventListener("input", () => {
@@ -1484,7 +2289,236 @@ function bindEvents() {
             renderAnalysisPosition();
         }
     });
+
+    // Study section navigation
+    document.querySelectorAll("[data-study-target]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const target = btn.getAttribute("data-study-target");
+            const landing = document.getElementById("study-landing");
+            const detail = document.getElementById(target);
+            if (landing) landing.style.display = "none";
+            if (detail) {
+                detail.style.display = "block";
+                detail.style.animation = "reveal 0.3s ease";
+            }
+        });
+    });
+
+    document.querySelectorAll("[data-study-back]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const landing = document.getElementById("study-landing");
+            document.querySelectorAll(".study-detail").forEach(d => d.style.display = "none");
+            if (landing) {
+                landing.style.display = "";
+                landing.style.animation = "reveal 0.3s ease";
+            }
+        });
+    });
 }
+
+/* ===== AI Chess Assistant ===== */
+
+const aiChatMessages = document.querySelector("#ai-chat-messages");
+const aiChatInput = document.querySelector("#ai-chat-input");
+const aiChatSend = document.querySelector("#ai-chat-send");
+
+function addAiMessage(text, type) {
+    if (!aiChatMessages) return;
+    const div = document.createElement("div");
+    div.className = `ai-msg ${type}`;
+
+    // Simple markdown parsing for bold and newlines
+    let htmlText = text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n/g, '<br>');
+
+    div.innerHTML = htmlText;
+
+    aiChatMessages.appendChild(div);
+    aiChatMessages.scrollTop = aiChatMessages.scrollHeight;
+    return div;
+}
+
+/* Make SAN moves in AI bot messages clickable */
+function makeMovesClickable(msgEl) {
+    if (!msgEl) return;
+    const text = msgEl.textContent;
+    // Match chess SAN patterns like Nf3, e4, Bxe5+, O-O, O-O-O, etc.
+    const sanRegex = /\b([KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?|O-O-O|O-O)\b/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
+    while ((match = sanRegex.exec(text)) !== null) {
+        if (match.index > lastIndex) {
+            parts.push(document.createTextNode(text.slice(lastIndex, match.index)));
+        }
+        const san = match[1];
+        const span = document.createElement("span");
+        span.className = "clickable-move";
+        span.textContent = san;
+        span.title = `Clic para previsualizar: ${sanToSpanish(san)}`;
+        span.addEventListener("click", () => {
+            // Try to parse the SAN move and show preview
+            try {
+                const game = new Chess(playState.game.fen());
+                const move = game.move(san);
+                if (move) {
+                    showMoveConfirmation(move.from, move.to, move.san, move.promotion);
+                }
+            } catch { /* invalid move in current position */ }
+        });
+        parts.push(span);
+        lastIndex = sanRegex.lastIndex;
+    }
+    if (parts.length > 0) {
+        if (lastIndex < text.length) {
+            parts.push(document.createTextNode(text.slice(lastIndex)));
+        }
+        msgEl.textContent = "";
+        parts.forEach(p => msgEl.appendChild(p));
+    }
+}
+
+function getMaterialCount(game) {
+    const board = game.board().flat().filter(Boolean);
+    const values = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
+    let white = 0, black = 0;
+    for (const piece of board) {
+        const val = values[piece.type] || 0;
+        if (piece.color === "w") white += val;
+        else black += val;
+    }
+    return { white, black, diff: white - black };
+}
+
+function describeMaterial(diff) {
+    if (diff === 0) return "El material est\u00e1 igualado.";
+    const side = diff > 0 ? "Blancas" : "Negras";
+    const abs = Math.abs(diff);
+    if (abs >= 9) return `${side} tienen ventaja decisiva de material (+${abs} puntos).`;
+    if (abs >= 5) return `${side} tienen una pieza mayor de ventaja (+${abs}).`;
+    if (abs >= 3) return `${side} tienen ventaja de pieza menor (+${abs}).`;
+    if (abs >= 1) return `${side} tienen ligera ventaja material (+${abs}).`;
+    return "Material pr\u00e1cticamente igualado.";
+}
+
+function getGamePhaseAI(game) {
+    const h = game.history().length;
+    const pieces = game.board().flat().filter(Boolean).length;
+    if (h <= 10) return "apertura";
+    if (pieces <= 12) return "final";
+    return "medio juego";
+}
+
+async function generateAiResponse(question, thinkingMsg) {
+    const game = playState.game;
+    const fen = game.fen();
+    const history = game.history();
+    const phase = getGamePhaseAI(game);
+    const material = getMaterialCount(game);
+    const materialDesc = describeMaterial(material.diff);
+    const turn = game.turn() === "w" ? "blancas" : "negras";
+    const moveNum = Math.ceil(history.length / 2);
+
+    let engineEval = null;
+    let bestMoveStr = "";
+    let bestMoveDesc = "";
+    try {
+        const result = await evaluateWithStockfish({ fen, depth: 10, multipv: 1, movetime: 500 });
+        if (result.lines[0]) {
+            engineEval = result.lines[0].evaluation;
+            bestMoveStr = uciToSanFromFen(fen, result.bestMove);
+            bestMoveDesc = sanToSpanish(bestMoveStr);
+        }
+    } catch { /* ignore */ }
+
+    const evalText = engineEval ? formatEval(engineEval) : "desconocida";
+
+    const systemPrompt = `Eres un asistente de ajedrez conciso y directo para la webapp Ajedrez Lab.
+
+REGLAS:
+1. Se BREVE y DIRECTO. Maximo 3-4 oraciones.
+2. Cuando sugieras un movimiento, siempre menciona el nombre de la pieza en espanol (Peon, Caballo, Alfil, Torre, Dama, Rey) seguido de la notacion.
+3. Ejemplo: "Mueve el Caballo a f3 (Nf3)" o "Juega Peon a e4 (e4)".
+4. Si te piden ayuda, da la mejor jugada con el nombre de la pieza y una razon corta.
+5. Responde en espanol.
+
+Contexto de la partida:
+- Fase: ${phase} | Turno: ${turn} | Jugada #${moveNum}
+- Ultimas jugadas: ${history.slice(-8).join(" ")}
+- Material: ${materialDesc}
+- Eval Stockfish: ${evalText}
+- Mejor jugada: ${bestMoveDesc} (${bestMoveStr})`;
+
+    try {
+        const response = await fetch("/api/ai-chat", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                systemPrompt,
+                question: question.slice(0, 1600)
+            })
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.message || `API Error: ${response.status}`);
+        }
+
+        const content = typeof payload.content === "string" ? payload.content.trim() : "";
+        if (!content) {
+            throw new Error("Respuesta vacia del asistente IA.");
+        }
+
+        thinkingMsg.textContent = content;
+        if (aiChatMessages) aiChatMessages.scrollTop = aiChatMessages.scrollHeight;
+    } catch (err) {
+        thinkingMsg.textContent = "Lo siento, fallo la conexion con mi motor principal de IA.";
+        console.error("AI chat error:", err);
+    }
+}
+
+async function handleAiChat() {
+    if (!aiChatInput || !aiChatMessages) return;
+    const question = aiChatInput.value.trim();
+    if (!question) return;
+
+    addAiMessage(question, "ai-user");
+    aiChatInput.value = "";
+
+    const thinkingMsg = addAiMessage("Pensando...", "ai-bot ai-thinking");
+
+    try {
+        await generateAiResponse(question, thinkingMsg);
+        thinkingMsg.classList.remove("ai-thinking");
+        // Make chess moves in the response clickable
+        makeMovesClickable(thinkingMsg);
+    } catch {
+        thinkingMsg.textContent = "Lo siento, no pude procesar tu pregunta. Int\u00e9ntalo de nuevo.";
+        thinkingMsg.classList.remove("ai-thinking");
+    }
+}
+
+function bindAiChat() {
+    if (aiChatSend) {
+        aiChatSend.addEventListener("click", handleAiChat);
+    }
+    if (aiChatInput) {
+        aiChatInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                handleAiChat();
+            }
+        });
+    }
+}
+
+/* ===== Today Label ===== */
 
 function setTodayLabel() {
     if (!el.lastUpdateLabel) {
@@ -1503,6 +2537,7 @@ function setTodayLabel() {
 function init() {
     bindTabs();
     bindEvents();
+    bindAiChat();
     renderStudyDiagrams();
     setTodayLabel();
 
@@ -1511,6 +2546,9 @@ function init() {
 
     renderPlayBoard();
     resetAnalysisSummary();
+
+    // Initialize play eval bar
+    updatePlayEvalBar({ type: "cp", value: 0 });
 }
 
 init();

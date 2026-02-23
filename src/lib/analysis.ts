@@ -383,8 +383,12 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
     // Return complete report
     return {
         accuracies: {
-            white: accuracies.white.current / accuracies.white.maximum * 100,
-            black: accuracies.black.current / accuracies.black.maximum * 100
+            white: accuracies.white.maximum > 0
+                ? accuracies.white.current / accuracies.white.maximum * 100
+                : 0,
+            black: accuracies.black.maximum > 0
+                ? accuracies.black.current / accuracies.black.maximum * 100
+                : 0
         },
         classifications,
         positions: positions

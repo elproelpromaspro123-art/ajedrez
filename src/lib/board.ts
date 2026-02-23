@@ -40,6 +40,7 @@ export function getAttackers(fen: string, square: Square): InfluencingPiece[] {
 
     let board = new Chess(fen);
     let piece = board.get(square);
+    if (!piece) return attackers;
 
     // Set colour to move to opposite of attacked piece
     board.load(fen
@@ -113,6 +114,8 @@ export function getDefenders(fen: string, square: Square) {
 
     let board = new Chess(fen);
     let piece = board.get(square);
+    if (!piece) return [];
+
     let testAttacker = getAttackers(fen, square)[0];
 
     // If there is an attacker we can test capture the piece with
@@ -164,12 +167,13 @@ export function isPieceHanging(lastFen: string, fen: string, square: Square) {
 
     let lastPiece = lastBoard.get(square);
     let piece = board.get(square);
+    if (!piece) return false;
 
     let attackers = getAttackers(fen, square);
     let defenders = getDefenders(fen, square);
 
     // If piece was just traded equally or better, not hanging
-    if (pieceValues[lastPiece.type] >= pieceValues[piece.type] && lastPiece.color != piece.color) {
+    if (lastPiece && pieceValues[lastPiece.type] >= pieceValues[piece.type] && lastPiece.color != piece.color) {
         return false;
     }
 
@@ -177,6 +181,7 @@ export function isPieceHanging(lastFen: string, fen: string, square: Square) {
     // minor piece, it was a favourable rook exchange, so rook not hanging
     if (
         piece.type == "r"
+        && lastPiece
         && pieceValues[lastPiece.type] == 3 
         && attackers.every(atk => pieceValues[atk.type] == 3)
         && attackers.length == 1
