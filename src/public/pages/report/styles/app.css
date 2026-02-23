@@ -233,6 +233,11 @@ a:hover {
 
 .analysis-grid {
     grid-template-columns: minmax(280px, 0.85fr) minmax(360px, 1.35fr);
+    align-items: stretch;
+}
+
+.analysis-grid > .card {
+    height: 100%;
 }
 
 .analysis-review-layout {
@@ -240,12 +245,14 @@ a:hover {
     grid-template-columns: minmax(220px, 430px) minmax(220px, 1fr);
     gap: 14px;
     align-items: start;
+    height: 100%;
 }
 
 .analysis-review-side {
     display: grid;
     gap: 10px;
     min-height: 0;
+    align-content: start;
 }
 
 .analysis-review-side .move-list {
@@ -1157,8 +1164,62 @@ button:disabled {
     display: flex;
     align-items: center;
     gap: 4px;
-    padding-right: 6px;
+    padding: 4px 6px;
     min-width: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+}
+
+.move-list .move-san.is-player-move {
+    border-color: rgba(129, 182, 76, 0.48);
+    background: rgba(129, 182, 76, 0.09);
+}
+
+.move-list .move-san.is-rival-move {
+    border-color: rgba(92, 139, 176, 0.48);
+    background: rgba(92, 139, 176, 0.1);
+}
+
+.move-list .move-san.is-empty {
+    border-color: transparent;
+    background: transparent;
+}
+
+.move-owner-tag {
+    font-size: 0.6rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    border-radius: 999px;
+    padding: 1px 6px;
+    margin-right: 2px;
+    flex-shrink: 0;
+}
+
+.move-owner-tag.player {
+    color: #a6cf63;
+    border: 1px solid rgba(129, 182, 76, 0.38);
+    background: rgba(129, 182, 76, 0.2);
+}
+
+.move-owner-tag.rival {
+    color: #9bc0df;
+    border: 1px solid rgba(92, 139, 176, 0.42);
+    background: rgba(92, 139, 176, 0.22);
+}
+
+.move-san-text {
+    white-space: nowrap;
+}
+
+.move-cls-label {
+    margin-left: auto;
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
 }
 
 .play-game-panel {

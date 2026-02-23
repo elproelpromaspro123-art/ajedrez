@@ -950,10 +950,34 @@ function hideMoveBadge() {
     if (el.playMoveBadge) el.playMoveBadge.style.display = "none";
 }
 
+function decorateMoveSpan(span, isPlayerMove, classificationKey) {
+    span.classList.add(isPlayerMove ? "is-player-move" : "is-rival-move");
+
+    const ownerTag = document.createElement("span");
+    ownerTag.className = `move-owner-tag ${isPlayerMove ? "player" : "rival"}`;
+    ownerTag.textContent = isPlayerMove ? "TU" : "RIVAL";
+    span.prepend(ownerTag);
+
+    if (!classificationKey) {
+        return;
+    }
+
+    const label = CLASSIFICATION_LABEL[classificationKey];
+    if (!label) {
+        return;
+    }
+
+    const clsTag = document.createElement("span");
+    clsTag.className = `move-cls-label cls-${classificationKey}`;
+    clsTag.textContent = label;
+    span.appendChild(clsTag);
+}
+
 function renderPlayMoveList() {
     if (!el.playMoveList) return;
     const history = playState.game.history({ verbose: true });
     el.playMoveList.innerHTML = "";
+    const playerIsWhite = playState.playerColor === "white";
 
     for (let i = 0; i < history.length; i += 2) {
         const moveNumber = Math.floor(i / 2) + 1;
@@ -972,11 +996,12 @@ function renderPlayMoveList() {
         if (wCls) {
             const dotColor = CLASSIFICATION_DOT_COLOR[wCls] || "#888";
             const symbol = CLASSIFICATION_SYMBOL[wCls] || "";
-            wSpan.innerHTML = `<span class="move-cls-dot" style="background:${dotColor}"></span><span>${wMove.san}</span>${symbol ? `<span class="move-cls-sym" style="color:${dotColor}">${symbol}</span>` : ""}`;
+            wSpan.innerHTML = `<span class="move-cls-dot" style="background:${dotColor}"></span><span class="move-san-text">${wMove.san}</span>${symbol ? `<span class="move-cls-sym" style="color:${dotColor}">${symbol}</span>` : ""}`;
             wSpan.classList.add(`cls-${wCls}`);
         } else {
-            wSpan.textContent = wMove.san;
+            wSpan.innerHTML = `<span class="move-san-text">${wMove.san}</span>`;
         }
+        decorateMoveSpan(wSpan, playerIsWhite, wCls);
 
         const bSpan = document.createElement("span");
         bSpan.className = "move-san";
@@ -985,11 +1010,14 @@ function renderPlayMoveList() {
             if (bCls) {
                 const dotColor = CLASSIFICATION_DOT_COLOR[bCls] || "#888";
                 const symbol = CLASSIFICATION_SYMBOL[bCls] || "";
-                bSpan.innerHTML = `<span class="move-cls-dot" style="background:${dotColor}"></span><span>${bMove.san}</span>${symbol ? `<span class="move-cls-sym" style="color:${dotColor}">${symbol}</span>` : ""}`;
+                bSpan.innerHTML = `<span class="move-cls-dot" style="background:${dotColor}"></span><span class="move-san-text">${bMove.san}</span>${symbol ? `<span class="move-cls-sym" style="color:${dotColor}">${symbol}</span>` : ""}`;
                 bSpan.classList.add(`cls-${bCls}`);
             } else {
-                bSpan.textContent = bMove.san;
+                bSpan.innerHTML = `<span class="move-san-text">${bMove.san}</span>`;
             }
+            decorateMoveSpan(bSpan, !playerIsWhite, bCls);
+        } else {
+            bSpan.classList.add("is-empty");
         }
 
         li.appendChild(numSpan);
@@ -1015,7 +1043,7 @@ function buildCoachComment(classification, move, evalAfter, openingName) {
         case "good":
             return `\ud83d\udc4d ${descStr} (${sanStr}) \u2014 Buena jugada. \u2022 Eval: ${evalText}`;
         case "book":
-            return `\ud83d\udcda \u2726 ${descStr} (${sanStr}) \u2014 Jugada te\u00f3rica${openingName ? ": " + openingName : " de apertura"}. \u2022 Eval: ${evalText}`;
+            return `\ud83d\udcda \u2726 ${descStr} (${sanStr}) \u2014 Jugada te\u00f3rica: ${openingName || "Apertura no catalogada"}. \u2022 Eval: ${evalText}`;
         case "inaccuracy":
             return `\u26a0\ufe0f ${descStr} (${sanStr}) \u2014 Imprecisi\u00f3n, hab\u00eda algo mejor. \u2022 Eval: ${evalText}`;
         case "mistake":
@@ -1099,6 +1127,26 @@ function detectOpening(history) {
     return null;
 }
 
+function detectOpeningByBestPrefix(history) {
+    let bestName = null;
+    let bestLen = 0;
+
+    for (const opening of OPENING_BOOK) {
+        const max = Math.min(opening.moves.length, history.length);
+        let len = 0;
+        while (len < max && opening.moves[len] === history[len]) {
+            len += 1;
+        }
+
+        if (len > bestLen) {
+            bestLen = len;
+            bestName = opening.name;
+        }
+    }
+
+    return bestLen >= 2 ? bestName : null;
+}
+
 function isLikelyBookMove(history, san) {
     if (history.length > 16) return { isBook: false, name: null };
     const BOOK_MOVES_BASIC = new Set([
@@ -1108,7 +1156,7 @@ function isLikelyBookMove(history, san) {
         "O-O", "O-O-O", "a3", "a6", "h3", "h6", "Re1", "Qe2", "Qd2", "Qb3"
     ]);
     const isBook = BOOK_MOVES_BASIC.has(san);
-    const name = isBook ? detectOpening(history) : null;
+    const name = isBook ? (detectOpening(history) || detectOpeningByBestPrefix(history)) : null;
     return { isBook, name };
 }
 
