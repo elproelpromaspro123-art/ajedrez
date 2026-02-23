@@ -16,6 +16,13 @@ router.post("/parse", async (req, res) => {
         return res.status(400).json({ message: "Enter a PGN to analyse." });
     }
 
+    pgn = pgn.trim();
+
+    // Accept PGNs that do not explicitly include a result marker.
+    if (!/(1-0|0-1|1\/2-1\/2|\*)\s*$/.test(pgn)) {
+        pgn += " *";
+    }
+
     // Parse PGN into object
     try {
         var [ parsedPGN ] = pgnParser.parse(pgn);
@@ -24,7 +31,7 @@ router.post("/parse", async (req, res) => {
             return res.status(400).json({ message: "Enter a PGN to analyse." });
         }
     } catch (err) {
-        return res.status(500).json({ message: "Failed to parse invalid PGN." });
+        return res.status(400).json({ message: "Invalid PGN format." });
     }
 
     // Create a virtual board

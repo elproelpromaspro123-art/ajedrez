@@ -34,6 +34,7 @@ Este repo incluye `vercel.json` para enrutar todo al servidor Express.
 Pasos recomendados:
 1. Importar repo en Vercel.
 2. En `Project Settings > Node.js Version`, seleccionar `24.x`.
+   - Tambien funciona con `20.x`.
 3. Build command: `npm run build`
 4. Output/default con configuracion del proyecto.
 5. Deploy.
