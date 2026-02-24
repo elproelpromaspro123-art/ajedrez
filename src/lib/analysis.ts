@@ -296,7 +296,8 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
 
     // Generate opening names for named positions
     for (let position of positions) {
-        let opening = openings.find(opening => position.fen.includes(opening.fen));
+        let positionPlacement = position.fen.split(" ")[0];
+        let opening = openings.find(opening => positionPlacement === opening.fen.split(" ")[0]);
         position.opening = opening?.name;
     }
 

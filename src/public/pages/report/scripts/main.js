@@ -1,4 +1,4 @@
-﻿
+
 const Chess = window.Chess;
 
 if (!Chess) {
@@ -104,6 +104,7 @@ const studyModule = APP_MODULES.study || null;
 const aiModule = APP_MODULES.ai || null;
 const playModule = APP_MODULES.play || null;
 const analysisModule = APP_MODULES.analysis || null;
+const engineModule = APP_MODULES.engine || null;
 
 const el = {
     tabs: Array.from(document.querySelectorAll(".tab-btn")),
@@ -828,6 +829,13 @@ async function warmEngineAsset() {
 
 async function evaluateWithStockfish(options) {
     const startedAt = nowMs();
+    if (engineModule && engineModule.evaluateWithStockfish) {
+        const value = await engineModule.evaluateWithStockfish(options);
+        markFirstEvalMetric(nowMs() - startedAt);
+        return value;
+    }
+
+    // Fallback to inline implementation
     const cacheKey = buildEvalCacheKey(options);
     const cached = ENGINE_EVAL_CACHE.get(cacheKey);
     if (cached && (Date.now() - cached.at) < 2200) {
@@ -851,6 +859,10 @@ async function evaluateWithStockfish(options) {
 }
 
 function uciToSanFromFen(fen, uciMove) {
+    if (engineModule && engineModule.uciToSanFromFen) {
+        return engineModule.uciToSanFromFen(fen, uciMove);
+    }
+
     const parsed = parseUciMove(uciMove);
     if (!parsed) {
         return uciMove;
@@ -1211,6 +1223,26 @@ function decorateMoveSpan(span, isPlayerMove, classificationKey, moveIndex) {
     }
 }
 
+function buildMoveSpanContent(san, dotColor, symbol) {
+    const frag = document.createDocumentFragment();
+    const dot = document.createElement("span");
+    dot.className = "move-cls-dot";
+    dot.style.background = dotColor;
+    frag.appendChild(dot);
+    const text = document.createElement("span");
+    text.className = "move-san-text";
+    text.textContent = san;
+    frag.appendChild(text);
+    if (symbol) {
+        const sym = document.createElement("span");
+        sym.className = "move-cls-sym";
+        sym.style.color = dotColor;
+        sym.textContent = symbol;
+        frag.appendChild(sym);
+    }
+    return frag;
+}
+
 function renderPlayMoveList() {
     if (!el.playMoveList) return;
     const history = playState.game.history({ verbose: true });
@@ -1234,10 +1266,13 @@ function renderPlayMoveList() {
         if (wCls) {
             const dotColor = CLASSIFICATION_DOT_COLOR[wCls] || "#888";
             const symbol = CLASSIFICATION_SYMBOL[wCls] || "";
-            wSpan.innerHTML = `<span class="move-cls-dot" style="background:${dotColor}"></span><span class="move-san-text">${wMove.san}</span>${symbol ? `<span class="move-cls-sym" style="color:${dotColor}">${symbol}</span>` : ""}`;
+            wSpan.appendChild(buildMoveSpanContent(wMove.san, dotColor, symbol));
             wSpan.classList.add(`cls-${wCls}`);
         } else {
-            wSpan.innerHTML = `<span class="move-san-text">${wMove.san}</span>`;
+            const wText = document.createElement("span");
+            wText.className = "move-san-text";
+            wText.textContent = wMove.san;
+            wSpan.appendChild(wText);
         }
         decorateMoveSpan(wSpan, playerIsWhite, wCls, i);
 
@@ -1248,10 +1283,13 @@ function renderPlayMoveList() {
             if (bCls) {
                 const dotColor = CLASSIFICATION_DOT_COLOR[bCls] || "#888";
                 const symbol = CLASSIFICATION_SYMBOL[bCls] || "";
-                bSpan.innerHTML = `<span class="move-cls-dot" style="background:${dotColor}"></span><span class="move-san-text">${bMove.san}</span>${symbol ? `<span class="move-cls-sym" style="color:${dotColor}">${symbol}</span>` : ""}`;
+                bSpan.appendChild(buildMoveSpanContent(bMove.san, dotColor, symbol));
                 bSpan.classList.add(`cls-${bCls}`);
             } else {
-                bSpan.innerHTML = `<span class="move-san-text">${bMove.san}</span>`;
+                const bText = document.createElement("span");
+                bText.className = "move-san-text";
+                bText.textContent = bMove.san;
+                bSpan.appendChild(bText);
             }
             decorateMoveSpan(bSpan, !playerIsWhite, bCls, i + 1);
         } else {
@@ -3739,10 +3777,14 @@ function bindTabs() {
                 return;
             }
 
-            el.tabs.forEach((tab) => tab.classList.remove("is-active"));
+            el.tabs.forEach((tab) => {
+                tab.classList.remove("is-active");
+                tab.setAttribute("aria-selected", "false");
+            });
             el.panels.forEach((panel) => panel.classList.remove("is-active"));
 
             button.classList.add("is-active");
+            button.setAttribute("aria-selected", "true");
 
             const panel = document.querySelector(`#${target}`);
             if (panel) {
@@ -3906,8 +3948,23 @@ function bindEvents() {
         });
     }
     document.addEventListener("keydown", (event) => {
-        if (event.key === "Escape" && el.settingsModal && el.settingsModal.classList.contains("visible")) {
+        if (event.key !== "Escape") return;
+        if (el.settingsModal && el.settingsModal.classList.contains("visible")) {
             el.settingsModal.classList.remove("visible");
+            return;
+        }
+        if (el.promotionModal && el.promotionModal.classList.contains("visible")) {
+            if (promotionResolve) {
+                promotionResolve("q");
+                promotionResolve = null;
+            }
+            hidePromotionModal();
+            return;
+        }
+        if (el.endgameModal && el.endgameModal.style.display === "flex") {
+            el.endgameModal.style.opacity = "0";
+            el.endgameModal.style.pointerEvents = "none";
+            setTimeout(() => el.endgameModal.style.display = "none", 300);
         }
     });
 
@@ -3933,9 +3990,13 @@ function bindEvents() {
     document.querySelectorAll("[data-sidebar-tab]").forEach(tab => {
         tab.addEventListener("click", () => {
             const targetId = tab.getAttribute("data-sidebar-tab");
-            document.querySelectorAll(".sidebar-tab").forEach(t => t.classList.remove("is-active"));
+            document.querySelectorAll(".sidebar-tab").forEach(t => {
+                t.classList.remove("is-active");
+                t.setAttribute("aria-selected", "false");
+            });
             document.querySelectorAll(".sidebar-tab-content").forEach(c => c.classList.remove("is-active"));
             tab.classList.add("is-active");
+            tab.setAttribute("aria-selected", "true");
             const panel = document.getElementById(targetId);
             if (panel) panel.classList.add("is-active");
         });

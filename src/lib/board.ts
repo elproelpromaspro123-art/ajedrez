@@ -71,9 +71,13 @@ export function getAttackers(fen: string, square: Square): InfluencingPiece[] {
         for (let yOffset = -1; yOffset <= 1; yOffset++) {
             if (xOffset == 0 && yOffset == 0) continue;
 
+            let newX = pieceCoordinate.x + xOffset;
+            let newY = pieceCoordinate.y + yOffset;
+            if (newX < 0 || newX > 7 || newY < 0 || newY > 7) continue;
+
             let offsetSquare = getSquare({
-                x: Math.min(Math.max(pieceCoordinate.x + xOffset, 0), 7),
-                y: Math.min(Math.max(pieceCoordinate.y + yOffset, 0), 7)
+                x: newX,
+                y: newY
             });
             let offsetPiece = board.get(offsetSquare);
             if (!offsetPiece) continue;

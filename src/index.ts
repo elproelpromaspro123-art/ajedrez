@@ -7,17 +7,39 @@ import apiRouter from "./api";
 
 const app = express();
 app.disable("x-powered-by");
+app.set("trust proxy", 1);
 
 app.use(express.json());
 
+app.use((_req, res, next) => {
+    res.setHeader("Content-Security-Policy", [
+        "default-src 'self'",
+        "script-src 'self' blob:",
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' data:",
+        "connect-src 'self' https://api.groq.com https://explorer.lichess.ovh",
+        "media-src 'self'",
+        "worker-src 'self' blob:",
+        "frame-src 'none'"
+    ].join("; "));
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    next();
+});
+
 app.use("/static",
     express.static(path.resolve("src/public"), {
-        etag: false,
-        maxAge: 0,
-        setHeaders: (res) => {
-            res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
-            res.setHeader("Pragma", "no-cache");
-            res.setHeader("Expires", "0");
+        etag: true,
+        setHeaders: (res, filePath) => {
+            if (filePath.endsWith(".html")) {
+                res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+                res.setHeader("Pragma", "no-cache");
+                res.setHeader("Expires", "0");
+            } else {
+                res.setHeader("Cache-Control", "public, max-age=86400");
+            }
         }
     })
 );

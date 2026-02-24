@@ -40,6 +40,19 @@ const AI_RATE_WINDOW_MS = 10000;
 const AI_RATE_MAX_REQUESTS = 1;
 const aiRateLimiter = new Map<string, number[]>();
 
+// Prune stale rate-limiter entries every 60 seconds
+setInterval(() => {
+    const now = Date.now();
+    for (const [clientId, timestamps] of aiRateLimiter) {
+        const active = timestamps.filter((t) => now - t < AI_RATE_WINDOW_MS);
+        if (active.length === 0) {
+            aiRateLimiter.delete(clientId);
+        } else {
+            aiRateLimiter.set(clientId, active);
+        }
+    }
+}, 60_000);
+
 function isNonEmptyString(value: unknown): value is string {
     return typeof value == "string" && value.trim().length > 0;
 }
@@ -168,48 +181,62 @@ router.post("/parse", async (req, res) => {
         pgn += " *";
     }
 
-    // Parse PGN into object
-    let parsedPGN;
-    try {
-        [ parsedPGN ] = pgnParser.parse(pgn);
+    // Try chess.js loadPgn first (handles annotations, NAGs, comments, etc.)
+    const board = new Chess();
+    let moves: { from: string; to: string; san: string; promotion?: string }[];
 
-        if (!parsedPGN) {
-            return res.status(400).json({ message: "Enter a PGN to analyse." });
-        }
+    try {
+        board.loadPgn(pgn);
+        moves = board.history({ verbose: true });
     } catch {
-        return res.status(400).json({ message: "Invalid PGN format." });
+        // Fall back to pgn-parser for backwards compatibility
+        let parsedPGN;
+        try {
+            [ parsedPGN ] = pgnParser.parse(pgn);
+
+            if (!parsedPGN) {
+                return res.status(400).json({ message: "Enter a PGN to analyse." });
+            }
+        } catch {
+            return res.status(400).json({ message: "Invalid PGN format." });
+        }
+
+        const fallbackBoard = new Chess();
+        moves = [];
+
+        for (const pgnMove of parsedPGN.moves) {
+            const moveSAN = pgnMove.move;
+            if (!isNonEmptyString(moveSAN)) {
+                return res.status(400).json({ message: "PGN contains invalid moves." });
+            }
+
+            let virtualBoardMove;
+            try {
+                virtualBoardMove = fallbackBoard.move(moveSAN);
+            } catch {
+                return res.status(400).json({ message: "PGN contains illegal moves." });
+            }
+
+            if (!virtualBoardMove) {
+                return res.status(400).json({ message: "PGN contains illegal moves." });
+            }
+
+            moves.push(virtualBoardMove);
+        }
     }
 
-    // Create a virtual board
-    const board = new Chess();
-    const positions: Position[] = [];
+    // Replay moves to build positions array
+    const replay = new Chess();
+    const positions: Position[] = [{ fen: replay.fen() }];
 
-    positions.push({ fen: board.fen() });
-
-    // Add each move to the board; log FEN and SAN
-    for (const pgnMove of parsedPGN.moves) {
-        const moveSAN = pgnMove.move;
-        if (!isNonEmptyString(moveSAN)) {
-            return res.status(400).json({ message: "PGN contains invalid moves." });
-        }
-
-        let virtualBoardMove;
-        try {
-            virtualBoardMove = board.move(moveSAN);
-        } catch {
-            return res.status(400).json({ message: "PGN contains illegal moves." });
-        }
-
-        if (!virtualBoardMove) {
-            return res.status(400).json({ message: "PGN contains illegal moves." });
-        }
-
-        const moveUCI = `${virtualBoardMove.from}${virtualBoardMove.to}${virtualBoardMove.promotion || ""}`;
+    for (const move of moves) {
+        replay.move(move.san);
+        const moveUCI = `${move.from}${move.to}${move.promotion || ""}`;
 
         positions.push({
-            fen: board.fen(),
+            fen: replay.fen(),
             move: {
-                san: moveSAN,
+                san: move.san,
                 uci: moveUCI
             }
         });
@@ -243,6 +270,15 @@ router.get("/opening-explorer", async (req, res) => {
     const moves = isNonEmptyString(req.query.moves) ? req.query.moves.trim() : "16";
     const speeds = isNonEmptyString(req.query.speeds) ? req.query.speeds.trim() : "rapid,blitz,classical";
     const ratings = isNonEmptyString(req.query.ratings) ? req.query.ratings.trim() : "1600,1800,2000";
+
+    if (fen.length > 200) {
+        return res.status(400).json({ message: "FEN too long." });
+    }
+
+    const movesNum = parseInt(moves, 10);
+    if (!Number.isFinite(movesNum) || movesNum < 1 || movesNum > 24) {
+        return res.status(400).json({ message: "Invalid moves parameter." });
+    }
 
     const cacheKey = `${fen}|${moves}|${speeds}|${ratings}`;
     const cached = explorerCache.get(cacheKey);
@@ -292,6 +328,16 @@ router.get("/opening-explorer", async (req, res) => {
                 : []
         };
 
+        // Prune expired entries if cache grows too large
+        if (explorerCache.size > 500) {
+            const now = Date.now();
+            for (const [key, entry] of explorerCache) {
+                if (now - entry.at > EXPLORER_CACHE_TTL_MS) {
+                    explorerCache.delete(key);
+                }
+            }
+        }
+
         explorerCache.set(cacheKey, {
             at: Date.now(),
             payload: safePayload
@@ -310,8 +356,28 @@ router.post("/report", async (req, res) => {
 
     const { positions }: ReportRequestBody = req.body || {};
 
-    if (!Array.isArray(positions) || positions.length == 0) {
+    if (!Array.isArray(positions) || positions.length === 0) {
         return res.status(400).json({ message: "Missing parameters." });
+    }
+
+    if (positions.length > 600) {
+        return res.status(400).json({ message: "Too many positions (max 600)." });
+    }
+
+    // Validate minimal schema for each position
+    for (let i = 0; i < positions.length; i++) {
+        const pos = positions[i];
+        if (!pos || typeof pos.fen !== "string" || pos.fen.trim().length === 0) {
+            return res.status(400).json({ message: `Position ${i} has invalid or missing FEN.` });
+        }
+        if (i > 0) {
+            if (!pos.move || typeof pos.move.uci !== "string" || pos.move.uci.trim().length === 0) {
+                return res.status(400).json({ message: `Position ${i} has invalid or missing move.` });
+            }
+            if (!Array.isArray(pos.topLines)) {
+                return res.status(400).json({ message: `Position ${i} has missing topLines.` });
+            }
+        }
     }
 
     // Generate report

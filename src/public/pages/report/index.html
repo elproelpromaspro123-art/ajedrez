@@ -13,7 +13,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
         rel="stylesheet" />
-    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260224_polish3" />
+    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260224_polish4" />
     <link rel="shortcut icon" href="/static/media/favicon-freechess.ico" type="image/x-icon" />
 </head>
 
@@ -35,14 +35,14 @@
         </div>
     </header>
 
-    <nav class="tabs" aria-label="Secciones">
-        <button class="tab-btn is-active" data-tab-target="play-section">&#9823; Jugar</button>
-        <button class="tab-btn" data-tab-target="analysis-section">&#128269; Analizar</button>
-        <button class="tab-btn" data-tab-target="study-section">&#128218; Estudio</button>
+    <nav class="tabs" role="tablist" aria-label="Secciones">
+        <button class="tab-btn is-active" data-tab-target="play-section" role="tab" aria-selected="true" aria-controls="play-section" id="tab-play">&#9823; Jugar</button>
+        <button class="tab-btn" data-tab-target="analysis-section" role="tab" aria-selected="false" aria-controls="analysis-section" id="tab-analysis">&#128269; Analizar</button>
+        <button class="tab-btn" data-tab-target="study-section" role="tab" aria-selected="false" aria-controls="study-section" id="tab-study">&#128218; Estudio</button>
     </nav>
 
     <main class="content">
-        <section id="play-section" class="panel is-active">
+        <section id="play-section" class="panel is-active" role="tabpanel" aria-labelledby="tab-play">
             <div id="play-panel-grid" class="panel-grid setup-mode">
                 <article id="play-board-card" class="card board-card" style="display: none;">
                     <div class="board-with-eval">
@@ -133,14 +133,14 @@
 
                         <!-- Tabbed Panel: Coach / AI Assistant -->
                         <div class="sidebar-tabs-container">
-                            <div class="sidebar-tabs">
-                                <button class="sidebar-tab is-active" data-sidebar-tab="coach-tab">&#128105;&#127997;
+                            <div class="sidebar-tabs" role="tablist" aria-label="Paneles laterales">
+                                <button class="sidebar-tab is-active" data-sidebar-tab="coach-tab" role="tab" aria-selected="true" aria-controls="coach-tab" id="sidebar-tab-coach">&#128105;&#127997;
                                     Entrenador</button>
-                                <button class="sidebar-tab" data-sidebar-tab="ai-tab">&#x1F916; Asistente IA</button>
+                                <button class="sidebar-tab" data-sidebar-tab="ai-tab" role="tab" aria-selected="false" aria-controls="ai-tab" id="sidebar-tab-ai">&#x1F916; Asistente IA</button>
                             </div>
 
                             <!-- Coach Tab -->
-                            <div id="coach-tab" class="sidebar-tab-content is-active">
+                            <div id="coach-tab" class="sidebar-tab-content is-active" role="tabpanel" aria-labelledby="sidebar-tab-coach">
                                 <div class="coach-feed" id="coach-history-container" aria-live="polite">
                                     <p id="coach-message">&#x2726; Hola. &iexcl;Espero que est&eacute;s preparado para un ajedrez
                                         picante!</p>
@@ -148,7 +148,7 @@
                             </div>
 
                             <!-- AI Tab -->
-                            <div id="ai-tab" class="sidebar-tab-content">
+                            <div id="ai-tab" class="sidebar-tab-content" role="tabpanel" aria-labelledby="sidebar-tab-ai">
                                 <div id="ai-chat-messages" class="ai-chat-messages" aria-live="polite">
                                     <div class="ai-msg ai-bot">Hola, soy tu asistente de ajedrez con IA.
                                         Preg&uacute;ntame lo que quieras.</div>
@@ -169,7 +169,7 @@
             </div>
         </section>
 
-        <section id="analysis-section" class="panel">
+        <section id="analysis-section" class="panel" role="tabpanel" aria-labelledby="tab-analysis">
             <div class="panel-grid analysis-grid">
                 <article class="card control-card">
                     <h3>&#128269; Analisis de partida</h3>
@@ -275,7 +275,7 @@
             </div>
         </section>
 
-        <section id="study-section" class="panel">
+        <section id="study-section" class="panel" role="tabpanel" aria-labelledby="tab-study">
             <!-- Study Landing: 3 Big Category Icons -->
             <div id="study-landing" class="study-landing">
                 <header class="study-header">
@@ -724,7 +724,7 @@
         </section>
     </main>
 
-    <div id="settings-modal" class="settings-modal">
+    <div id="settings-modal" class="settings-modal" role="dialog" aria-modal="true" aria-label="Ajustes de partida">
         <div class="settings-overlay" id="settings-overlay"></div>
         <div class="settings-content">
             <button class="settings-close" id="settings-close-btn" aria-label="Cerrar ajustes">&times;</button>
@@ -824,7 +824,7 @@
         </div>
     </div>
 
-    <div id="promotion-modal" class="promotion-modal">
+    <div id="promotion-modal" class="promotion-modal" role="dialog" aria-modal="true" aria-label="Elegir pieza de promoción">
         <div class="promo-overlay"></div>
         <div class="promo-content">
             <button class="promo-piece" data-piece="q"><img src="/static/media/white_queen.svg" alt="Dama" /></button>
@@ -836,7 +836,7 @@
     </div>
 
     <!-- End Game Modal -->
-    <div id="endgame-modal" class="modal-overlay endgame-modal">
+    <div id="endgame-modal" class="modal-overlay endgame-modal" role="dialog" aria-modal="true" aria-label="Fin de partida">
         <div class="endgame-content">
             <h2 id="endgame-title">&#161;Victoria!</h2>
             <p id="endgame-reason">por jaque mate</p>
@@ -876,14 +876,15 @@
     <audio id="fx-end" src="/static/media/game_end.mp3"></audio>
 
     <script src="/static/scripts/vendor/chess.global.js?v=20260223"></script>
-    <script src="/static/pages/report/scripts/modules/storage.js?v=20260224_polish3"></script>
-    <script src="/static/pages/report/scripts/modules/ui.js?v=20260224_polish3"></script>
-    <script src="/static/pages/report/scripts/modules/openings.js?v=20260224_polish3"></script>
-    <script src="/static/pages/report/scripts/modules/study.js?v=20260224_polish3"></script>
-    <script src="/static/pages/report/scripts/modules/ai.js?v=20260224_polish3"></script>
-    <script src="/static/pages/report/scripts/modules/play.js?v=20260224_polish3"></script>
-    <script src="/static/pages/report/scripts/modules/analysis.js?v=20260224_polish3"></script>
-    <script src="/static/pages/report/scripts/main.js?v=20260224_polish3"></script>
+    <script src="/static/pages/report/scripts/modules/engine.js?v=20260224_polish4"></script>
+    <script src="/static/pages/report/scripts/modules/storage.js?v=20260224_polish4"></script>
+    <script src="/static/pages/report/scripts/modules/ui.js?v=20260224_polish4"></script>
+    <script src="/static/pages/report/scripts/modules/openings.js?v=20260224_polish4"></script>
+    <script src="/static/pages/report/scripts/modules/study.js?v=20260224_polish4"></script>
+    <script src="/static/pages/report/scripts/modules/ai.js?v=20260224_polish4"></script>
+    <script src="/static/pages/report/scripts/modules/play.js?v=20260224_polish4"></script>
+    <script src="/static/pages/report/scripts/modules/analysis.js?v=20260224_polish4"></script>
+    <script src="/static/pages/report/scripts/main.js?v=20260224_polish4"></script>
 </body>
 
 </html>
