@@ -10,5 +10,6 @@ export interface ReportRequestBody {
 
 export interface AIChatRequestBody {
     systemPrompt?: string,
-    question?: string
+    question?: string,
+    structured?: boolean
 }

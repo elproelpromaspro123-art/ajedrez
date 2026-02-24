@@ -36,6 +36,18 @@
     --cls-forced: #9a9a9a;
 }
 
+body[data-board-theme="wood"] {
+    --board-light: #f2dfc3;
+    --board-dark: #a87045;
+    --board-last: rgba(255, 225, 122, 0.45);
+}
+
+body[data-board-theme="midnight"] {
+    --board-light: #ccd6f5;
+    --board-dark: #3c4f7a;
+    --board-last: rgba(124, 174, 255, 0.42);
+}
+
 /* ===== Reset base ===== */
 *,
 *::before,
@@ -397,6 +409,16 @@ a:hover {
     background: rgba(129, 182, 76, 0.06);
 }
 
+.coach-feed .coach-msg {
+    transition: background 0.18s ease, border-color 0.18s ease;
+    animation: reveal 0.2s ease;
+}
+
+.coach-feed .coach-msg:hover {
+    background: rgba(255, 255, 255, 0.035);
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+}
+
 /* AI Chat Messages */
 .ai-chat-messages {
     flex: 1;
@@ -571,6 +593,14 @@ a:hover {
     filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.32));
     transition: transform 0.12s cubic-bezier(0.22, 1, 0.36, 1), filter 0.15s ease, opacity 0.12s ease;
     will-change: transform, opacity;
+}
+
+body[data-piece-theme="neo"] .square img {
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.45)) saturate(1.2);
+}
+
+body[data-piece-theme="mono"] .square img {
+    filter: grayscale(0.92) contrast(1.18) drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
 }
 
 .chessboard.drag-active .square img {
@@ -765,6 +795,11 @@ a:hover {
     font-size: 0.85rem;
     transition: opacity 0.3s, transform 0.3s;
     animation: badgePop 0.35s ease;
+}
+
+.move-badge-main {
+    display: inline-flex;
+    align-items: center;
 }
 
 @keyframes badgePop {
@@ -1222,6 +1257,10 @@ button:disabled {
     white-space: nowrap;
 }
 
+.move-san .opening-link-mini {
+    margin-left: 4px;
+}
+
 .play-game-panel {
     flex-direction: column;
     height: 100%;
@@ -1301,6 +1340,84 @@ button:disabled {
 
 .clickable-move:hover {
     background: rgba(129, 182, 76, 0.25);
+}
+
+.opening-link {
+    width: auto;
+    border: 1px solid rgba(168, 135, 100, 0.55);
+    background: rgba(168, 135, 100, 0.14);
+    color: #d7bc92;
+    border-radius: 7px;
+    padding: 1px 7px;
+    line-height: 1.2;
+    font-size: 0.76rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    cursor: pointer;
+    box-shadow: 0 0 0 1px rgba(168, 135, 100, 0.1) inset;
+    transition: transform 0.14s ease, background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+}
+
+.opening-link:hover {
+    background: rgba(168, 135, 100, 0.24);
+    border-color: rgba(208, 170, 120, 0.8);
+    color: #f0d2a1;
+    transform: translateY(-1px);
+}
+
+.opening-link:focus-visible {
+    outline: none;
+    border-color: #f0d2a1;
+    box-shadow: 0 0 0 2px rgba(208, 170, 120, 0.3);
+}
+
+.opening-link-inline {
+    display: inline-flex;
+    margin: 0 2px;
+}
+
+.opening-link-compact,
+.opening-link-mini {
+    font-size: 0.7rem;
+    padding: 1px 6px;
+}
+
+.opening-link-badge {
+    margin-left: 2px;
+    font-size: 0.72rem;
+}
+
+.ai-action-chip {
+    width: auto;
+    margin: 2px 4px 2px 0;
+    border: 1px solid rgba(126, 178, 218, 0.45);
+    border-radius: 999px;
+    background: rgba(126, 178, 218, 0.14);
+    color: #b8d4ea;
+    padding: 3px 10px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+}
+
+.ai-action-chip:hover {
+    background: rgba(126, 178, 218, 0.22);
+    border-color: rgba(126, 178, 218, 0.7);
+    transform: translateY(-1px);
+}
+
+.ai-action-chip:focus-visible {
+    outline: none;
+    border-color: rgba(126, 178, 218, 0.92);
+    box-shadow: 0 0 0 2px rgba(126, 178, 218, 0.28);
+}
+
+.ai-action-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
 }
 
 /* ===== Insignias de clasificación ===== */
@@ -1414,6 +1531,61 @@ button:disabled {
     font-size: 1.05rem;
 }
 
+.progress-dashboard-box {
+    margin-top: 10px;
+}
+
+.progress-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.progress-lists-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.progress-weekly-chart {
+    display: flex;
+    align-items: end;
+    gap: 6px;
+    min-height: 84px;
+    padding: 6px 4px 0;
+}
+
+.progress-week-bar {
+    flex: 1;
+    display: grid;
+    gap: 4px;
+    justify-items: center;
+}
+
+.progress-week-label {
+    font-size: 0.63rem;
+    color: var(--text-muted);
+}
+
+.progress-week-rail {
+    width: 100%;
+    height: 68px;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.07);
+    position: relative;
+    overflow: hidden;
+}
+
+.progress-week-fill {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: linear-gradient(180deg, rgba(129, 182, 76, 0.72), rgba(92, 139, 176, 0.9));
+    border-radius: 5px 5px 0 0;
+    transition: height 0.25s ease;
+}
+
 /* ===== Tabla de clasificaciones ===== */
 .classification-table {
     width: 100%;
@@ -1490,6 +1662,96 @@ button:disabled {
     transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), background 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
+.opening-explorer-card {
+    display: grid;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.opening-explorer-header p {
+    color: var(--text-muted);
+    font-size: 0.84rem;
+}
+
+.opening-explorer-filters {
+    display: grid;
+    gap: 6px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: center;
+}
+
+.opening-explorer-filters label {
+    font-size: 0.75rem;
+}
+
+.opening-explorer-filters p {
+    margin: -3px 0 2px;
+    font-size: 0.72rem;
+}
+
+.opening-explorer-grid {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) minmax(240px, 0.85fr);
+    gap: 10px;
+}
+
+.eco-tree {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: rgba(0, 0, 0, 0.2);
+    max-height: 370px;
+    overflow-y: auto;
+    padding: 6px;
+    display: grid;
+    gap: 2px;
+}
+
+.eco-row {
+    width: 100%;
+    border: 1px solid transparent;
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text);
+    border-radius: 7px;
+    text-align: left;
+    display: grid;
+    gap: 2px;
+    padding: 7px 10px;
+}
+
+.eco-row:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.14);
+}
+
+.eco-row.is-active {
+    border-color: rgba(129, 182, 76, 0.6);
+    background: rgba(129, 182, 76, 0.12);
+}
+
+.eco-row-main {
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.eco-row-meta {
+    font-size: 0.66rem;
+    color: var(--text-muted);
+}
+
+.eco-detail {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.18);
+    display: grid;
+    gap: 8px;
+    align-content: start;
+}
+
+.eco-detail .study-diagram {
+    max-width: 220px;
+}
+
 .study-card:hover {
     transform: translateY(-4px);
     background: var(--surface-hover);
@@ -1518,6 +1780,21 @@ button:disabled {
     gap: 4px;
     color: var(--text-muted);
     font-size: 0.84rem;
+}
+
+.study-opening-focus {
+    margin-bottom: 14px;
+    border-color: rgba(168, 135, 100, 0.4);
+    background: linear-gradient(165deg, rgba(168, 135, 100, 0.13), rgba(34, 38, 56, 0.92));
+}
+
+.study-opening-focus h3 {
+    color: #e7cfab;
+}
+
+.study-opening-focus .study-diagram {
+    max-width: 240px;
+    border-color: rgba(168, 135, 100, 0.35);
 }
 
 /* ===== Modal de promoción ===== */
@@ -1944,6 +2221,16 @@ button:disabled {
     box-shadow: 0 0 0 2px var(--accent-glow);
 }
 
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(129, 182, 76, 0.35);
+    border-color: rgba(129, 182, 76, 0.8);
+}
+
 .settings-section-title {
     font-size: 0.7rem;
     text-transform: uppercase;
@@ -2070,7 +2357,20 @@ button:disabled {
         grid-template-columns: 1fr;
     }
 
+    .progress-metrics-grid,
+    .progress-lists-grid {
+        grid-template-columns: 1fr;
+    }
+
     .study-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .opening-explorer-filters {
+        grid-template-columns: 1fr;
+    }
+
+    .opening-explorer-grid {
         grid-template-columns: 1fr;
     }
 

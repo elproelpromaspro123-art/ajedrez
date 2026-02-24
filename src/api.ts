@@ -3,8 +3,10 @@ import { Chess } from "chess.js";
 import pgnParser from "pgn-parser";
 
 import analyse from "./lib/analysis";
+import { parseStructuredAIResponse } from "./lib/aiActions";
 import { Position } from "./lib/types/Position";
 import { AIChatRequestBody, ParseRequestBody, ReportRequestBody } from "./lib/types/RequestBody";
+import openings from "./resources/openings.json";
 
 const router = Router();
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
@@ -19,6 +21,20 @@ interface GroqChatCompletionResponse {
         message?: string
     }
 }
+
+interface OpeningCatalogEntry {
+    name?: string;
+    fen?: string;
+}
+
+interface ExplorerCacheEntry {
+    at: number;
+    payload: unknown;
+}
+
+const OPENING_EXPLORER_ENDPOINT = "https://explorer.lichess.ovh/lichess";
+const EXPLORER_CACHE_TTL_MS = 1000 * 60 * 30;
+const explorerCache = new Map<string, ExplorerCacheEntry>();
 
 function isNonEmptyString(value: unknown): value is string {
     return typeof value == "string" && value.trim().length > 0;
@@ -144,6 +160,93 @@ router.post("/parse", async (req, res) => {
 
 });
 
+router.get("/openings", async (_req, res) => {
+    try {
+        const payload = (openings as OpeningCatalogEntry[])
+            .filter((entry) => isNonEmptyString(entry.name) && isNonEmptyString(entry.fen))
+            .map((entry) => ({
+                name: entry.name!.trim(),
+                fen: entry.fen!.trim()
+            }));
+
+        res.json({
+            count: payload.length,
+            openings: payload
+        });
+    } catch (err) {
+        console.error("Openings catalog request failed:", err);
+        res.status(500).json({ message: "Failed to load openings catalog." });
+    }
+});
+
+router.get("/opening-explorer", async (req, res) => {
+    const fen = isNonEmptyString(req.query.fen) ? req.query.fen.trim() : "startpos";
+    const moves = isNonEmptyString(req.query.moves) ? req.query.moves.trim() : "16";
+    const speeds = isNonEmptyString(req.query.speeds) ? req.query.speeds.trim() : "rapid,blitz,classical";
+    const ratings = isNonEmptyString(req.query.ratings) ? req.query.ratings.trim() : "1600,1800,2000";
+
+    const cacheKey = `${fen}|${moves}|${speeds}|${ratings}`;
+    const cached = explorerCache.get(cacheKey);
+    if (cached && Date.now() - cached.at <= EXPLORER_CACHE_TTL_MS) {
+        return res.json(cached.payload);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 9000);
+
+    try {
+        const query = new URLSearchParams({
+            variant: "standard",
+            fen,
+            moves,
+            speeds,
+            ratings
+        });
+
+        const response = await fetch(`${OPENING_EXPLORER_ENDPOINT}?${query.toString()}`, {
+            signal: controller.signal
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+            return res.status(502).json({
+                message: payload?.error || `Opening explorer provider error (${response.status}).`
+            });
+        }
+
+        const safePayload = {
+            fen,
+            white: Number(payload?.white || 0),
+            draws: Number(payload?.draws || 0),
+            black: Number(payload?.black || 0),
+            opening: payload?.opening || null,
+            moves: Array.isArray(payload?.moves)
+                ? payload.moves.slice(0, 18).map((move: any) => ({
+                    uci: isNonEmptyString(move?.uci) ? move.uci : "",
+                    san: isNonEmptyString(move?.san) ? move.san : "",
+                    white: Number(move?.white || 0),
+                    draws: Number(move?.draws || 0),
+                    black: Number(move?.black || 0),
+                    averageRating: Number(move?.averageRating || 0),
+                    opening: move?.opening || null
+                }))
+                : []
+        };
+
+        explorerCache.set(cacheKey, {
+            at: Date.now(),
+            payload: safePayload
+        });
+
+        return res.json(safePayload);
+    } catch (err) {
+        const message = err instanceof Error ? err.message : "Opening explorer request failed.";
+        return res.status(502).json({ message });
+    } finally {
+        clearTimeout(timeout);
+    }
+});
+
 router.post("/report", async (req, res) => {
 
     const { positions }: ReportRequestBody = req.body || {};
@@ -167,7 +270,7 @@ router.post("/report", async (req, res) => {
 
 router.post("/ai-chat", async (req, res) => {
 
-    const { question, systemPrompt }: AIChatRequestBody = req.body || {};
+    const { question, systemPrompt, structured }: AIChatRequestBody = req.body || {};
 
     if (!isNonEmptyString(question)) {
         return res.status(400).json({ message: "Question is required." });
@@ -180,6 +283,15 @@ router.post("/ai-chat", async (req, res) => {
 
     try {
         const content = await requestGroqChatCompletion(safeSystemPrompt, safeQuestion);
+
+        if (structured) {
+            const parsed = parseStructuredAIResponse(content);
+            return res.json({
+                content: parsed.text || content,
+                actions: parsed.actions
+            });
+        }
+
         return res.json({ content });
     } catch (err) {
         if (err instanceof Error && err.message == "GROQ_API_KEY_MISSING") {

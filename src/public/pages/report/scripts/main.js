@@ -95,6 +95,13 @@ const CLASSIFICATION_DOT_COLOR = {
 
 const ENGINE_PRIMARY = "/static/scripts/stockfish-nnue-16.js";
 const ENGINE_FALLBACK = "/static/scripts/stockfish.js";
+const APP_MODULES = window.ReportModules || {};
+const uiModule = APP_MODULES.ui || null;
+const openingsModule = APP_MODULES.openings || null;
+const studyModule = APP_MODULES.study || null;
+const aiModule = APP_MODULES.ai || null;
+const playModule = APP_MODULES.play || null;
+const analysisModule = APP_MODULES.analysis || null;
 
 const el = {
     tabs: Array.from(document.querySelectorAll(".tab-btn")),
@@ -161,6 +168,8 @@ const el = {
     setLegal: document.querySelector("#set-legal"),
     setLastMove: document.querySelector("#set-lastmove"),
     setCoordinates: document.querySelector("#set-coordinates"),
+    setBoardTheme: document.querySelector("#set-board-theme"),
+    setPieceTheme: document.querySelector("#set-piece-theme"),
     setSound: document.querySelector("#set-sound"),
     setAutoPromo: document.querySelector("#set-autopromo"),
     setTimeControl: document.querySelector("#set-time-control"),
@@ -189,6 +198,11 @@ const el = {
     analysisPrevBtn: document.querySelector("#analysis-prev-btn"),
     analysisNextBtn: document.querySelector("#analysis-next-btn"),
     analysisEndBtn: document.querySelector("#analysis-end-btn"),
+    progressStudyStreak: document.querySelector("#progress-study-streak"),
+    progressGamesCount: document.querySelector("#progress-games-count"),
+    progressWeeklyChart: document.querySelector("#progress-weekly-chart"),
+    progressTopOpenings: document.querySelector("#progress-top-openings"),
+    progressCommonErrors: document.querySelector("#progress-common-errors"),
 
     evalBar: document.querySelector("#eval-bar"),
     evalFill: document.querySelector("#eval-fill"),
@@ -206,6 +220,18 @@ const el = {
     promoOverlay: document.querySelector(".promo-overlay"),
 
     studyDiagrams: Array.from(document.querySelectorAll(".study-diagram")),
+    ecoFilterColor: document.querySelector("#eco-filter-color"),
+    ecoFilterPopularity: document.querySelector("#eco-filter-popularity"),
+    ecoFilterPopularityValue: document.querySelector("#eco-filter-popularity-value"),
+    ecoFilterSuccess: document.querySelector("#eco-filter-success"),
+    ecoFilterSuccessValue: document.querySelector("#eco-filter-success-value"),
+    ecoSearch: document.querySelector("#eco-search"),
+    ecoTree: document.querySelector("#eco-tree"),
+    ecoDetailTitle: document.querySelector("#eco-detail-title"),
+    ecoDetailMeta: document.querySelector("#eco-detail-meta"),
+    ecoDetailBoard: document.querySelector("#eco-detail-board"),
+    ecoDetailPlan: document.querySelector("#eco-detail-plan"),
+    ecoLoadPlayBtn: document.querySelector("#eco-load-play-btn"),
 
     fxMove: document.querySelector("#fx-move"),
     fxCapture: document.querySelector("#fx-capture"),
@@ -720,11 +746,48 @@ function runStockfishInternal(options, enginePath) {
     });
 }
 
-async function evaluateWithStockfish(options) {
+const ENGINE_EVAL_CACHE = new Map();
+let engineAssetWarm = false;
+
+function buildEvalCacheKey(options) {
+    return [
+        options.fen || "",
+        options.depth || "",
+        options.multipv || "",
+        options.movetime || "",
+        options.elo || ""
+    ].join("|");
+}
+
+async function warmEngineAsset() {
+    if (engineAssetWarm) {
+        return;
+    }
+    engineAssetWarm = true;
     try {
-        return await runStockfishInternal(options, ENGINE_PRIMARY);
+        await fetch(ENGINE_PRIMARY, { cache: "force-cache" });
     } catch {
-        return runStockfishInternal(options, ENGINE_FALLBACK);
+        // ignore warmup failures
+    }
+}
+
+async function evaluateWithStockfish(options) {
+    const cacheKey = buildEvalCacheKey(options);
+    const cached = ENGINE_EVAL_CACHE.get(cacheKey);
+    if (cached && (Date.now() - cached.at) < 2200) {
+        return cached.value;
+    }
+
+    await warmEngineAsset();
+
+    try {
+        const value = await runStockfishInternal(options, ENGINE_PRIMARY);
+        ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
+        return value;
+    } catch {
+        const value = await runStockfishInternal(options, ENGINE_FALLBACK);
+        ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
+        return value;
     }
 }
 
@@ -829,12 +892,26 @@ const playState = {
     lastEvalBefore: null,
     lastEvalAfter: null,
     moveClassifications: {},
+    moveOpeningDetails: {},
     previewMove: null,       // {from, to} for visual preview highlight
     pendingConfirmMove: null, // {from, to, san, promotion} awaiting yes/no
     computerTopLines: [],    // latest engine top lines for computer panel
     moveHistory: [],         // persistent move history until new game
     startTime: null,         // track game duration
     endgameShown: false
+};
+
+const progressState = {
+    persistedGameSession: null
+};
+
+const openingExplorerState = {
+    rootFen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    rows: [],
+    filteredRows: [],
+    selectedNode: null,
+    detailBoard: null,
+    loading: false
 };
 
 function getPlaySettings() {
@@ -849,7 +926,9 @@ function getPlaySettings() {
         hintsEnabled: el.setHints ? el.setHints.checked : true,
         takebacksEnabled: el.setTakebacks ? el.setTakebacks.checked : true,
         computerEnabled: el.setComputer ? el.setComputer.checked : true,
-        moveComments: el.setMoveComments ? el.setMoveComments.checked : true
+        moveComments: el.setMoveComments ? el.setMoveComments.checked : true,
+        boardTheme: el.setBoardTheme ? el.setBoardTheme.value : "classic",
+        pieceTheme: el.setPieceTheme ? el.setPieceTheme.value : "default"
     };
 }
 
@@ -886,20 +965,68 @@ function coachNotice(type, text) {
     return `${icon} ${text}`;
 }
 
-function setCoachMessage(message) {
+function setTextWithOptionalOpeningLink(container, message, openingContext) {
+    if (!container) {
+        return;
+    }
+
+    container.innerHTML = "";
+
+    const openingName = openingContext && openingContext.openingName;
+    if (!openingName) {
+        container.textContent = message;
+        return;
+    }
+
+    const sourceText = String(message || "");
+    const sourceLower = sourceText.toLowerCase();
+    const openingLower = String(openingName).toLowerCase();
+    const index = sourceLower.indexOf(openingLower);
+
+    if (index === -1) {
+        container.appendChild(document.createTextNode(sourceText));
+        container.appendChild(document.createTextNode(" "));
+        container.appendChild(createOpeningStudyLink(openingName, openingContext, "compact"));
+        return;
+    }
+
+    const before = sourceText.slice(0, index);
+    const after = sourceText.slice(index + openingName.length);
+
+    if (before) {
+        container.appendChild(document.createTextNode(before));
+    }
+
+    container.appendChild(createOpeningStudyLink(openingName, openingContext, "inline"));
+
+    if (after) {
+        container.appendChild(document.createTextNode(after));
+    }
+}
+
+function setCoachMessage(message, options = {}) {
+    const openingContext = options && options.openingName
+        ? {
+            openingName: options.openingName,
+            openingFen: options.openingFen || null,
+            historyLine: options.historyLine || null
+        }
+        : null;
+
     if (el.coachMessage) {
-        el.coachMessage.textContent = message;
+        setTextWithOptionalOpeningLink(el.coachMessage, message, openingContext);
     }
-    if (el.coachHistoryContainer) {
-        const msgEl = document.createElement("p");
-        msgEl.style.fontSize = "0.88rem";
-        msgEl.style.margin = "4px 0";
-        msgEl.style.borderBottom = "1px solid rgba(255,255,255,0.05)";
-        msgEl.style.paddingBottom = "4px";
-        msgEl.textContent = message;
-        el.coachHistoryContainer.appendChild(msgEl);
-        el.coachHistoryContainer.scrollTop = el.coachHistoryContainer.scrollHeight;
+
+    if (!el.coachHistoryContainer) {
+        return;
     }
+
+    const msgEl = document.createElement("p");
+    msgEl.className = "coach-msg";
+    setTextWithOptionalOpeningLink(msgEl, message, openingContext);
+
+    el.coachHistoryContainer.appendChild(msgEl);
+    el.coachHistoryContainer.scrollTop = el.coachHistoryContainer.scrollHeight;
 }
 
 /* ===== Move Classification (chess.com style) ===== */
@@ -934,11 +1061,26 @@ function evalToCp(evaluation) {
     return evaluation.value; // centipawns
 }
 
-function showMoveBadge(classification, sideLabel = "", detail = "") {
+function showMoveBadge(classification, sideLabel = "", detail = "", detailContext = null) {
     if (!el.playMoveBadge) return;
     el.playMoveBadge.className = `move-badge ${classification.key}`;
-    const detailText = detail ? ` \u2022 ${detail}` : "";
-    el.playMoveBadge.textContent = `${classification.icon} ${sideLabel ? `${sideLabel}: ` : ""}${classification.label}${detailText}`;
+    el.playMoveBadge.innerHTML = "";
+
+    const mainText = document.createElement("span");
+    mainText.className = "move-badge-main";
+    mainText.textContent = `${classification.icon} ${sideLabel ? `${sideLabel}: ` : ""}${classification.label}`;
+    el.playMoveBadge.appendChild(mainText);
+
+    if (detail) {
+        el.playMoveBadge.appendChild(document.createTextNode(" \u2022 "));
+
+        if (classification.key === "book") {
+            el.playMoveBadge.appendChild(createOpeningStudyLink(detail, detailContext || { openingName: detail }, "badge"));
+        } else {
+            el.playMoveBadge.appendChild(document.createTextNode(detail));
+        }
+    }
+
     el.playMoveBadge.style.display = "inline-flex";
     // re-trigger animation
     el.playMoveBadge.style.animation = "none";
@@ -950,7 +1092,7 @@ function hideMoveBadge() {
     if (el.playMoveBadge) el.playMoveBadge.style.display = "none";
 }
 
-function decorateMoveSpan(span, isPlayerMove, classificationKey) {
+function decorateMoveSpan(span, isPlayerMove, classificationKey, moveIndex) {
     span.classList.add(isPlayerMove ? "is-player-move" : "is-rival-move");
 
     const ownerTag = document.createElement("span");
@@ -971,6 +1113,22 @@ function decorateMoveSpan(span, isPlayerMove, classificationKey) {
     clsTag.className = `move-cls-label cls-${classificationKey}`;
     clsTag.textContent = label;
     span.appendChild(clsTag);
+
+    if (classificationKey === "book") {
+        const openingDetail = playState.moveOpeningDetails[moveIndex];
+        if (openingDetail && openingDetail.name) {
+            const openingLink = createOpeningStudyLink(
+                openingDetail.name,
+                {
+                    openingName: openingDetail.name,
+                    openingFen: openingDetail.fen || null,
+                    historyLine: openingDetail.line || null
+                },
+                "mini"
+            );
+            span.appendChild(openingLink);
+        }
+    }
 }
 
 function renderPlayMoveList() {
@@ -1001,7 +1159,7 @@ function renderPlayMoveList() {
         } else {
             wSpan.innerHTML = `<span class="move-san-text">${wMove.san}</span>`;
         }
-        decorateMoveSpan(wSpan, playerIsWhite, wCls);
+        decorateMoveSpan(wSpan, playerIsWhite, wCls, i);
 
         const bSpan = document.createElement("span");
         bSpan.className = "move-san";
@@ -1015,7 +1173,7 @@ function renderPlayMoveList() {
             } else {
                 bSpan.innerHTML = `<span class="move-san-text">${bMove.san}</span>`;
             }
-            decorateMoveSpan(bSpan, !playerIsWhite, bCls);
+            decorateMoveSpan(bSpan, !playerIsWhite, bCls, i + 1);
         } else {
             bSpan.classList.add("is-empty");
         }
@@ -1114,13 +1272,126 @@ const OPENING_BOOK = [
 
 // Sort by longest first for best match
 OPENING_BOOK.sort((a, b) => b.moves.length - a.moves.length);
+seedManualOpeningCatalog();
 
-function detectOpening(history) {
+const BOOK_MOVES_BASIC = new Set([
+    "e4", "d4", "Nf3", "c4", "g3", "b3", "f4", "Nc3", "e3", "d3", "b4", "c3",
+    "e5", "d5", "Nf6", "c5", "g6", "e6", "c6", "d6", "b6", "Nc6", "f5",
+    "Bb5", "Bc4", "Be2", "Bd3", "Bg2", "Bb2", "Bf4", "Bg5", "Be7", "Bb4", "Bc5", "Bb7",
+    "O-O", "O-O-O", "a3", "a6", "h3", "h6", "Re1", "Qe2", "Qd2", "Qb3"
+]);
+
+const openingCatalogState = {
+    loaded: false,
+    loading: false,
+    byPlacement: new Map(),
+    byName: new Map(),
+    namesByLength: [],
+    source: "manual"
+};
+
+function normalizeOpeningName(name) {
+    return String(name || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function normalizeFenPlacement(fen) {
+    if (!fen || typeof fen !== "string") {
+        return "";
+    }
+
+    return fen.trim().split(" ")[0] || "";
+}
+
+function indexOpeningEntry(name, fen) {
+    if (!name) {
+        return;
+    }
+
+    const placement = normalizeFenPlacement(fen);
+    if (placement) {
+        const existingName = openingCatalogState.byPlacement.get(placement);
+        if (!existingName || name.length > existingName.length) {
+            openingCatalogState.byPlacement.set(placement, name);
+        }
+    }
+
+    const normalizedName = normalizeOpeningName(name);
+    if (!normalizedName) {
+        return;
+    }
+
+    const bucket = openingCatalogState.byName.get(normalizedName) || [];
+    bucket.push({ name, fen: placement });
+    openingCatalogState.byName.set(normalizedName, bucket);
+}
+
+function refreshOpeningNameIndex() {
+    openingCatalogState.namesByLength = Array.from(openingCatalogState.byName.keys())
+        .map((normalized) => {
+            const bucket = openingCatalogState.byName.get(normalized);
+            const displayName = bucket && bucket[0] ? bucket[0].name : normalized;
+            return {
+                normalized,
+                displayName,
+                len: normalized.length
+            };
+        })
+        .sort((a, b) => b.len - a.len);
+}
+
+function seedManualOpeningCatalog() {
+    OPENING_BOOK.forEach((opening) => {
+        indexOpeningEntry(opening.name, null);
+    });
+    refreshOpeningNameIndex();
+}
+
+async function loadOpeningCatalog() {
+    if (openingCatalogState.loaded || openingCatalogState.loading) {
+        return;
+    }
+
+    openingCatalogState.loading = true;
+    try {
+        const catalogResult = openingsModule && openingsModule.fetchCatalog
+            ? await openingsModule.fetchCatalog(false)
+            : { openings: [] };
+        const openings = Array.isArray(catalogResult.openings) ? catalogResult.openings : [];
+        if (openings.length === 0) {
+            throw new Error("Invalid openings payload.");
+        }
+
+        openings.forEach((entry) => {
+            if (!entry || typeof entry.name !== "string" || typeof entry.fen !== "string") {
+                return;
+            }
+            indexOpeningEntry(entry.name.trim(), entry.fen.trim());
+        });
+
+        refreshOpeningNameIndex();
+        openingCatalogState.loaded = true;
+        openingCatalogState.source = catalogResult.source || "api";
+    } catch (error) {
+        console.warn("No se pudo cargar el catalogo completo de aperturas.", error);
+    } finally {
+        openingCatalogState.loading = false;
+    }
+}
+
+function detectOpeningByManualHistory(history) {
     for (const opening of OPENING_BOOK) {
         if (opening.moves.length > history.length) continue;
         let match = true;
         for (let i = 0; i < opening.moves.length; i++) {
-            if (history[i] !== opening.moves[i]) { match = false; break; }
+            if (history[i] !== opening.moves[i]) {
+                match = false;
+                break;
+            }
         }
         if (match) return opening.name;
     }
@@ -1147,17 +1418,90 @@ function detectOpeningByBestPrefix(history) {
     return bestLen >= 2 ? bestName : null;
 }
 
-function isLikelyBookMove(history, san) {
-    if (history.length > 16) return { isBook: false, name: null };
-    const BOOK_MOVES_BASIC = new Set([
-        "e4", "d4", "Nf3", "c4", "g3", "b3", "f4", "Nc3", "e3", "d3", "b4", "c3",
-        "e5", "d5", "Nf6", "c5", "g6", "e6", "c6", "d6", "b6", "Nc6", "f5",
-        "Bb5", "Bc4", "Be2", "Bd3", "Bg2", "Bb2", "Bf4", "Bg5", "Be7", "Bb4", "Bc5", "Bb7",
-        "O-O", "O-O-O", "a3", "a6", "h3", "h6", "Re1", "Qe2", "Qd2", "Qb3"
-    ]);
-    const isBook = BOOK_MOVES_BASIC.has(san);
-    const name = isBook ? (detectOpening(history) || detectOpeningByBestPrefix(history)) : null;
-    return { isBook, name };
+function detectOpeningByFen(fen) {
+    const placement = normalizeFenPlacement(fen);
+    if (!placement) {
+        return null;
+    }
+
+    return openingCatalogState.byPlacement.get(placement) || null;
+}
+
+function detectOpening(history, fen = null) {
+    const byFen = detectOpeningByFen(fen);
+    if (byFen) {
+        return byFen;
+    }
+
+    return detectOpeningByManualHistory(history) || detectOpeningByBestPrefix(history);
+}
+
+function historyToDisplayLine(history, maxPly = 20) {
+    if (!Array.isArray(history) || history.length === 0) {
+        return "";
+    }
+
+    const trimmed = history.slice(0, maxPly);
+    const chunks = [];
+
+    for (let i = 0; i < trimmed.length; i += 2) {
+        const moveNum = Math.floor(i / 2) + 1;
+        const white = trimmed[i];
+        const black = trimmed[i + 1];
+        chunks.push(black ? `${moveNum}. ${white} ${black}` : `${moveNum}. ${white}`);
+    }
+
+    return chunks.join(" ");
+}
+
+function isLikelyBookMove(history, san, fenAfter) {
+    const openingName = detectOpening(history, fenAfter);
+    const withinOpeningWindow = history.length <= 30;
+    const sanLooksTheoretical = BOOK_MOVES_BASIC.has(san);
+    const isBook = withinOpeningWindow && (sanLooksTheoretical || Boolean(openingName));
+
+    return {
+        isBook,
+        name: openingName,
+        fen: fenAfter || null,
+        line: history ? history.slice() : []
+    };
+}
+
+function resolveOpeningByName(openingName) {
+    const normalized = normalizeOpeningName(openingName);
+    if (!normalized) {
+        return null;
+    }
+
+    const exact = openingCatalogState.byName.get(normalized);
+    if (exact && exact.length > 0) {
+        const preferred = exact.find((entry) => entry.fen) || exact[0];
+        return {
+            name: preferred.name,
+            fen: preferred.fen || null
+        };
+    }
+
+    const fuzzy = openingCatalogState.namesByLength.find((entry) =>
+        entry.normalized.includes(normalized) || normalized.includes(entry.normalized)
+    );
+
+    if (!fuzzy) {
+        return null;
+    }
+
+    const bucket = openingCatalogState.byName.get(fuzzy.normalized);
+    if (!bucket || bucket.length === 0) {
+        return null;
+    }
+
+    const preferred = bucket.find((entry) => entry.fen) || bucket[0];
+
+    return {
+        name: preferred.name,
+        fen: preferred.fen || null
+    };
 }
 
 /** Evaluate position BEFORE player move to get baseline eval */
@@ -1214,23 +1558,41 @@ async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveInd
         const cpLoss = moverIsWhite ? (cpBefore - cpAfter) : (cpAfter - cpBefore);
 
         // Check book move with a snapshot of move history at evaluation time
-        const bookResult = isLikelyBookMove(historyAtMove, move.san);
+        const bookResult = isLikelyBookMove(historyAtMove, move.san, fenAfter);
         const bookMove = bookResult.isBook && cpLoss < 30;
 
         // Classify and save to the exact move index
         const cls = classifyMove(cpLoss, bookMove);
         playState.moveClassifications[moveIndex] = cls.key;
+
+        if (cls.key === "book" && bookResult.name) {
+            playState.moveOpeningDetails[moveIndex] = {
+                name: bookResult.name,
+                fen: bookResult.fen || fenAfter,
+                line: bookResult.line || historyAtMove.slice()
+            };
+        } else {
+            delete playState.moveOpeningDetails[moveIndex];
+        }
+
         renderPlayMoveList();
 
         const bookDetail = cls.key === "book" && bookResult.name ? bookResult.name : "";
+        const openingContext = bookDetail
+            ? {
+                openingName: bookDetail,
+                openingFen: bookResult.fen || fenAfter,
+                historyLine: historyToDisplayLine(bookResult.line || historyAtMove)
+            }
+            : null;
 
         if (isPlayerMove) {
-            showMoveBadge(cls, "Tu jugada", bookDetail);
-            setCoachMessage(buildCoachComment(cls, move, evalAfter, bookResult.name));
+            showMoveBadge(cls, "Tu jugada", bookDetail, openingContext);
+            setCoachMessage(buildCoachComment(cls, move, evalAfter, bookResult.name), openingContext || undefined);
         } else {
-            showMoveBadge(cls, "Rival", bookDetail);
+            showMoveBadge(cls, "Rival", bookDetail, openingContext);
             const baseComment = buildCoachComment(cls, move, evalAfter, bookResult.name);
-            setCoachMessage(`\ud83e\udd16 Rival \u2022 ${baseComment} \u2022 Tu turno.`);
+            setCoachMessage(`\ud83e\udd16 Rival \u2022 ${baseComment} \u2022 Tu turno.`, openingContext || undefined);
         }
     } catch {
         if (isPlayerMove) {
@@ -1313,7 +1675,7 @@ function formatGameOver(game) {
     if (!playState.endgameShown && el.endgameModal) {
         playState.endgameShown = true;
 
-        const opening = detectOpening(playState.game.history()) || "Sin apertura detectada";
+        const opening = detectOpening(playState.game.history(), playState.game.fen()) || "Sin apertura detectada";
         const totalPly = playState.game.history().length;
         const totalMoves = Math.ceil(totalPly / 2);
         const durationText = formatDurationFromStart();
@@ -1324,6 +1686,7 @@ function formatGameOver(game) {
         if (el.endgameDuration) el.endgameDuration.textContent = durationText;
         if (el.endgameMoves) el.endgameMoves.textContent = String(totalMoves);
         if (el.endgameOpening) el.endgameOpening.textContent = opening;
+        persistFinishedGame(opening, winner);
 
         el.endgameModal.style.display = "flex";
         setTimeout(() => {
@@ -1925,12 +2288,14 @@ function goToPlaySetup(message = coachNotice("setup", "Configura una nueva parti
     playState.lastEvalBefore = null;
     playState.lastEvalAfter = null;
     playState.moveClassifications = {};
+    playState.moveOpeningDetails = {};
     playState.previewMove = null;
     playState.pendingConfirmMove = null;
     playState.computerTopLines = [];
     playState.moveHistory = [];
     playState.startTime = null;
     playState.endgameShown = false;
+    progressState.persistedGameSession = null;
     clearPlaySelection();
     cancelMoveConfirmation();
     hideMoveBadge();
@@ -1972,12 +2337,14 @@ function startNewGame() {
     playState.lastEvalBefore = null;
     playState.lastEvalAfter = null;
     playState.moveClassifications = {};
+    playState.moveOpeningDetails = {};
     playState.previewMove = null;
     playState.pendingConfirmMove = null;
     playState.computerTopLines = [];
     playState.moveHistory = [];
     playState.startTime = Date.now();
     playState.endgameShown = false;
+    progressState.persistedGameSession = null;
     clearPlaySelection();
     cancelMoveConfirmation();
 
@@ -2106,6 +2473,22 @@ function fillClassificationTable(classifications) {
     });
 }
 
+function buildHistoryLineFromPositions(positions, maxIndex) {
+    if (!Array.isArray(positions) || maxIndex < 1) {
+        return "";
+    }
+
+    const history = [];
+    for (let i = 1; i <= maxIndex && i < positions.length; i += 1) {
+        const san = positions[i] && positions[i].move ? positions[i].move.san : null;
+        if (san) {
+            history.push(san);
+        }
+    }
+
+    return historyToDisplayLine(history, 24);
+}
+
 function renderAnalysisMoveList() {
     el.analysisMoveList.innerHTML = "";
 
@@ -2145,6 +2528,19 @@ function renderAnalysisMoveList() {
             const label = CLASSIFICATION_LABEL[position.classification] || position.classification;
             badge.textContent = symbol ? `${symbol} ${label}` : label;
             item.appendChild(badge);
+        }
+
+        if (position.opening) {
+            const openingLink = createOpeningStudyLink(
+                position.opening,
+                {
+                    openingName: position.opening,
+                    openingFen: position.fen,
+                    historyLine: buildHistoryLineFromPositions(positions, i)
+                },
+                "mini"
+            );
+            item.appendChild(openingLink);
         }
 
         item.addEventListener("click", () => {
@@ -2222,7 +2618,18 @@ function renderAnalysisPosition() {
         }
 
         if (position.opening) {
-            el.analysisMoveMeta.appendChild(document.createTextNode(` | Apertura: ${position.opening}`));
+            el.analysisMoveMeta.appendChild(document.createTextNode(" | Apertura: "));
+            el.analysisMoveMeta.appendChild(
+                createOpeningStudyLink(
+                    position.opening,
+                    {
+                        openingName: position.opening,
+                        openingFen: position.fen,
+                        historyLine: buildHistoryLineFromPositions(positions, analysisState.currentIndex)
+                    },
+                    "inline"
+                )
+            );
         }
     }
 
@@ -2328,10 +2735,34 @@ async function runAnalysis() {
         el.analysisBlackAccuracy.textContent = `${analysisState.report.accuracies.black.toFixed(1)}%`;
 
         const openingPosition = analysisState.report.positions.find((position) => position.opening);
-        el.analysisOpening.textContent = openingPosition ? openingPosition.opening : "Sin apertura detectada";
+        el.analysisOpening.innerHTML = "";
+        if (openingPosition && openingPosition.opening) {
+            const openingIndex = analysisState.report.positions.indexOf(openingPosition);
+            el.analysisOpening.appendChild(
+                createOpeningStudyLink(
+                    openingPosition.opening,
+                    {
+                        openingName: openingPosition.opening,
+                        openingFen: openingPosition.fen,
+                        historyLine: buildHistoryLineFromPositions(analysisState.report.positions, openingIndex)
+                    },
+                    "inline"
+                )
+            );
+        } else {
+            el.analysisOpening.textContent = "Sin apertura detectada";
+        }
 
         fillClassificationTable(analysisState.report.classifications);
         renderAnalysisPosition();
+
+        if (analysisModule && analysisModule.registerActivity) {
+            const summary = analysisModule.registerActivity("analysis", {
+                whiteAccuracy: analysisState.report.accuracies.white,
+                blackAccuracy: analysisState.report.accuracies.black
+            });
+            renderProgressDashboard(summary);
+        }
 
         setAnalysisStatus("Analisis completado.");
     } catch (error) {
@@ -2342,6 +2773,653 @@ async function runAnalysis() {
             el.analysisRunBtn.disabled = false;
         }
     }
+}
+
+const studyUiState = {
+    focusBoard: null
+};
+
+function ensureFullFen(fen) {
+    const placement = normalizeFenPlacement(fen);
+    if (!placement) {
+        return "";
+    }
+
+    if (String(fen || "").trim().split(" ").length >= 4) {
+        return String(fen).trim();
+    }
+
+    return `${placement} w - - 0 1`;
+}
+
+function activateMainTab(targetId) {
+    const tabButton = document.querySelector(`[data-tab-target="${targetId}"]`);
+    if (tabButton) {
+        tabButton.click();
+    }
+}
+
+function showStudyDetail(targetId) {
+    const landing = document.getElementById("study-landing");
+    const detail = document.getElementById(targetId);
+
+    if (!detail) {
+        return;
+    }
+
+    if (landing) {
+        landing.style.display = "none";
+    }
+
+    document.querySelectorAll(".study-detail").forEach((panel) => {
+        panel.style.display = panel.id === targetId ? "block" : "none";
+    });
+
+    detail.style.animation = "reveal 0.25s ease";
+}
+
+function showStudyLanding() {
+    const landing = document.getElementById("study-landing");
+    document.querySelectorAll(".study-detail").forEach((panel) => {
+        panel.style.display = "none";
+    });
+
+    if (landing) {
+        landing.style.display = "";
+        landing.style.animation = "reveal 0.25s ease";
+    }
+}
+
+function buildStudyUrl(context = {}) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", "study-section");
+    url.searchParams.set("study", "study-openings");
+
+    if (context.openingName) {
+        url.searchParams.set("opening", context.openingName);
+    }
+    if (context.openingFen) {
+        const fenPlacement = normalizeFenPlacement(context.openingFen);
+        if (fenPlacement) {
+            url.searchParams.set("fen", fenPlacement);
+        }
+    }
+    if (context.historyLine) {
+        url.searchParams.set("line", context.historyLine);
+    }
+
+    return url.toString();
+}
+
+function openOpeningInStudyTab(context) {
+    const openingName = context && context.openingName ? context.openingName : null;
+    if (!openingName) {
+        return;
+    }
+
+    registerStudyActivity({ source: "opening_link", openingName });
+    window.open(buildStudyUrl(context), "_blank", "noopener,noreferrer");
+}
+
+function createOpeningStudyLink(openingName, context = {}, variant = "inline") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `opening-link opening-link-${variant}`;
+    button.textContent = openingName;
+    button.title = "Abrir en Estudio en una nueva pesta\u00f1a";
+
+    button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openOpeningInStudyTab({
+            openingName,
+            openingFen: context.openingFen || null,
+            historyLine: context.historyLine || null
+        });
+    });
+
+    return button;
+}
+
+function ensureStudyOpeningFocusCard() {
+    const section = document.getElementById("study-openings");
+    if (!section) {
+        return null;
+    }
+
+    let card = document.getElementById("study-opening-focus");
+    if (card) {
+        return card;
+    }
+
+    card = document.createElement("article");
+    card.id = "study-opening-focus";
+    card.className = "card study-card study-opening-focus";
+    card.style.display = "none";
+    card.innerHTML = `
+        <h3 id="study-focus-title">Apertura detectada</h3>
+        <p id="study-focus-subtitle">Abre esta linea para estudiarla.</p>
+        <div id="study-focus-board" class="study-diagram"></div>
+        <p id="study-focus-line" class="study-note"></p>
+    `;
+
+    const intro = section.querySelector(".study-intro");
+    if (intro) {
+        intro.insertAdjacentElement("afterend", card);
+    } else {
+        section.prepend(card);
+    }
+
+    return card;
+}
+
+function renderStudyOpeningFocus(openingName, openingFen, historyLine) {
+    const card = ensureStudyOpeningFocusCard();
+    if (!card || !openingName) {
+        return;
+    }
+
+    const resolved = resolveOpeningByName(openingName);
+    const titleText = resolved ? resolved.name : openingName;
+    const finalFen = openingFen || (resolved && resolved.fen ? resolved.fen : null);
+    const fullFen = ensureFullFen(finalFen);
+
+    const titleEl = card.querySelector("#study-focus-title");
+    const subtitleEl = card.querySelector("#study-focus-subtitle");
+    const lineEl = card.querySelector("#study-focus-line");
+    const boardEl = card.querySelector("#study-focus-board");
+
+    if (titleEl) {
+        titleEl.textContent = titleText;
+    }
+    if (subtitleEl) {
+        subtitleEl.textContent = "Apertura marcada como jugada teorica. Puedes repasarla aqui.";
+    }
+    if (lineEl) {
+        lineEl.textContent = historyLine
+            ? `Linea detectada: ${historyLine}`
+            : "Linea no disponible para esta deteccion.";
+    }
+
+    if (boardEl && fullFen) {
+        if (!studyUiState.focusBoard) {
+            studyUiState.focusBoard = new BoardView(boardEl, {
+                orientation: "white",
+                interactive: false,
+                showCoordinates: false
+            });
+        }
+        studyUiState.focusBoard.setFen(fullFen);
+    }
+
+    card.style.display = "grid";
+    card.style.animation = "reveal 0.25s ease";
+}
+
+function applyStudyDeepLinkFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    const explicitTab = params.get("tab");
+    const studyTarget = params.get("study");
+    const openingName = params.get("opening");
+    const openingFen = params.get("fen");
+    const historyLine = params.get("line");
+
+    const wantsStudy = explicitTab === "study-section" || Boolean(studyTarget || openingName || historyLine);
+    if (!wantsStudy) {
+        return;
+    }
+
+    activateMainTab("study-section");
+
+    if (studyTarget) {
+        showStudyDetail(studyTarget);
+    }
+
+    if (openingName || historyLine) {
+        showStudyDetail("study-openings");
+        renderStudyOpeningFocus(openingName || "Apertura detectada", openingFen, historyLine || "");
+        registerStudyActivity({ source: "deep_link", openingName: openingName || "" });
+    }
+}
+
+function computeErrorBucketsForPlayer() {
+    const isWhite = playState.playerColor === "white";
+    const errors = { inaccuracy: 0, mistake: 0, blunder: 0 };
+
+    Object.entries(playState.moveClassifications || {}).forEach(([indexText, cls]) => {
+        const ply = Number(indexText);
+        if (!Number.isFinite(ply)) return;
+        const isPlayerMove = isWhite ? (ply % 2 === 0) : (ply % 2 === 1);
+        if (!isPlayerMove) return;
+
+        if (cls === "inaccuracy" || cls === "mistake" || cls === "blunder") {
+            errors[cls] += 1;
+        }
+    });
+
+    return errors;
+}
+
+function getPlayerResultLabel(winnerLabel) {
+    if (!getPlaySettings().computerEnabled) {
+        return "manual";
+    }
+
+    if (winnerLabel === "Empate") {
+        return "draw";
+    }
+
+    const playerWon = (winnerLabel === "Blancas" && playState.playerColor === "white")
+        || (winnerLabel === "Negras" && playState.playerColor === "black");
+
+    return playerWon ? "win" : "loss";
+}
+
+function renderProgressDashboard(summary = null) {
+    if (!analysisModule || !analysisModule.summarize) {
+        return;
+    }
+
+    const computed = summary || analysisModule.summarize(analysisModule.loadProgress());
+    if (!computed) {
+        return;
+    }
+
+    if (el.progressStudyStreak) {
+        el.progressStudyStreak.textContent = `${computed.studyStreakDays || 0} d\u00edas`;
+    }
+    if (el.progressGamesCount) {
+        el.progressGamesCount.textContent = String(computed.gamesCount || 0);
+    }
+
+    if (el.progressWeeklyChart) {
+        el.progressWeeklyChart.innerHTML = "";
+        const weekly = Array.isArray(computed.weekly) ? computed.weekly : [];
+        if (weekly.length === 0) {
+            el.progressWeeklyChart.textContent = "Sin datos a\u00fan.";
+        } else {
+            weekly.forEach((item) => {
+                const bar = document.createElement("div");
+                bar.className = "progress-week-bar";
+
+                const label = document.createElement("span");
+                label.className = "progress-week-label";
+                label.textContent = item.label.slice(5);
+
+                const rail = document.createElement("div");
+                rail.className = "progress-week-rail";
+
+                const fill = document.createElement("div");
+                fill.className = "progress-week-fill";
+                fill.style.height = `${clamp(item.accuracy || 0, 0, 100)}%`;
+                fill.title = `${(item.accuracy || 0).toFixed(1)}%`;
+
+                rail.appendChild(fill);
+                bar.append(label, rail);
+                el.progressWeeklyChart.appendChild(bar);
+            });
+        }
+    }
+
+    if (el.progressTopOpenings) {
+        el.progressTopOpenings.innerHTML = "";
+        const topOpenings = Array.isArray(computed.topOpenings) ? computed.topOpenings : [];
+        if (topOpenings.length === 0) {
+            const li = document.createElement("li");
+            li.textContent = "Sin partidas registradas.";
+            el.progressTopOpenings.appendChild(li);
+        } else {
+            topOpenings.forEach((entry) => {
+                const li = document.createElement("li");
+                li.textContent = `${entry.name} (${entry.count})`;
+                el.progressTopOpenings.appendChild(li);
+            });
+        }
+    }
+
+    if (el.progressCommonErrors) {
+        el.progressCommonErrors.innerHTML = "";
+        const commonErrors = Array.isArray(computed.commonErrors) ? computed.commonErrors : [];
+        const labels = {
+            inaccuracy: "Inexactitudes",
+            mistake: "Errores",
+            blunder: "Blunders"
+        };
+
+        commonErrors.forEach((entry) => {
+            const li = document.createElement("li");
+            li.textContent = `${labels[entry.type] || entry.type}: ${entry.count}`;
+            el.progressCommonErrors.appendChild(li);
+        });
+    }
+}
+
+function persistFinishedGame(openingName, winnerLabel) {
+    if (!analysisModule || !analysisModule.registerFinishedGame) {
+        return;
+    }
+    if (progressState.persistedGameSession === playState.sessionId) {
+        return;
+    }
+
+    const accuracy = analysisModule.computePlayerAccuracy
+        ? analysisModule.computePlayerAccuracy(playState.moveClassifications, playState.playerColor)
+        : 0;
+
+    const summary = analysisModule.registerFinishedGame({
+        opening: openingName || "Sin apertura detectada",
+        result: getPlayerResultLabel(winnerLabel),
+        color: playState.playerColor,
+        accuracy,
+        errors: computeErrorBucketsForPlayer()
+    });
+
+    progressState.persistedGameSession = playState.sessionId;
+    renderProgressDashboard(summary);
+}
+
+function registerStudyActivity(payload) {
+    if (!analysisModule || !analysisModule.registerActivity) {
+        return;
+    }
+    const summary = analysisModule.registerActivity("study", payload || null);
+    renderProgressDashboard(summary);
+}
+
+async function ensureExplorerNodeChildren(parentNode) {
+    if (!parentNode || parentNode.loaded || !openingsModule || !openingsModule.fetchExplorerPosition) {
+        return;
+    }
+
+    const result = await openingsModule.fetchExplorerPosition({
+        fen: parentNode.fen,
+        moves: 14
+    });
+    const payload = result && result.payload ? result.payload : null;
+    const moves = payload && Array.isArray(payload.moves) ? payload.moves : [];
+
+    moves.forEach((move, index) => {
+        if (!move || !move.uci) {
+            return;
+        }
+
+        let childFen = "";
+        try {
+            const game = new Chess(parentNode.fen);
+            game.move({
+                from: move.uci.slice(0, 2),
+                to: move.uci.slice(2, 4),
+                promotion: move.uci.slice(4) || undefined
+            });
+            childFen = game.fen();
+        } catch {
+            return;
+        }
+
+        const white = Number(move.white || 0);
+        const black = Number(move.black || 0);
+        const draws = Number(move.draws || 0);
+        const games = white + black + draws;
+        const lineText = parentNode.line ? `${parentNode.line} ${move.san}` : move.san;
+        const name = move.opening && move.opening.name
+            ? move.opening.name
+            : detectOpening(lineText.split(" "), childFen) || "Linea sin nombre";
+        const eco = move.opening && move.opening.eco
+            ? move.opening.eco
+            : (openingsModule && openingsModule.ecoBucketFromName ? openingsModule.ecoBucketFromName(name) : "A00");
+
+        openingExplorerState.rows.push({
+            id: `${parentNode.id}_${index}_${move.uci}`,
+            parentId: parentNode.id,
+            depth: parentNode.depth + 1,
+            fen: childFen,
+            san: move.san,
+            line: lineText,
+            name,
+            eco,
+            white,
+            black,
+            draws,
+            games,
+            expanded: false,
+            loaded: false,
+            hasChildren: parentNode.depth < 5
+        });
+    });
+
+    parentNode.loaded = true;
+}
+
+function computeExplorerRowMetrics(row, colorFilter, rootGames) {
+    const total = Number(row.games || 0);
+    const popularity = rootGames > 0 ? (total / rootGames) * 100 : 0;
+    const success = openingsModule && openingsModule.computeSuccessRate
+        ? openingsModule.computeSuccessRate(row, colorFilter)
+        : 0;
+    return { popularity, success };
+}
+
+async function applyExplorerFilters() {
+    const rows = openingExplorerState.rows.filter((row) => row.parentId !== null);
+    const rootGames = rows
+        .filter((row) => row.depth === 1)
+        .reduce((sum, row) => sum + Number(row.games || 0), 0);
+    const colorFilter = el.ecoFilterColor ? el.ecoFilterColor.value : "white";
+
+    const enrichedRows = rows.map((row) => {
+        const metrics = computeExplorerRowMetrics(row, colorFilter, rootGames);
+        return {
+            ...row,
+            popularity: metrics.popularity,
+            success: metrics.success
+        };
+    });
+
+    const filters = {
+        minPopularity: el.ecoFilterPopularity ? Number(el.ecoFilterPopularity.value || 0) : 0,
+        minSuccess: el.ecoFilterSuccess ? Number(el.ecoFilterSuccess.value || 0) : 0,
+        query: el.ecoSearch ? el.ecoSearch.value : ""
+    };
+
+    if (openingsModule && openingsModule.filterTreeRows) {
+        try {
+            openingExplorerState.filteredRows = await openingsModule.filterTreeRows(enrichedRows, filters);
+        } catch {
+            openingExplorerState.filteredRows = enrichedRows;
+        }
+    } else {
+        openingExplorerState.filteredRows = enrichedRows;
+    }
+
+    renderExplorerTree();
+}
+
+function renderExplorerDetail(node) {
+    if (!node) {
+        return;
+    }
+    openingExplorerState.selectedNode = node;
+
+    if (el.ecoDetailTitle) {
+        el.ecoDetailTitle.textContent = `${node.eco} \u2022 ${node.name}`;
+    }
+    if (el.ecoDetailMeta) {
+        const total = Number(node.games || 0);
+        const success = Number(node.success || 0).toFixed(1);
+        const pop = Number(node.popularity || 0).toFixed(1);
+        el.ecoDetailMeta.textContent = `Linea: ${node.line} | Popularidad ${pop}% | Exito ${success}% | Muestra ${total}`;
+    }
+    if (el.ecoDetailPlan) {
+        const plans = studyModule && studyModule.buildOpeningPlan
+            ? studyModule.buildOpeningPlan(node.name, el.ecoFilterColor ? el.ecoFilterColor.value : "white")
+            : ["Desarrolla piezas, controla centro y asegura al rey."];
+        el.ecoDetailPlan.innerHTML = plans.map((step, index) => `${index + 1}. ${step}`).join("<br>");
+    }
+
+    if (el.ecoDetailBoard) {
+        if (!openingExplorerState.detailBoard) {
+            openingExplorerState.detailBoard = new BoardView(el.ecoDetailBoard, {
+                orientation: "white",
+                interactive: false,
+                showCoordinates: false
+            });
+        }
+        openingExplorerState.detailBoard.setFen(node.fen);
+    }
+}
+
+function renderExplorerTree() {
+    if (!el.ecoTree) {
+        return;
+    }
+    el.ecoTree.innerHTML = "";
+
+    const rows = openingExplorerState.filteredRows.slice(0, 220);
+    if (rows.length === 0) {
+        el.ecoTree.textContent = "Sin lineas para los filtros actuales.";
+        return;
+    }
+
+    rows.forEach((row) => {
+        const item = document.createElement("button");
+        item.type = "button";
+        item.className = "eco-row";
+        item.style.paddingLeft = `${8 + row.depth * 14}px`;
+        if (openingExplorerState.selectedNode && openingExplorerState.selectedNode.id === row.id) {
+            item.classList.add("is-active");
+        }
+
+        const success = Number(row.success || 0).toFixed(1);
+        const pop = Number(row.popularity || 0).toFixed(1);
+        item.innerHTML = `<span class=\"eco-row-main\">${row.eco} - ${row.san || "..."} \u2192 ${row.name}</span><span class=\"eco-row-meta\">P ${pop}% | E ${success}%</span>`;
+        item.setAttribute("role", "treeitem");
+        item.setAttribute("aria-label", `${row.name}, popularidad ${pop} por ciento, exito ${success} por ciento`);
+
+        item.addEventListener("click", async () => {
+            renderExplorerDetail(row);
+            const stateRow = openingExplorerState.rows.find((entry) => entry.id === row.id) || row;
+            if (!stateRow.loaded && stateRow.depth < 5) {
+                await ensureExplorerNodeChildren(stateRow);
+                await applyExplorerFilters();
+            } else {
+                renderExplorerTree();
+            }
+            registerStudyActivity({ source: "explorer_click", eco: row.eco, name: row.name });
+        });
+
+        el.ecoTree.appendChild(item);
+    });
+}
+
+async function initOpeningExplorer() {
+    if (!el.ecoTree || !openingsModule || !openingsModule.fetchExplorerPosition) {
+        return;
+    }
+
+    const rootNode = {
+        id: "root",
+        parentId: null,
+        depth: 0,
+        fen: openingExplorerState.rootFen,
+        line: "",
+        name: "Posicion inicial",
+        eco: "A00",
+        white: 0,
+        black: 0,
+        draws: 0,
+        games: 0,
+        expanded: true,
+        loaded: false,
+        hasChildren: true
+    };
+
+    openingExplorerState.rows = [rootNode];
+
+    if (el.ecoFilterPopularityValue && el.ecoFilterPopularity) {
+        el.ecoFilterPopularityValue.textContent = `${el.ecoFilterPopularity.value}%`;
+    }
+    if (el.ecoFilterSuccessValue && el.ecoFilterSuccess) {
+        el.ecoFilterSuccessValue.textContent = `${el.ecoFilterSuccess.value}%`;
+    }
+
+    const onFilterChange = async () => {
+        if (el.ecoFilterPopularityValue && el.ecoFilterPopularity) {
+            el.ecoFilterPopularityValue.textContent = `${el.ecoFilterPopularity.value}%`;
+        }
+        if (el.ecoFilterSuccessValue && el.ecoFilterSuccess) {
+            el.ecoFilterSuccessValue.textContent = `${el.ecoFilterSuccess.value}%`;
+        }
+        await applyExplorerFilters();
+    };
+
+    [el.ecoFilterColor, el.ecoFilterPopularity, el.ecoFilterSuccess].forEach((control) => {
+        if (control) {
+            control.addEventListener("input", onFilterChange);
+            control.addEventListener("change", onFilterChange);
+        }
+    });
+
+    if (el.ecoSearch) {
+        el.ecoSearch.addEventListener("input", onFilterChange);
+    }
+
+    if (el.ecoLoadPlayBtn) {
+        el.ecoLoadPlayBtn.addEventListener("click", () => {
+            const node = openingExplorerState.selectedNode;
+            if (!node) return;
+            if (!window.confirm(`Cargar la linea ${node.name} en el tablero principal?`)) return;
+
+            try {
+                playState.game.load(node.fen);
+                playState.lastMove = null;
+                clearPlaySelection();
+
+                if (el.playSetupPanel) el.playSetupPanel.style.display = "none";
+                if (el.playGamePanel) el.playGamePanel.style.display = "flex";
+                if (el.playPanelGrid) el.playPanelGrid.classList.remove("setup-mode");
+                if (el.playBoardCard) el.playBoardCard.style.display = "";
+
+                renderPlayBoard();
+                renderPlayMoveList();
+                activateMainTab("play-section");
+                setCoachMessage(coachNotice("info", `Linea cargada: ${node.name}.`));
+            } catch {
+                setCoachMessage(coachNotice("warn", "No se pudo cargar esa linea en el tablero."));
+            }
+        });
+    }
+
+    try {
+        await ensureExplorerNodeChildren(rootNode);
+        await applyExplorerFilters();
+    } catch (error) {
+        if (el.ecoTree) {
+            el.ecoTree.textContent = "No se pudo cargar el explorador ECO en este momento.";
+        }
+        console.error("Opening explorer init failed:", error);
+    }
+}
+
+function bindGlobalShortcuts() {
+    if (!uiModule || !uiModule.registerKeyboardShortcuts) {
+        return;
+    }
+
+    uiModule.registerKeyboardShortcuts({
+        h: () => requestCoachHint(false),
+        u: () => undoPlayMove(),
+        n: () => {
+            if (window.confirm("Iniciar una nueva partida?")) startNewGame();
+        },
+        f: () => {
+            if (el.playFlipBtn) el.playFlipBtn.click();
+        },
+        a: () => activateMainTab("analysis-section"),
+        s: () => activateMainTab("study-section"),
+        "?": () => {
+            window.alert("Atajos:\\nH pista\\nU deshacer\\nN nueva partida\\nF girar\\nA analisis\\nS estudio");
+        }
+    });
 }
 
 /* ===== Study Diagrams ===== */
@@ -2382,6 +3460,10 @@ function bindTabs() {
             if (panel) {
                 panel.classList.add("is-active");
             }
+
+            if (target === "study-section") {
+                registerStudyActivity({ source: "tab_switch" });
+            }
         });
     });
 }
@@ -2391,6 +3473,12 @@ function bindTabs() {
 function applySettingsToBoard() {
     const s = getPlaySettings();
     playState.board.setCoordinatesVisible(s.showCoordinates);
+    if (playModule && playModule.applyBoardAndPieceTheme) {
+        playModule.applyBoardAndPieceTheme(s.boardTheme, s.pieceTheme);
+    } else if (uiModule) {
+        uiModule.applyBoardTheme(s.boardTheme);
+        uiModule.applyPieceTheme(s.pieceTheme);
+    }
 
     /* Eval bar visibility in analysis */
     if (el.evalBar) {
@@ -2539,7 +3627,7 @@ function bindEvents() {
         el.setThreatArrows, el.setSuggestionArrows,
         el.setMoveComments, el.setComputer, el.setTakebacks,
         el.setLegal, el.setLastMove, el.setCoordinates,
-        el.setSound, el.setAutoPromo
+        el.setSound, el.setAutoPromo, el.setBoardTheme, el.setPieceTheme
     ];
     allSettings.forEach((toggle) => {
         if (toggle) {
@@ -2643,28 +3731,51 @@ function bindEvents() {
         }
     });
 
+    // Touch navigation for analysis (swipe left/right)
+    if (el.analysisBoard) {
+        let touchStartX = null;
+        let touchStartY = null;
+
+        el.analysisBoard.addEventListener("touchstart", (event) => {
+            const touch = event.touches && event.touches[0];
+            if (!touch) return;
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+        }, { passive: true });
+
+        el.analysisBoard.addEventListener("touchend", (event) => {
+            const touch = event.changedTouches && event.changedTouches[0];
+            if (!touch || touchStartX === null || touchStartY === null) return;
+            const dx = touch.clientX - touchStartX;
+            const dy = touch.clientY - touchStartY;
+            touchStartX = null;
+            touchStartY = null;
+
+            if (Math.abs(dx) < 42 || Math.abs(dy) > 36) return;
+            if (!analysisState.report) return;
+
+            if (dx < 0) {
+                analysisState.currentIndex += 1;
+            } else {
+                analysisState.currentIndex -= 1;
+            }
+            renderAnalysisPosition();
+        }, { passive: true });
+    }
+
     // Study section navigation
     document.querySelectorAll("[data-study-target]").forEach(btn => {
         btn.addEventListener("click", () => {
             const target = btn.getAttribute("data-study-target");
-            const landing = document.getElementById("study-landing");
-            const detail = document.getElementById(target);
-            if (landing) landing.style.display = "none";
-            if (detail) {
-                detail.style.display = "block";
-                detail.style.animation = "reveal 0.3s ease";
-            }
+            if (!target) return;
+            showStudyDetail(target);
+            registerStudyActivity({ source: "study_category", target });
         });
     });
 
     document.querySelectorAll("[data-study-back]").forEach(btn => {
         btn.addEventListener("click", () => {
-            const landing = document.getElementById("study-landing");
-            document.querySelectorAll(".study-detail").forEach(d => d.style.display = "none");
-            if (landing) {
-                landing.style.display = "";
-                landing.style.animation = "reveal 0.3s ease";
-            }
+            showStudyLanding();
         });
     });
 }
@@ -2695,44 +3806,277 @@ function addAiMessage(text, type) {
     return div;
 }
 
+function shouldSkipInteractiveNode(textNode) {
+    if (!textNode || !textNode.parentElement) {
+        return true;
+    }
+
+    return Boolean(textNode.parentElement.closest(".clickable-move, .opening-link, .ai-action-chip"));
+}
+
+function replaceMatchesInTextNodes(root, regex, createNodeFromMatch) {
+    if (!root) {
+        return;
+    }
+
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    let currentNode = walker.nextNode();
+
+    while (currentNode) {
+        textNodes.push(currentNode);
+        currentNode = walker.nextNode();
+    }
+
+    textNodes.forEach((textNode) => {
+        if (shouldSkipInteractiveNode(textNode)) {
+            return;
+        }
+
+        const sourceText = textNode.nodeValue || "";
+        regex.lastIndex = 0;
+        let match = regex.exec(sourceText);
+        if (!match) {
+            return;
+        }
+
+        regex.lastIndex = 0;
+        const fragment = document.createDocumentFragment();
+        let cursor = 0;
+
+        while ((match = regex.exec(sourceText)) !== null) {
+            if (match.index > cursor) {
+                fragment.appendChild(document.createTextNode(sourceText.slice(cursor, match.index)));
+            }
+
+            const replacementNode = createNodeFromMatch(match);
+            if (replacementNode) {
+                fragment.appendChild(replacementNode);
+            } else {
+                fragment.appendChild(document.createTextNode(match[0]));
+            }
+
+            cursor = match.index + match[0].length;
+        }
+
+        if (cursor < sourceText.length) {
+            fragment.appendChild(document.createTextNode(sourceText.slice(cursor)));
+        }
+
+        textNode.parentNode.replaceChild(fragment, textNode);
+    });
+}
+
+function confirmAiActionAndRun(action, description, execute) {
+    const approved = window.confirm(`${description}\n\nConfirma con Si/No.`);
+    if (!approved) {
+        if (aiModule && aiModule.logAction) {
+            aiModule.logAction(action, "rejected");
+        }
+        return;
+    }
+
+    if (aiModule && aiModule.logAction) {
+        aiModule.logAction(action, "approved");
+    }
+
+    execute();
+}
+
+function runAiAction(actionId, argument) {
+    const normalized = String(actionId || "").trim().toLowerCase();
+    const arg = String(argument || "").trim();
+    const action = { type: normalized, argument: arg };
+
+    if (normalized === "pista" || normalized === "hint") {
+        confirmAiActionAndRun(action, "Solicitar pista del entrenador", () => {
+            requestCoachHint(false);
+        });
+        return;
+    }
+
+    if (normalized === "deshacer" || normalized === "undo") {
+        confirmAiActionAndRun(action, "Deshacer ultima jugada", () => {
+            undoPlayMove();
+        });
+        return;
+    }
+
+    if (normalized === "nueva" || normalized === "new_game") {
+        confirmAiActionAndRun(action, "Iniciar una nueva partida", () => {
+            startNewGame();
+        });
+        return;
+    }
+
+    if (normalized === "analizar" || normalized === "analyze") {
+        confirmAiActionAndRun(action, "Enviar la partida actual al analisis", () => {
+            if (el.analysisPgn) {
+                el.analysisPgn.value = playState.game.pgn();
+            }
+            activateMainTab("analysis-section");
+            if (el.analysisRunBtn) {
+                el.analysisRunBtn.click();
+            }
+        });
+        return;
+    }
+
+    if (normalized === "estudiar" || normalized === "study") {
+        const detectedOpening = arg || detectOpening(playState.game.history(), playState.game.fen());
+        if (!detectedOpening) {
+            setCoachMessage(coachNotice("info", "No se detecto una apertura para estudiar en esta posicion."));
+            return;
+        }
+
+        confirmAiActionAndRun(action, `Abrir estudio de apertura: ${detectedOpening}`, () => {
+            openOpeningInStudyTab({
+                openingName: detectedOpening,
+                openingFen: playState.game.fen(),
+                historyLine: historyToDisplayLine(playState.game.history(), 24)
+            });
+        });
+        return;
+    }
+
+    if (normalized === "flip") {
+        confirmAiActionAndRun(action, "Girar el tablero y cambiar color antes de jugar", () => {
+            if (el.playFlipBtn) el.playFlipBtn.click();
+        });
+        return;
+    }
+
+    if (normalized === "open_study") {
+        confirmAiActionAndRun(action, "Abrir el centro de estudio", () => {
+            activateMainTab("study-section");
+        });
+        return;
+    }
+
+    if (normalized === "load_line") {
+        const selected = openingExplorerState.selectedNode;
+        if (!selected) {
+            setCoachMessage(coachNotice("info", "Selecciona primero una linea en el explorador ECO."));
+            return;
+        }
+        confirmAiActionAndRun(action, `Cargar linea seleccionada: ${selected.name}`, () => {
+            playState.game.load(selected.fen);
+            playState.lastMove = null;
+            clearPlaySelection();
+            renderPlayBoard();
+            renderPlayMoveList();
+            activateMainTab("play-section");
+        });
+    }
+}
+
+function makeAiActionsClickable(msgEl) {
+    if (!msgEl) return;
+
+    const actionRegex = /\[\[\s*accion:([a-z_]+)(?:\|([^\]]+))?\s*\]\]/gi;
+    const actionLabels = {
+        pista: "Pedir pista",
+        hint: "Pedir pista",
+        deshacer: "Deshacer",
+        undo: "Deshacer",
+        nueva: "Nueva partida",
+        new_game: "Nueva partida",
+        analizar: "Analizar",
+        analyze: "Analizar",
+        estudiar: "Estudiar apertura",
+        study: "Estudiar apertura"
+    };
+
+    replaceMatchesInTextNodes(msgEl, actionRegex, (match) => {
+        const actionId = match[1] || "";
+        const argument = match[2] || "";
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "ai-action-chip";
+
+        const label = actionLabels[actionId.toLowerCase()] || `Accion: ${actionId}`;
+        button.textContent = argument ? `${label} \u2192 ${argument}` : label;
+        button.title = "Clic para ejecutar con confirmacion";
+
+        button.addEventListener("click", () => runAiAction(actionId, argument));
+        return button;
+    });
+}
+
+function appendStructuredAiActions(msgEl, actions) {
+    if (!msgEl || !Array.isArray(actions) || actions.length === 0) {
+        return;
+    }
+
+    const wrap = document.createElement("div");
+    wrap.className = "ai-action-wrap";
+
+    actions.forEach((action) => {
+        const type = String(action.type || "").trim().toLowerCase();
+        const argument = String(action.argument || "").trim();
+        const label = String(action.label || "").trim();
+
+        if (!type) return;
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ai-action-chip";
+        btn.textContent = label || (argument ? `${type} \u2192 ${argument}` : type);
+        btn.addEventListener("click", () => runAiAction(type, argument));
+        wrap.appendChild(btn);
+    });
+
+    if (wrap.childElementCount > 0) {
+        msgEl.appendChild(document.createElement("br"));
+        msgEl.appendChild(wrap);
+    }
+}
+
+function makeOpeningMentionsClickable(msgEl) {
+    if (!msgEl) return;
+
+    const openingPhraseRegex = /\b(?:Apertura|Defensa|Gambito|Sistema)\s+[^\n\.;:!?]{3,80}/gi;
+    replaceMatchesInTextNodes(msgEl, openingPhraseRegex, (match) => {
+        const phrase = String(match[0] || "").trim();
+        const resolved = resolveOpeningByName(phrase);
+        if (!resolved || !resolved.name) {
+            return null;
+        }
+
+        return createOpeningStudyLink(
+            resolved.name,
+            {
+                openingName: resolved.name,
+                openingFen: resolved.fen,
+                historyLine: historyToDisplayLine(playState.game.history(), 24)
+            },
+            "inline"
+        );
+    });
+}
+
 /* Make SAN moves in AI bot messages clickable */
 function makeMovesClickable(msgEl) {
     if (!msgEl) return;
-    const text = msgEl.textContent;
-    // Match chess SAN patterns like Nf3, e4, Bxe5+, O-O, O-O-O, etc.
+
     const sanRegex = /\b([KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?|O-O-O|O-O)\b/g;
-    const parts = [];
-    let lastIndex = 0;
-    let match;
-    while ((match = sanRegex.exec(text)) !== null) {
-        if (match.index > lastIndex) {
-            parts.push(document.createTextNode(text.slice(lastIndex, match.index)));
-        }
+    replaceMatchesInTextNodes(msgEl, sanRegex, (match) => {
         const san = match[1];
         const span = document.createElement("span");
         span.className = "clickable-move";
         span.textContent = san;
         span.title = `Clic para previsualizar: ${sanToSpanish(san)}`;
         span.addEventListener("click", () => {
-            // Try to parse the SAN move and show preview
             try {
                 const game = new Chess(playState.game.fen());
                 const move = game.move(san);
                 if (move) {
                     showMoveConfirmation(move.from, move.to, move.san, move.promotion);
                 }
-            } catch { /* invalid move in current position */ }
+            } catch {}
         });
-        parts.push(span);
-        lastIndex = sanRegex.lastIndex;
-    }
-    if (parts.length > 0) {
-        if (lastIndex < text.length) {
-            parts.push(document.createTextNode(text.slice(lastIndex)));
-        }
-        msgEl.textContent = "";
-        parts.forEach(p => msgEl.appendChild(p));
-    }
+        return span;
+    });
 }
 
 function getMaterialCount(game) {
@@ -2766,7 +4110,7 @@ function getGamePhaseAI(game) {
     return "medio juego";
 }
 
-async function generateAiResponse(question, thinkingMsg) {
+async function generateAiResponse(question) {
     const game = playState.game;
     const fen = game.fen();
     const history = game.history();
@@ -2790,7 +4134,7 @@ async function generateAiResponse(question, thinkingMsg) {
 
     const evalText = engineEval ? formatEval(engineEval) : "desconocida";
 
-    const systemPrompt = `Eres un asistente de ajedrez conciso y directo para la webapp Ajedrez Lab.
+    const systemPrompt = `Eres un asistente de ajedrez conciso y accionable para la webapp Ajedrez Lab.
 
 REGLAS:
 1. Se BREVE y DIRECTO. Maximo 3-4 oraciones.
@@ -2799,6 +4143,10 @@ REGLAS:
 4. Si te piden ayuda, da la mejor jugada con el nombre de la pieza y una razon corta.
 5. Responde en espanol.
 6. Usa simbolos visuales de forma moderada para claridad: "\u2022", "\u2192", "\u2713", "\u26A0".
+7. Debes responder SOLO en JSON valido sin markdown.
+8. Formato obligatorio: {"text":"...", "actions":[{"type":"hint|undo|new_game|analyze|study|flip|open_study|load_line","label":"...", "argument":"..."}]}.
+9. Incluye 0-3 acciones maximo. Solo usa tipos de la whitelist.
+10. Si hablas de una apertura concreta, incluye accion study con el nombre exacto en argument.
 
 Contexto de la partida:
 - Fase: ${phase} | Turno: ${turn} | Jugada #${moveNum}
@@ -2815,7 +4163,8 @@ Contexto de la partida:
             },
             body: JSON.stringify({
                 systemPrompt,
-                question: question.slice(0, 1600)
+                question: question.slice(0, 1600),
+                structured: true
             })
         });
 
@@ -2825,15 +4174,26 @@ Contexto de la partida:
         }
 
         const content = typeof payload.content === "string" ? payload.content.trim() : "";
-        if (!content) {
+        const actionsFromApi = Array.isArray(payload.actions) ? payload.actions : [];
+        const parsed = aiModule && aiModule.parseStructuredResponse
+            ? aiModule.parseStructuredResponse(JSON.stringify({ text: content, actions: actionsFromApi }))
+            : { text: content, actions: actionsFromApi };
+
+        const text = String(parsed.text || content || "").trim();
+        if (!text) {
             throw new Error("Respuesta vacia del asistente IA.");
         }
 
-        thinkingMsg.textContent = content;
-        if (aiChatMessages) aiChatMessages.scrollTop = aiChatMessages.scrollHeight;
+        return {
+            text,
+            actions: Array.isArray(parsed.actions) ? parsed.actions : []
+        };
     } catch (err) {
-        thinkingMsg.textContent = "Lo siento, fallo la conexion con mi motor principal de IA.";
         console.error("AI chat error:", err);
+        return {
+            text: "Lo siento, fallo la conexion con mi motor principal de IA.",
+            actions: []
+        };
     }
 }
 
@@ -2848,10 +4208,13 @@ async function handleAiChat() {
     const thinkingMsg = addAiMessage("Pensando...", "ai-bot ai-thinking");
 
     try {
-        await generateAiResponse(question, thinkingMsg);
+        const aiResponse = await generateAiResponse(question);
+        thinkingMsg.textContent = aiResponse.text;
         thinkingMsg.classList.remove("ai-thinking");
-        // Make chess moves in the response clickable
+        appendStructuredAiActions(thinkingMsg, aiResponse.actions);
+        makeAiActionsClickable(thinkingMsg);
         makeMovesClickable(thinkingMsg);
+        makeOpeningMentionsClickable(thinkingMsg);
     } catch {
         thinkingMsg.textContent = "Lo siento, no pude procesar tu pregunta. Int\u00e9ntalo de nuevo.";
         thinkingMsg.classList.remove("ai-thinking");
@@ -2889,10 +4252,22 @@ function setTodayLabel() {
 }
 
 function init() {
+    if (uiModule && uiModule.applyStoredThemes) {
+        uiModule.applyStoredThemes();
+        if (el.setBoardTheme && uiModule.loadPreference) {
+            el.setBoardTheme.value = uiModule.loadPreference("board_theme", el.setBoardTheme.value || "classic");
+        }
+        if (el.setPieceTheme && uiModule.loadPreference) {
+            el.setPieceTheme.value = uiModule.loadPreference("piece_theme", el.setPieceTheme.value || "default");
+        }
+    }
+
     bindTabs();
     bindEvents();
     bindAiChat();
+    loadOpeningCatalog();
     renderStudyDiagrams();
+    applyStudyDeepLinkFromUrl();
     setTodayLabel();
 
     el.coachDepthValue.textContent = el.coachDepth.value;
@@ -2903,6 +4278,10 @@ function init() {
 
     // Initialize play eval bar
     updatePlayEvalBar({ type: "cp", value: 0 });
+    applySettingsToBoard();
+    initOpeningExplorer();
+    renderProgressDashboard();
+    bindGlobalShortcuts();
 }
 
 init();

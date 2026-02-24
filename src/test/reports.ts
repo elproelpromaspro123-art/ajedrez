@@ -1,5 +1,7 @@
 import { writeFileSync, mkdirSync, existsSync, rmSync } from "fs";
 import analyse from "../lib/analysis";
+import { parseStructuredAIResponse } from "../lib/aiActions";
+import { detectOpeningBestPrefix, detectOpeningFromBook, OpeningBookEntry } from "../lib/openingDetection";
 import { EvaluatedPosition } from "../lib/types/Position";
 import Report from "../lib/types/Report";
 import evaluations from "./evaluations.json";
@@ -54,6 +56,46 @@ async function main() {
     let elapsedTime = ((Date.now() - before) / 1000).toFixed(2);
     console.log(`Report generation test completed successfully. (${elapsedTime}s)`);
 
+    runFrontendLogicUnitTests();
+
+}
+
+function assert(condition: boolean, message: string) {
+    if (!condition) {
+        throw new Error(`Assertion failed: ${message}`);
+    }
+}
+
+function runFrontendLogicUnitTests() {
+    console.log("Running opening detection + AI action parsing unit tests...");
+
+    const book: OpeningBookEntry[] = [
+        { name: "Apertura Italiana", moves: ["e4", "e5", "Nf3", "Nc6", "Bc4"] },
+        { name: "Defensa Siciliana", moves: ["e4", "c5"] },
+        { name: "Ruy Lopez", moves: ["e4", "e5", "Nf3", "Nc6", "Bb5"] }
+    ];
+
+    const exact = detectOpeningFromBook(book, ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"]);
+    assert(exact === "Apertura Italiana", "detectOpeningFromBook should match exact best line.");
+
+    const prefix = detectOpeningBestPrefix(book, ["e4", "c5", "Nf3", "d6"]);
+    assert(prefix === "Defensa Siciliana", "detectOpeningBestPrefix should match the best available prefix.");
+
+    const parsed = parseStructuredAIResponse(JSON.stringify({
+        text: "Juega activo en el centro.",
+        actions: [
+            { type: "hint", label: "Pedir pista" },
+            { type: "study", argument: "Defensa Siciliana" },
+            { type: "drop_database", argument: "x" }
+        ]
+    }));
+
+    assert(parsed.text.includes("centro"), "AI parser should keep structured text.");
+    assert(parsed.actions.length === 2, "AI parser should keep only whitelisted actions.");
+    assert(parsed.actions[0].type === "hint", "First action should be hint.");
+    assert(parsed.actions[1].type === "study", "Second action should be study.");
+
+    console.log("Opening detection + AI action parsing unit tests passed.");
 }
 
 main();
