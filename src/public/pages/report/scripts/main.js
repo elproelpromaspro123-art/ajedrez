@@ -95,7 +95,9 @@ const CLASSIFICATION_DOT_COLOR = {
 
 const ENGINE_PRIMARY = "/static/scripts/stockfish-nnue-16.js";
 const ENGINE_FALLBACK = "/static/scripts/stockfish.js";
+const APP_BOOT_AT = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
 const APP_MODULES = window.ReportModules || {};
+const storageModule = APP_MODULES.storage || null;
 const uiModule = APP_MODULES.ui || null;
 const openingsModule = APP_MODULES.openings || null;
 const studyModule = APP_MODULES.study || null;
@@ -108,6 +110,10 @@ const el = {
     panels: Array.from(document.querySelectorAll(".panel")),
 
     lastUpdateLabel: document.querySelector("#last-update-label"),
+    perfMetricLoad: document.querySelector("#perf-metric-load"),
+    perfMetricFirstEval: document.querySelector("#perf-metric-first-eval"),
+    perfMetricExplorer: document.querySelector("#perf-metric-explorer"),
+    perfMetricMemory: document.querySelector("#perf-metric-memory"),
 
     playBoard: document.querySelector("#play-board"),
     playStatus: document.querySelector("#play-status"),
@@ -232,6 +238,7 @@ const el = {
     ecoDetailBoard: document.querySelector("#eco-detail-board"),
     ecoDetailPlan: document.querySelector("#eco-detail-plan"),
     ecoLoadPlayBtn: document.querySelector("#eco-load-play-btn"),
+    aiActionAudit: document.querySelector("#ai-action-audit"),
 
     fxMove: document.querySelector("#fx-move"),
     fxCapture: document.querySelector("#fx-capture"),
@@ -251,6 +258,54 @@ function sideFromTurn(turn) {
 
 function turnFromSide(side) {
     return side === "white" ? "w" : "b";
+}
+
+function nowMs() {
+    return typeof performance !== "undefined" && performance.now
+        ? performance.now()
+        : Date.now();
+}
+
+function readStored(path, fallbackValue) {
+    if (!storageModule || !storageModule.read) {
+        return fallbackValue;
+    }
+    return storageModule.read(path, fallbackValue);
+}
+
+function writeStored(path, value) {
+    if (!storageModule || !storageModule.write) {
+        return value;
+    }
+    return storageModule.write(path, value);
+}
+
+function mutateStored(mutator) {
+    if (!storageModule || !storageModule.mutate) {
+        return null;
+    }
+    return storageModule.mutate(mutator);
+}
+
+function formatDurationMs(ms) {
+    if (!Number.isFinite(ms) || ms <= 0) {
+        return "--";
+    }
+    if (ms < 1000) {
+        return `${Math.round(ms)} ms`;
+    }
+    return `${(ms / 1000).toFixed(2)} s`;
+}
+
+function formatMemoryBytes(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+        return "--";
+    }
+    const kb = bytes / 1024;
+    if (kb < 1024) {
+        return `${kb.toFixed(0)} KB`;
+    }
+    return `${(kb / 1024).toFixed(2)} MB`;
 }
 
 function formatEval(evaluation) {
@@ -772,9 +827,11 @@ async function warmEngineAsset() {
 }
 
 async function evaluateWithStockfish(options) {
+    const startedAt = nowMs();
     const cacheKey = buildEvalCacheKey(options);
     const cached = ENGINE_EVAL_CACHE.get(cacheKey);
     if (cached && (Date.now() - cached.at) < 2200) {
+        markFirstEvalMetric(nowMs() - startedAt);
         return cached.value;
     }
 
@@ -783,10 +840,12 @@ async function evaluateWithStockfish(options) {
     try {
         const value = await runStockfishInternal(options, ENGINE_PRIMARY);
         ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
+        markFirstEvalMetric(nowMs() - startedAt);
         return value;
     } catch {
         const value = await runStockfishInternal(options, ENGINE_FALLBACK);
         ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
+        markFirstEvalMetric(nowMs() - startedAt);
         return value;
     }
 }
@@ -905,13 +964,33 @@ const progressState = {
     persistedGameSession: null
 };
 
+const perfState = {
+    firstEvalMs: null,
+    explorerLatencyMs: null,
+    memoryBytes: null
+};
+
+const aiRuntimeState = {
+    inFlight: false,
+    lastSentAt: 0,
+    minIntervalMs: 10000
+};
+
+const sessionRuntimeState = {
+    saveTimer: null,
+    restorePayload: readStored("session.snapshot", null)
+};
+
 const openingExplorerState = {
     rootFen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
     rows: [],
     filteredRows: [],
+    visibleRows: [],
     selectedNode: null,
     detailBoard: null,
-    loading: false
+    loading: false,
+    focusedIndex: 0,
+    collapsedIds: new Set()
 };
 
 function getPlaySettings() {
@@ -1027,6 +1106,7 @@ function setCoachMessage(message, options = {}) {
 
     el.coachHistoryContainer.appendChild(msgEl);
     el.coachHistoryContainer.scrollTop = el.coachHistoryContainer.scrollHeight;
+    scheduleSessionSnapshotSave();
 }
 
 /* ===== Move Classification (chess.com style) ===== */
@@ -1272,7 +1352,6 @@ const OPENING_BOOK = [
 
 // Sort by longest first for best match
 OPENING_BOOK.sort((a, b) => b.moves.length - a.moves.length);
-seedManualOpeningCatalog();
 
 const BOOK_MOVES_BASIC = new Set([
     "e4", "d4", "Nf3", "c4", "g3", "b3", "f4", "Nc3", "e3", "d3", "b4", "c3",
@@ -1350,6 +1429,8 @@ function seedManualOpeningCatalog() {
     });
     refreshOpeningNameIndex();
 }
+
+seedManualOpeningCatalog();
 
 async function loadOpeningCatalog() {
     if (openingCatalogState.loaded || openingCatalogState.loading) {
@@ -1884,6 +1965,7 @@ function showMoveConfirmation(from, to, san, promotion) {
     }
 
     renderPlayBoard();
+    scheduleSessionSnapshotSave();
 }
 
 function cancelMoveConfirmation() {
@@ -1893,6 +1975,7 @@ function cancelMoveConfirmation() {
         el.moveConfirmBar.classList.remove("visible");
     }
     renderPlayBoard();
+    scheduleSessionSnapshotSave();
 }
 
 async function confirmSuggestedMove() {
@@ -1927,6 +2010,7 @@ async function confirmSuggestedMove() {
     clearPlaySelection();
     playMoveSound(move);
     renderPlayBoard();
+    scheduleSessionSnapshotSave();
 
     const localSession = playState.sessionId;
     evaluateLastMove(move, fenBefore, fenAfter, localSession, moveIndex, historyAtMove);
@@ -2053,6 +2137,7 @@ async function playBotMove() {
         clearPlaySelection();
         playMoveSound(move);
         renderPlayBoard();
+        scheduleSessionSnapshotSave();
 
         // Evaluate bot's move
         evaluateLastMove(move, fenBeforeMove, fenAfterMove, localSession, moveIndex, historyAtMove);
@@ -2315,6 +2400,7 @@ function goToPlaySetup(message = coachNotice("setup", "Configura una nueva parti
 
     setCoachMessage(message);
     renderPlayBoard();
+    scheduleSessionSnapshotSave();
 }
 
 function startNewGame() {
@@ -2382,6 +2468,8 @@ function startNewGame() {
             updateComputerLines(playState.game.fen(), playState.sessionId);
         }
     }
+
+    scheduleSessionSnapshotSave();
 }
 
 function undoPlayMove() {
@@ -2410,6 +2498,7 @@ function undoPlayMove() {
     setCoachMessage(coachNotice("ok", "Jugada deshecha. Es tu turno."));
     renderPlayBoard();
     renderPlayMoveList();
+    scheduleSessionSnapshotSave();
 }
 
 /* ===== Analysis State ===== */
@@ -2796,6 +2885,7 @@ function activateMainTab(targetId) {
     const tabButton = document.querySelector(`[data-tab-target="${targetId}"]`);
     if (tabButton) {
         tabButton.click();
+        scheduleSessionSnapshotSave();
     }
 }
 
@@ -2816,6 +2906,7 @@ function showStudyDetail(targetId) {
     });
 
     detail.style.animation = "reveal 0.25s ease";
+    scheduleSessionSnapshotSave();
 }
 
 function showStudyLanding() {
@@ -2828,6 +2919,8 @@ function showStudyLanding() {
         landing.style.display = "";
         landing.style.animation = "reveal 0.25s ease";
     }
+
+    scheduleSessionSnapshotSave();
 }
 
 function buildStudyUrl(context = {}) {
@@ -3116,6 +3209,7 @@ function persistFinishedGame(openingName, winnerLabel) {
 
     progressState.persistedGameSession = playState.sessionId;
     renderProgressDashboard(summary);
+    scheduleSessionSnapshotSave();
 }
 
 function registerStudyActivity(payload) {
@@ -3124,6 +3218,7 @@ function registerStudyActivity(payload) {
     }
     const summary = analysisModule.registerActivity("study", payload || null);
     renderProgressDashboard(summary);
+    scheduleSessionSnapshotSave();
 }
 
 async function ensureExplorerNodeChildren(parentNode) {
@@ -3131,12 +3226,17 @@ async function ensureExplorerNodeChildren(parentNode) {
         return;
     }
 
+    const startedAt = nowMs();
     const result = await openingsModule.fetchExplorerPosition({
         fen: parentNode.fen,
         moves: 14
     });
+    markExplorerLatencyMetric(nowMs() - startedAt);
+
     const payload = result && result.payload ? result.payload : null;
     const moves = payload && Array.isArray(payload.moves) ? payload.moves : [];
+    const knownIds = new Set(openingExplorerState.rows.map((row) => row.id));
+    const knownFen = new Set(openingExplorerState.rows.map((row) => row.fen));
 
     moves.forEach((move, index) => {
         if (!move || !move.uci) {
@@ -3156,6 +3256,10 @@ async function ensureExplorerNodeChildren(parentNode) {
             return;
         }
 
+        if (knownFen.has(childFen)) {
+            return;
+        }
+
         const white = Number(move.white || 0);
         const black = Number(move.black || 0);
         const draws = Number(move.draws || 0);
@@ -3167,9 +3271,15 @@ async function ensureExplorerNodeChildren(parentNode) {
         const eco = move.opening && move.opening.eco
             ? move.opening.eco
             : (openingsModule && openingsModule.ecoBucketFromName ? openingsModule.ecoBucketFromName(name) : "A00");
+        const childId = `${parentNode.id}_${index}_${move.uci}`;
+        if (knownIds.has(childId)) {
+            return;
+        }
+        knownIds.add(childId);
+        knownFen.add(childFen);
 
         openingExplorerState.rows.push({
-            id: `${parentNode.id}_${index}_${move.uci}`,
+            id: childId,
             parentId: parentNode.id,
             depth: parentNode.depth + 1,
             fen: childFen,
@@ -3183,7 +3293,7 @@ async function ensureExplorerNodeChildren(parentNode) {
             games,
             expanded: false,
             loaded: false,
-            hasChildren: parentNode.depth < 5
+            hasChildren: parentNode.depth < 5 && games > 0
         });
     });
 
@@ -3197,6 +3307,125 @@ function computeExplorerRowMetrics(row, colorFilter, rootGames) {
         ? openingsModule.computeSuccessRate(row, colorFilter)
         : 0;
     return { popularity, success };
+}
+
+function buildExplorerRowMap() {
+    return new Map(openingExplorerState.rows.map((row) => [row.id, row]));
+}
+
+function explorerHasChildren(row) {
+    return openingExplorerState.rows.some((candidate) => candidate.parentId === row.id);
+}
+
+function isExplorerRowVisibleByCollapse(row, rowMap) {
+    let parentId = row.parentId;
+    while (parentId) {
+        if (openingExplorerState.collapsedIds.has(parentId)) {
+            return false;
+        }
+        const parent = rowMap.get(parentId);
+        parentId = parent ? parent.parentId : null;
+    }
+    return true;
+}
+
+function getExplorerDomId(rowId) {
+    return `eco-row-${String(rowId).replace(/[^a-zA-Z0-9_-]/g, "_")}`;
+}
+
+function focusExplorerRow(index) {
+    const rows = openingExplorerState.visibleRows;
+    if (!Array.isArray(rows) || rows.length === 0 || !el.ecoTree) {
+        return;
+    }
+
+    openingExplorerState.focusedIndex = clamp(index, 0, rows.length - 1);
+    renderExplorerTree();
+    const row = rows[openingExplorerState.focusedIndex];
+    if (!row) return;
+    const node = document.getElementById(getExplorerDomId(row.id));
+    if (node) {
+        node.focus();
+    }
+}
+
+async function handleExplorerTreeKeydown(event) {
+    if (!Array.isArray(openingExplorerState.visibleRows) || openingExplorerState.visibleRows.length === 0) {
+        return;
+    }
+
+    const rows = openingExplorerState.visibleRows;
+    const currentIndex = clamp(openingExplorerState.focusedIndex || 0, 0, rows.length - 1);
+    const row = rows[currentIndex];
+    const stateRow = openingExplorerState.rows.find((entry) => entry.id === row.id) || row;
+    const hasChildren = explorerHasChildren(stateRow) || (stateRow.depth < 5 && stateRow.hasChildren);
+
+    if (event.key === "ArrowDown") {
+        event.preventDefault();
+        focusExplorerRow(currentIndex + 1);
+        return;
+    }
+
+    if (event.key === "ArrowUp") {
+        event.preventDefault();
+        focusExplorerRow(currentIndex - 1);
+        return;
+    }
+
+    if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        renderExplorerDetail(stateRow);
+        if (!stateRow.loaded && stateRow.depth < 5) {
+            await ensureExplorerNodeChildren(stateRow);
+            await applyExplorerFilters();
+        } else {
+            renderExplorerTree();
+        }
+        registerStudyActivity({ source: "explorer_key_enter", eco: stateRow.eco, name: stateRow.name });
+        scheduleSessionSnapshotSave();
+        return;
+    }
+
+    if (event.key === "ArrowRight") {
+        if (!hasChildren) {
+            return;
+        }
+        event.preventDefault();
+
+        if (openingExplorerState.collapsedIds.has(stateRow.id)) {
+            openingExplorerState.collapsedIds.delete(stateRow.id);
+            await applyExplorerFilters();
+            return;
+        }
+
+        if (!stateRow.loaded && stateRow.depth < 5) {
+            await ensureExplorerNodeChildren(stateRow);
+            await applyExplorerFilters();
+        }
+
+        const childIndex = openingExplorerState.visibleRows.findIndex((entry) => entry.parentId === stateRow.id);
+        if (childIndex >= 0) {
+            focusExplorerRow(childIndex);
+        }
+        return;
+    }
+
+    if (event.key === "ArrowLeft") {
+        event.preventDefault();
+
+        if (hasChildren && !openingExplorerState.collapsedIds.has(stateRow.id)) {
+            openingExplorerState.collapsedIds.add(stateRow.id);
+            await applyExplorerFilters();
+            return;
+        }
+
+        if (stateRow.parentId) {
+            const parentIndex = openingExplorerState.visibleRows.findIndex((entry) => entry.id === stateRow.parentId);
+            if (parentIndex >= 0) {
+                focusExplorerRow(parentIndex);
+            }
+        }
+    }
 }
 
 async function applyExplorerFilters() {
@@ -3229,6 +3458,24 @@ async function applyExplorerFilters() {
         }
     } else {
         openingExplorerState.filteredRows = enrichedRows;
+    }
+
+    const rowMap = buildExplorerRowMap();
+    openingExplorerState.visibleRows = openingExplorerState.filteredRows.filter((row) => {
+        return isExplorerRowVisibleByCollapse(row, rowMap);
+    });
+
+    if (openingExplorerState.visibleRows.length === 0) {
+        openingExplorerState.focusedIndex = 0;
+        openingExplorerState.selectedNode = null;
+    } else {
+        const selectedId = openingExplorerState.selectedNode ? openingExplorerState.selectedNode.id : null;
+        const selectedIndex = selectedId
+            ? openingExplorerState.visibleRows.findIndex((entry) => entry.id === selectedId)
+            : -1;
+        openingExplorerState.focusedIndex = selectedIndex >= 0
+            ? selectedIndex
+            : clamp(openingExplorerState.focusedIndex || 0, 0, openingExplorerState.visibleRows.length - 1);
     }
 
     renderExplorerTree();
@@ -3274,28 +3521,40 @@ function renderExplorerTree() {
     }
     el.ecoTree.innerHTML = "";
 
-    const rows = openingExplorerState.filteredRows.slice(0, 220);
+    const rows = openingExplorerState.visibleRows.slice(0, 220);
     if (rows.length === 0) {
         el.ecoTree.textContent = "Sin lineas para los filtros actuales.";
+        el.ecoTree.removeAttribute("aria-activedescendant");
         return;
     }
 
-    rows.forEach((row) => {
+    rows.forEach((row, index) => {
         const item = document.createElement("button");
         item.type = "button";
         item.className = "eco-row";
         item.style.paddingLeft = `${8 + row.depth * 14}px`;
+        item.id = getExplorerDomId(row.id);
         if (openingExplorerState.selectedNode && openingExplorerState.selectedNode.id === row.id) {
             item.classList.add("is-active");
+        }
+        if (openingExplorerState.focusedIndex === index) {
+            item.classList.add("is-focus");
         }
 
         const success = Number(row.success || 0).toFixed(1);
         const pop = Number(row.popularity || 0).toFixed(1);
         item.innerHTML = `<span class=\"eco-row-main\">${row.eco} - ${row.san || "..."} \u2192 ${row.name}</span><span class=\"eco-row-meta\">P ${pop}% | E ${success}%</span>`;
         item.setAttribute("role", "treeitem");
+        item.setAttribute("aria-level", String(row.depth + 1));
+        const hasChildren = explorerHasChildren(row) || (row.depth < 5 && row.hasChildren);
+        if (hasChildren) {
+            item.setAttribute("aria-expanded", openingExplorerState.collapsedIds.has(row.id) ? "false" : "true");
+        }
+        item.tabIndex = openingExplorerState.focusedIndex === index ? 0 : -1;
         item.setAttribute("aria-label", `${row.name}, popularidad ${pop} por ciento, exito ${success} por ciento`);
 
         item.addEventListener("click", async () => {
+            openingExplorerState.focusedIndex = index;
             renderExplorerDetail(row);
             const stateRow = openingExplorerState.rows.find((entry) => entry.id === row.id) || row;
             if (!stateRow.loaded && stateRow.depth < 5) {
@@ -3305,10 +3564,28 @@ function renderExplorerTree() {
                 renderExplorerTree();
             }
             registerStudyActivity({ source: "explorer_click", eco: row.eco, name: row.name });
+            scheduleSessionSnapshotSave();
+        });
+
+        item.addEventListener("dblclick", async () => {
+            const hasChildren = explorerHasChildren(row) || (row.depth < 5 && row.hasChildren);
+            if (!hasChildren) return;
+            if (openingExplorerState.collapsedIds.has(row.id)) {
+                openingExplorerState.collapsedIds.delete(row.id);
+            } else {
+                openingExplorerState.collapsedIds.add(row.id);
+            }
+            await applyExplorerFilters();
+            scheduleSessionSnapshotSave();
         });
 
         el.ecoTree.appendChild(item);
     });
+
+    const focused = rows[clamp(openingExplorerState.focusedIndex, 0, rows.length - 1)];
+    if (focused) {
+        el.ecoTree.setAttribute("aria-activedescendant", getExplorerDomId(focused.id));
+    }
 }
 
 async function initOpeningExplorer() {
@@ -3334,6 +3611,11 @@ async function initOpeningExplorer() {
     };
 
     openingExplorerState.rows = [rootNode];
+    openingExplorerState.visibleRows = [];
+    openingExplorerState.focusedIndex = 0;
+    if (!openingExplorerState.collapsedIds) {
+        openingExplorerState.collapsedIds = new Set();
+    }
 
     if (el.ecoFilterPopularityValue && el.ecoFilterPopularity) {
         el.ecoFilterPopularityValue.textContent = `${el.ecoFilterPopularity.value}%`;
@@ -3350,6 +3632,7 @@ async function initOpeningExplorer() {
             el.ecoFilterSuccessValue.textContent = `${el.ecoFilterSuccess.value}%`;
         }
         await applyExplorerFilters();
+        scheduleSessionSnapshotSave();
     };
 
     [el.ecoFilterColor, el.ecoFilterPopularity, el.ecoFilterSuccess].forEach((control) => {
@@ -3362,6 +3645,10 @@ async function initOpeningExplorer() {
     if (el.ecoSearch) {
         el.ecoSearch.addEventListener("input", onFilterChange);
     }
+
+    el.ecoTree.addEventListener("keydown", (event) => {
+        void handleExplorerTreeKeydown(event);
+    });
 
     if (el.ecoLoadPlayBtn) {
         el.ecoLoadPlayBtn.addEventListener("click", () => {
@@ -3383,6 +3670,7 @@ async function initOpeningExplorer() {
                 renderPlayMoveList();
                 activateMainTab("play-section");
                 setCoachMessage(coachNotice("info", `Linea cargada: ${node.name}.`));
+                scheduleSessionSnapshotSave();
             } catch {
                 setCoachMessage(coachNotice("warn", "No se pudo cargar esa linea en el tablero."));
             }
@@ -3464,6 +3752,8 @@ function bindTabs() {
             if (target === "study-section") {
                 registerStudyActivity({ source: "tab_switch" });
             }
+
+            scheduleSessionSnapshotSave();
         });
     });
 }
@@ -3803,6 +4093,7 @@ function addAiMessage(text, type) {
 
     aiChatMessages.appendChild(div);
     aiChatMessages.scrollTop = aiChatMessages.scrollHeight;
+    scheduleSessionSnapshotSave();
     return div;
 }
 
@@ -3870,17 +4161,14 @@ function replaceMatchesInTextNodes(root, regex, createNodeFromMatch) {
 function confirmAiActionAndRun(action, description, execute) {
     const approved = window.confirm(`${description}\n\nConfirma con Si/No.`);
     if (!approved) {
-        if (aiModule && aiModule.logAction) {
-            aiModule.logAction(action, "rejected");
-        }
+        logAiActionEvent(action, "rejected");
         return;
     }
 
-    if (aiModule && aiModule.logAction) {
-        aiModule.logAction(action, "approved");
-    }
+    logAiActionEvent(action, "approved");
 
     execute();
+    scheduleSessionSnapshotSave();
 }
 
 function runAiAction(actionId, argument) {
@@ -3926,6 +4214,7 @@ function runAiAction(actionId, argument) {
         const detectedOpening = arg || detectOpening(playState.game.history(), playState.game.fen());
         if (!detectedOpening) {
             setCoachMessage(coachNotice("info", "No se detecto una apertura para estudiar en esta posicion."));
+            logAiActionEvent(action, "blocked", { reason: "opening_not_found" });
             return;
         }
 
@@ -3957,6 +4246,7 @@ function runAiAction(actionId, argument) {
         const selected = openingExplorerState.selectedNode;
         if (!selected) {
             setCoachMessage(coachNotice("info", "Selecciona primero una linea en el explorador ECO."));
+            logAiActionEvent(action, "blocked", { reason: "explorer_line_not_selected" });
             return;
         }
         confirmAiActionAndRun(action, `Cargar linea seleccionada: ${selected.name}`, () => {
@@ -3967,7 +4257,10 @@ function runAiAction(actionId, argument) {
             renderPlayMoveList();
             activateMainTab("play-section");
         });
+        return;
     }
+
+    logAiActionEvent(action, "ignored", { reason: "unknown_action" });
 }
 
 function makeAiActionsClickable(msgEl) {
@@ -4155,12 +4448,18 @@ Contexto de la partida:
 - Eval Stockfish: ${evalText}
 - Mejor jugada: ${bestMoveDesc} (${bestMoveStr})`;
 
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timeoutId = controller
+        ? setTimeout(() => controller.abort(), 8500)
+        : null;
+
     try {
         const response = await fetch("/api/ai-chat", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
+            signal: controller ? controller.signal : undefined,
             body: JSON.stringify({
                 systemPrompt,
                 question: question.slice(0, 1600),
@@ -4169,6 +4468,16 @@ Contexto de la partida:
         });
 
         const payload = await response.json();
+        if (response.status === 429) {
+            const retryAfter = payload && Number.isFinite(payload.retryAfterMs)
+                ? Math.ceil(Number(payload.retryAfterMs) / 1000)
+                : 10;
+            return {
+                text: `Espera ${retryAfter}s antes de pedir otra respuesta de IA.`,
+                actions: []
+            };
+        }
+
         if (!response.ok) {
             throw new Error(payload.message || `API Error: ${response.status}`);
         }
@@ -4189,11 +4498,21 @@ Contexto de la partida:
             actions: Array.isArray(parsed.actions) ? parsed.actions : []
         };
     } catch (err) {
+        if (err instanceof Error && err.name === "AbortError") {
+            return {
+                text: "La respuesta de IA supero el tiempo limite. Intenta de nuevo con una pregunta mas corta.",
+                actions: []
+            };
+        }
         console.error("AI chat error:", err);
         return {
             text: "Lo siento, fallo la conexion con mi motor principal de IA.",
             actions: []
         };
+    } finally {
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+        }
     }
 }
 
@@ -4202,10 +4521,25 @@ async function handleAiChat() {
     const question = aiChatInput.value.trim();
     if (!question) return;
 
+    if (aiRuntimeState.inFlight) {
+        addAiMessage("Espera a que termine la respuesta anterior.", "ai-bot");
+        return;
+    }
+
+    const now = Date.now();
+    const elapsed = now - aiRuntimeState.lastSentAt;
+    if (elapsed < aiRuntimeState.minIntervalMs) {
+        const waitSeconds = Math.ceil((aiRuntimeState.minIntervalMs - elapsed) / 1000);
+        addAiMessage(`Espera ${waitSeconds}s antes de enviar otra consulta.`, "ai-bot");
+        return;
+    }
+
     addAiMessage(question, "ai-user");
     aiChatInput.value = "";
 
     const thinkingMsg = addAiMessage("Pensando...", "ai-bot ai-thinking");
+    aiRuntimeState.inFlight = true;
+    aiRuntimeState.lastSentAt = now;
 
     try {
         const aiResponse = await generateAiResponse(question);
@@ -4218,6 +4552,9 @@ async function handleAiChat() {
     } catch {
         thinkingMsg.textContent = "Lo siento, no pude procesar tu pregunta. Int\u00e9ntalo de nuevo.";
         thinkingMsg.classList.remove("ai-thinking");
+    } finally {
+        aiRuntimeState.inFlight = false;
+        scheduleSessionSnapshotSave();
     }
 }
 
@@ -4251,7 +4588,394 @@ function setTodayLabel() {
     el.lastUpdateLabel.textContent = `Actualizado: ${today.getDate()} de ${monthNames[today.getMonth()]} de ${today.getFullYear()}`;
 }
 
-function init() {
+function updatePerformanceMetricsView() {
+    if (el.perfMetricLoad) {
+        const loadMs = Math.max(0, nowMs() - APP_BOOT_AT);
+        el.perfMetricLoad.textContent = `Carga inicial: ${formatDurationMs(loadMs)}`;
+    }
+    if (el.perfMetricFirstEval) {
+        el.perfMetricFirstEval.textContent = `1a eval motor: ${formatDurationMs(perfState.firstEvalMs)}`;
+    }
+    if (el.perfMetricExplorer) {
+        el.perfMetricExplorer.textContent = `Latencia ECO: ${formatDurationMs(perfState.explorerLatencyMs)}`;
+    }
+    if (el.perfMetricMemory) {
+        el.perfMetricMemory.textContent = `Memoria sesion: ${formatMemoryBytes(perfState.memoryBytes)}`;
+    }
+}
+
+function pushPerformanceEntry(name, value) {
+    if (!Number.isFinite(value)) {
+        return;
+    }
+    const nextEntry = {
+        at: new Date().toISOString(),
+        name: String(name || "metric"),
+        value: Math.round(value * 100) / 100
+    };
+    const current = readStored("metrics.entries", []);
+    const list = Array.isArray(current) ? current.slice() : [];
+    list.push(nextEntry);
+    writeStored("metrics.entries", list.slice(-300));
+}
+
+function refreshSessionMemoryMetric() {
+    let bytes = 0;
+
+    if (typeof performance !== "undefined" && performance.memory && Number.isFinite(performance.memory.usedJSHeapSize)) {
+        bytes = performance.memory.usedJSHeapSize;
+    } else if (storageModule && storageModule.getStore) {
+        try {
+            const store = storageModule.getStore();
+            bytes = JSON.stringify(store || {}).length;
+        } catch {
+            bytes = 0;
+        }
+    }
+
+    if (Number.isFinite(bytes) && bytes > 0) {
+        perfState.memoryBytes = bytes;
+        pushPerformanceEntry("session_memory_bytes", bytes);
+        updatePerformanceMetricsView();
+    }
+}
+
+function markFirstEvalMetric(elapsedMs) {
+    if (perfState.firstEvalMs != null || !Number.isFinite(elapsedMs)) {
+        return;
+    }
+    perfState.firstEvalMs = elapsedMs;
+    pushPerformanceEntry("first_stockfish_eval_ms", elapsedMs);
+    updatePerformanceMetricsView();
+}
+
+function markExplorerLatencyMetric(elapsedMs) {
+    if (!Number.isFinite(elapsedMs)) {
+        return;
+    }
+    perfState.explorerLatencyMs = elapsedMs;
+    pushPerformanceEntry("eco_latency_ms", elapsedMs);
+    updatePerformanceMetricsView();
+}
+
+function getCurrentActiveTabId() {
+    const current = document.querySelector(".tab-btn.is-active");
+    return current && current.dataset ? current.dataset.tabTarget || "play-section" : "play-section";
+}
+
+function getVisibleStudySectionId() {
+    const detail = document.querySelector(".study-detail[style*='display: block']");
+    return detail && detail.id ? detail.id : null;
+}
+
+function serializeAiChatForSession() {
+    if (!aiChatMessages) {
+        return [];
+    }
+
+    return Array.from(aiChatMessages.children)
+        .map((node) => {
+            const text = node.textContent ? node.textContent.trim() : "";
+            if (!text) {
+                return null;
+            }
+            const role = node.classList.contains("ai-user") ? "user" : "bot";
+            return {
+                role,
+                text: text.slice(0, 1200)
+            };
+        })
+        .filter(Boolean)
+        .slice(-24);
+}
+
+function serializeCoachHistoryForSession() {
+    if (!el.coachHistoryContainer) {
+        return [];
+    }
+
+    return Array.from(el.coachHistoryContainer.querySelectorAll("p"))
+        .map((node) => (node.textContent || "").trim())
+        .filter(Boolean)
+        .slice(-24);
+}
+
+function restoreAiChatFromSession(history) {
+    if (!aiChatMessages || !Array.isArray(history) || history.length === 0) {
+        return;
+    }
+
+    aiChatMessages.innerHTML = "";
+    history.forEach((entry) => {
+        if (!entry) return;
+        const role = String(entry.role || "bot");
+        const text = String(entry.text || "").trim();
+        if (!text) return;
+        addAiMessage(text, role === "user" ? "ai-user" : "ai-bot");
+    });
+}
+
+function buildSessionSnapshot() {
+    return {
+        savedAt: new Date().toISOString(),
+        activeTab: getCurrentActiveTabId(),
+        studySection: getVisibleStudySectionId(),
+        play: {
+            fen: playState.game.fen(),
+            pgn: playState.game.pgn(),
+            history: playState.game.history(),
+            playerColor: playState.playerColor,
+            botColor: playState.botColor,
+            botElo: playState.botElo,
+            boardOrientation: playState.board.getOrientation ? playState.board.getOrientation() : playState.playerColor
+        },
+        explorer: {
+            color: el.ecoFilterColor ? el.ecoFilterColor.value : "white",
+            popularity: el.ecoFilterPopularity ? Number(el.ecoFilterPopularity.value || 0) : 0,
+            success: el.ecoFilterSuccess ? Number(el.ecoFilterSuccess.value || 0) : 0,
+            query: el.ecoSearch ? el.ecoSearch.value : "",
+            selectedId: openingExplorerState.selectedNode ? openingExplorerState.selectedNode.id : null,
+            collapsedIds: Array.from(openingExplorerState.collapsedIds || [])
+        },
+        ai: {
+            chatHistory: serializeAiChatForSession()
+        },
+        coach: {
+            history: serializeCoachHistoryForSession()
+        }
+    };
+}
+
+function persistSessionSnapshotNow() {
+    if (sessionRuntimeState.saveTimer) {
+        clearTimeout(sessionRuntimeState.saveTimer);
+        sessionRuntimeState.saveTimer = null;
+    }
+    writeStored("session.snapshot", buildSessionSnapshot());
+}
+
+function scheduleSessionSnapshotSave(delayMs = 260) {
+    if (sessionRuntimeState.saveTimer) {
+        clearTimeout(sessionRuntimeState.saveTimer);
+    }
+    sessionRuntimeState.saveTimer = setTimeout(() => {
+        sessionRuntimeState.saveTimer = null;
+        writeStored("session.snapshot", buildSessionSnapshot());
+    }, delayMs);
+}
+
+function restoreSessionPrefilters() {
+    const snapshot = sessionRuntimeState.restorePayload;
+    if (!snapshot || typeof snapshot !== "object") {
+        return;
+    }
+
+    const explorer = snapshot.explorer || {};
+    if (el.ecoFilterColor && explorer.color) {
+        el.ecoFilterColor.value = explorer.color;
+    }
+    if (el.ecoFilterPopularity && Number.isFinite(explorer.popularity)) {
+        el.ecoFilterPopularity.value = String(explorer.popularity);
+    }
+    if (el.ecoFilterSuccess && Number.isFinite(explorer.success)) {
+        el.ecoFilterSuccess.value = String(explorer.success);
+    }
+    if (el.ecoSearch && typeof explorer.query === "string") {
+        el.ecoSearch.value = explorer.query;
+    }
+    if (Array.isArray(explorer.collapsedIds)) {
+        openingExplorerState.collapsedIds = new Set(explorer.collapsedIds.map((id) => String(id)));
+    }
+}
+
+function restorePlayFromSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== "object" || !snapshot.play) {
+        return;
+    }
+
+    const play = snapshot.play;
+    const restoredGame = new Chess();
+    let restored = false;
+
+    if (typeof play.pgn === "string" && play.pgn.trim()) {
+        try {
+            restoredGame.loadPgn(play.pgn);
+            restored = true;
+        } catch {
+            restored = false;
+        }
+    }
+
+    if (!restored && Array.isArray(play.history)) {
+        try {
+            play.history.forEach((san) => {
+                if (typeof san === "string" && san.trim()) {
+                    restoredGame.move(san.trim());
+                }
+            });
+            restored = restoredGame.history().length > 0;
+        } catch {
+            restored = false;
+        }
+    }
+
+    if (!restored && typeof play.fen === "string" && play.fen.trim()) {
+        try {
+            restoredGame.load(play.fen);
+            restored = true;
+        } catch {
+            restored = false;
+        }
+    }
+
+    if (!restored) {
+        return;
+    }
+
+    playState.game = restoredGame;
+    playState.lastMove = null;
+    playState.hintMove = null;
+    clearPlaySelection();
+
+    playState.playerColor = play.playerColor === "black" ? "black" : "white";
+    playState.botColor = playState.playerColor === "white" ? "black" : "white";
+    playState.botElo = Number.isFinite(play.botElo) ? clamp(Number(play.botElo), 400, 2800) : playState.botElo;
+
+    if (el.playerColor) {
+        el.playerColor.value = playState.playerColor;
+    }
+    if (el.botPreset) {
+        el.botPreset.value = String(playState.botElo);
+    }
+    if (el.playSetupPanel && el.playGamePanel && el.playPanelGrid && el.playBoardCard) {
+        const hasGame = playState.game.history().length > 0 || playState.game.fen() !== openingExplorerState.rootFen;
+        el.playSetupPanel.style.display = hasGame ? "none" : "";
+        el.playGamePanel.style.display = hasGame ? "flex" : "none";
+        el.playBoardCard.style.display = hasGame ? "" : "none";
+        el.playPanelGrid.classList.toggle("setup-mode", !hasGame);
+    }
+
+    const orientation = play.boardOrientation === "black" ? "black" : playState.playerColor;
+    playState.board.setOrientation(orientation);
+    renderPlayBoard();
+    renderPlayMoveList();
+}
+
+function restoreSessionAfterInit() {
+    const snapshot = sessionRuntimeState.restorePayload;
+    if (!snapshot || typeof snapshot !== "object") {
+        return;
+    }
+
+    restorePlayFromSnapshot(snapshot);
+
+    if (snapshot.ai && Array.isArray(snapshot.ai.chatHistory)) {
+        restoreAiChatFromSession(snapshot.ai.chatHistory);
+    }
+
+    if (snapshot.coach && Array.isArray(snapshot.coach.history) && el.coachHistoryContainer) {
+        el.coachHistoryContainer.innerHTML = "";
+        snapshot.coach.history.forEach((line) => {
+            const text = String(line || "").trim();
+            if (!text) return;
+            const p = document.createElement("p");
+            p.className = "coach-msg";
+            p.textContent = text;
+            el.coachHistoryContainer.appendChild(p);
+        });
+        const latest = el.coachHistoryContainer.lastElementChild;
+        if (latest && el.coachMessage) {
+            el.coachMessage.textContent = latest.textContent || "";
+        }
+    }
+
+    if (snapshot.studySection) {
+        showStudyDetail(snapshot.studySection);
+    }
+
+    if (snapshot.activeTab) {
+        activateMainTab(snapshot.activeTab);
+    }
+
+    if (snapshot.explorer && snapshot.explorer.selectedId) {
+        const selected = openingExplorerState.rows.find((row) => row.id === snapshot.explorer.selectedId);
+        if (selected) {
+            renderExplorerDetail(selected);
+            renderExplorerTree();
+        }
+    }
+
+    scheduleSessionSnapshotSave(0);
+}
+
+function bindSessionPersistence() {
+    const passivePersist = () => scheduleSessionSnapshotSave();
+    ["click", "change", "input"].forEach((eventName) => {
+        document.addEventListener(eventName, passivePersist, { passive: true });
+    });
+
+    window.setInterval(() => {
+        scheduleSessionSnapshotSave(0);
+    }, 5000);
+
+    window.setInterval(() => {
+        refreshSessionMemoryMetric();
+    }, 12000);
+
+    window.addEventListener("beforeunload", persistSessionSnapshotNow);
+}
+
+function renderAiActionAudit() {
+    if (!el.aiActionAudit) {
+        return;
+    }
+    el.aiActionAudit.innerHTML = "";
+
+    const log = aiModule && aiModule.readActionLog
+        ? aiModule.readActionLog()
+        : [];
+    const rows = Array.isArray(log) ? log.slice(-12).reverse() : [];
+
+    if (rows.length === 0) {
+        const item = document.createElement("li");
+        item.textContent = "Sin acciones registradas.";
+        el.aiActionAudit.appendChild(item);
+        return;
+    }
+
+    rows.forEach((entry) => {
+        const li = document.createElement("li");
+        const status = String(entry.status || "unknown");
+        const marker = status === "approved"
+            ? "SI"
+            : (status === "rejected" ? "NO" : "INFO");
+        const actionType = String(entry.actionType || "accion");
+        const argument = String(entry.argument || "");
+        li.textContent = `${marker}: ${actionType}${argument ? ` (${argument})` : ""}`;
+        el.aiActionAudit.appendChild(li);
+    });
+}
+
+function logAiActionEvent(action, status, meta) {
+    if (aiModule && aiModule.logAction) {
+        aiModule.logAction(action, status, meta || null);
+    }
+    renderAiActionAudit();
+    scheduleSessionSnapshotSave(80);
+}
+
+function hasExplicitDeepLink() {
+    const params = new URLSearchParams(window.location.search);
+    return ["tab", "study", "opening", "fen", "line"].some((key) => params.has(key));
+}
+
+async function init() {
+    if (storageModule && storageModule.removeLegacyKeys) {
+        storageModule.removeLegacyKeys();
+    }
+
+    restoreSessionPrefilters();
+
     if (uiModule && uiModule.applyStoredThemes) {
         uiModule.applyStoredThemes();
         if (el.setBoardTheme && uiModule.loadPreference) {
@@ -4267,8 +4991,11 @@ function init() {
     bindAiChat();
     loadOpeningCatalog();
     renderStudyDiagrams();
-    applyStudyDeepLinkFromUrl();
     setTodayLabel();
+    updatePerformanceMetricsView();
+    refreshSessionMemoryMetric();
+    renderAiActionAudit();
+    bindSessionPersistence();
 
     el.coachDepthValue.textContent = el.coachDepth.value;
     el.analysisDepthValue.textContent = el.analysisDepth.value;
@@ -4279,10 +5006,18 @@ function init() {
     // Initialize play eval bar
     updatePlayEvalBar({ type: "cp", value: 0 });
     applySettingsToBoard();
-    initOpeningExplorer();
+    await initOpeningExplorer();
     renderProgressDashboard();
     bindGlobalShortcuts();
+
+    if (hasExplicitDeepLink()) {
+        applyStudyDeepLinkFromUrl();
+    } else {
+        restoreSessionAfterInit();
+    }
+
+    scheduleSessionSnapshotSave(0);
 }
 
-init();
+void init();
 

@@ -13,7 +13,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
         rel="stylesheet" />
-    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260223_11" />
+    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260224_polish3" />
     <link rel="shortcut icon" href="/static/media/favicon-freechess.ico" type="image/x-icon" />
 </head>
 
@@ -26,6 +26,10 @@
         </div>
         <div class="topbar-meta">
             <p id="last-update-label">Actualizado: 23 de febrero de 2026</p>
+            <p id="perf-metric-load">Carga inicial: --</p>
+            <p id="perf-metric-first-eval">1ª eval motor: --</p>
+            <p id="perf-metric-explorer">Latencia ECO: --</p>
+            <p id="perf-metric-memory">Memoria sesión: --</p>
             <a href="https://www.fide.com/FIDE/handbook/LawsOfChess.pdf" target="_blank"
                 rel="noopener noreferrer">Reglas FIDE</a>
         </div>
@@ -153,6 +157,10 @@
                                     <input id="ai-chat-input" type="text" placeholder="Preg&uacute;ntame algo..."
                                         autocomplete="off" />
                                     <button id="ai-chat-send" class="primary-btn" type="button">Enviar</button>
+                                </div>
+                                <div class="ai-audit-panel">
+                                    <h5>Auditor&iacute;a IA</h5>
+                                    <ul id="ai-action-audit" class="compact-list ai-audit-list" aria-live="polite"></ul>
                                 </div>
                             </div>
                         </div>
@@ -868,13 +876,14 @@
     <audio id="fx-end" src="/static/media/game_end.mp3"></audio>
 
     <script src="/static/scripts/vendor/chess.global.js?v=20260223"></script>
-    <script src="/static/pages/report/scripts/modules/ui.js?v=20260224_eco1"></script>
-    <script src="/static/pages/report/scripts/modules/openings.js?v=20260224_eco1"></script>
-    <script src="/static/pages/report/scripts/modules/study.js?v=20260224_eco1"></script>
-    <script src="/static/pages/report/scripts/modules/ai.js?v=20260224_eco1"></script>
-    <script src="/static/pages/report/scripts/modules/play.js?v=20260224_eco1"></script>
-    <script src="/static/pages/report/scripts/modules/analysis.js?v=20260224_eco1"></script>
-    <script src="/static/pages/report/scripts/main.js?v=20260224_eco1"></script>
+    <script src="/static/pages/report/scripts/modules/storage.js?v=20260224_polish3"></script>
+    <script src="/static/pages/report/scripts/modules/ui.js?v=20260224_polish3"></script>
+    <script src="/static/pages/report/scripts/modules/openings.js?v=20260224_polish3"></script>
+    <script src="/static/pages/report/scripts/modules/study.js?v=20260224_polish3"></script>
+    <script src="/static/pages/report/scripts/modules/ai.js?v=20260224_polish3"></script>
+    <script src="/static/pages/report/scripts/modules/play.js?v=20260224_polish3"></script>
+    <script src="/static/pages/report/scripts/modules/analysis.js?v=20260224_polish3"></script>
+    <script src="/static/pages/report/scripts/main.js?v=20260224_polish3"></script>
 </body>
 
 </html>

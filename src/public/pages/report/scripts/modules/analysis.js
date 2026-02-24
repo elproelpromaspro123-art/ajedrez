@@ -1,5 +1,8 @@
 (function initAnalysisModule(global) {
     const PROGRESS_KEY = "ajedrez_progress_v1";
+    const storage = global.ReportModules && global.ReportModules.storage
+        ? global.ReportModules.storage
+        : null;
 
     const SCORE_MAP = {
         brilliant: 1,
@@ -15,6 +18,15 @@
     };
 
     function loadProgress() {
+        if (storage && storage.read) {
+            const games = storage.read("progress.games", []);
+            const activities = storage.read("progress.activities", []);
+            return {
+                games: Array.isArray(games) ? games : [],
+                activities: Array.isArray(activities) ? activities : []
+            };
+        }
+
         try {
             const raw = localStorage.getItem(PROGRESS_KEY);
             if (!raw) return { games: [], activities: [] };
@@ -28,6 +40,18 @@
     }
 
     function saveProgress(progress) {
+        if (storage && storage.write) {
+            storage.write(
+                "progress.games",
+                Array.isArray(progress.games) ? progress.games.slice(-400) : []
+            );
+            storage.write(
+                "progress.activities",
+                Array.isArray(progress.activities) ? progress.activities.slice(-1200) : []
+            );
+            return;
+        }
+
         try {
             localStorage.setItem(PROGRESS_KEY, JSON.stringify({
                 games: Array.isArray(progress.games) ? progress.games.slice(-400) : [],

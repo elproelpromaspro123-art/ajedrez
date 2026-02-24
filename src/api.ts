@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Request, Router } from "express";
 import { Chess } from "chess.js";
 import pgnParser from "pgn-parser";
 
@@ -35,6 +35,10 @@ interface ExplorerCacheEntry {
 const OPENING_EXPLORER_ENDPOINT = "https://explorer.lichess.ovh/lichess";
 const EXPLORER_CACHE_TTL_MS = 1000 * 60 * 30;
 const explorerCache = new Map<string, ExplorerCacheEntry>();
+const AI_PROVIDER_TIMEOUT_MS = 9000;
+const AI_RATE_WINDOW_MS = 10000;
+const AI_RATE_MAX_REQUESTS = 1;
+const aiRateLimiter = new Map<string, number[]>();
 
 function isNonEmptyString(value: unknown): value is string {
     return typeof value == "string" && value.trim().length > 0;
@@ -48,6 +52,45 @@ function clampText(value: string, maxLength: number): string {
     return value.slice(0, maxLength);
 }
 
+function getClientIdentifier(req: Request): string {
+    const forwarded = req.headers["x-forwarded-for"];
+    if (typeof forwarded == "string" && forwarded.length > 0) {
+        const first = forwarded.split(",")[0];
+        if (first && first.trim().length > 0) {
+            return first.trim();
+        }
+    }
+
+    if (Array.isArray(forwarded) && forwarded[0]) {
+        return String(forwarded[0]);
+    }
+
+    return String(req.ip || "unknown");
+}
+
+function checkAIRateLimit(clientId: string) {
+    const now = Date.now();
+    const history = aiRateLimiter.get(clientId) || [];
+    const active = history.filter((timestamp) => now - timestamp < AI_RATE_WINDOW_MS);
+
+    if (active.length >= AI_RATE_MAX_REQUESTS) {
+        const retryAfterMs = Math.max(1, AI_RATE_WINDOW_MS - (now - active[0]));
+        aiRateLimiter.set(clientId, active);
+        return {
+            limited: true,
+            retryAfterMs
+        };
+    }
+
+    active.push(now);
+    aiRateLimiter.set(clientId, active);
+
+    return {
+        limited: false,
+        retryAfterMs: 0
+    };
+}
+
 async function requestGroqChatCompletion(systemPrompt: string, question: string): Promise<string> {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
@@ -55,26 +98,42 @@ async function requestGroqChatCompletion(systemPrompt: string, question: string)
     }
 
     const model = process.env.GROQ_MODEL || "groq/compound";
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), AI_PROVIDER_TIMEOUT_MS);
 
-    const response = await fetch(GROQ_ENDPOINT, {
-        method: "POST",
-        headers: {
-            "Authorization": `Bearer ${apiKey}`,
-            "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-            model,
-            messages: [
-                { role: "system", content: systemPrompt },
-                { role: "user", content: question }
-            ],
-            temperature: 0.3,
-            max_completion_tokens: 800,
-            top_p: 0.9
-        })
-    });
+    let response: Response;
+    let rawPayload = "";
 
-    const rawPayload = await response.text();
+    try {
+        response = await fetch(GROQ_ENDPOINT, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                model,
+                messages: [
+                    { role: "system", content: systemPrompt },
+                    { role: "user", content: question }
+                ],
+                temperature: 0.3,
+                max_completion_tokens: 800,
+                top_p: 0.9
+            }),
+            signal: controller.signal
+        });
+
+        rawPayload = await response.text();
+    } catch (err) {
+        if (err instanceof Error && err.name == "AbortError") {
+            throw new Error(`AI provider timeout (${AI_PROVIDER_TIMEOUT_MS}ms).`);
+        }
+
+        throw err;
+    } finally {
+        clearTimeout(timeout);
+    }
 
     let payload: GroqChatCompletionResponse = {};
     try {
@@ -276,6 +335,16 @@ router.post("/ai-chat", async (req, res) => {
         return res.status(400).json({ message: "Question is required." });
     }
 
+    const clientId = getClientIdentifier(req);
+    const limit = checkAIRateLimit(clientId);
+    if (limit.limited) {
+        res.setHeader("Retry-After", String(Math.ceil(limit.retryAfterMs / 1000)));
+        return res.status(429).json({
+            message: "Rate limit exceeded for AI chat. Wait a few seconds before trying again.",
+            retryAfterMs: limit.retryAfterMs
+        });
+    }
+
     const safeQuestion = clampText(question.trim(), 1600);
     const safeSystemPrompt = isNonEmptyString(systemPrompt)
         ? clampText(systemPrompt.trim(), 4500)
@@ -299,6 +368,14 @@ router.post("/ai-chat", async (req, res) => {
         }
 
         console.error("AI chat request failed:", err);
+
+        if (structured) {
+            return res.json({
+                content: "No pude completar la solicitud de IA ahora. Te muestro fallback limpio sin acciones ejecutables.",
+                actions: []
+            });
+        }
+
         return res.status(502).json({ message: "Failed to get a response from AI assistant." });
     }
 

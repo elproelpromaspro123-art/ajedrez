@@ -1,5 +1,8 @@
 (function initUiModule(global) {
     const STORAGE_PREFIX = "ajedrez_ui_pref_";
+    const storage = global.ReportModules && global.ReportModules.storage
+        ? global.ReportModules.storage
+        : null;
 
     function isTypingTarget(target) {
         if (!target) return false;
@@ -8,6 +11,10 @@
     }
 
     function loadPreference(key, fallbackValue) {
+        if (storage && storage.read) {
+            return storage.read(`preferences.${key}`, fallbackValue);
+        }
+
         try {
             const raw = localStorage.getItem(STORAGE_PREFIX + key);
             if (raw === null) return fallbackValue;
@@ -18,6 +25,11 @@
     }
 
     function savePreference(key, value) {
+        if (storage && storage.write) {
+            storage.write(`preferences.${key}`, value);
+            return;
+        }
+
         try {
             localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(value));
         } catch {

@@ -3,6 +3,9 @@
         "hint", "undo", "new_game", "analyze", "study", "flip", "open_study", "load_line"
     ]);
     const LOG_KEY = "ajedrez_ai_action_log_v1";
+    const storage = global.ReportModules && global.ReportModules.storage
+        ? global.ReportModules.storage
+        : null;
 
     function parseJsonLoose(raw) {
         const text = String(raw || "").trim();
@@ -60,6 +63,11 @@
     }
 
     function readActionLog() {
+        if (storage && storage.read) {
+            const entries = storage.read("ai.log", []);
+            return Array.isArray(entries) ? entries : [];
+        }
+
         try {
             const raw = localStorage.getItem(LOG_KEY);
             if (!raw) return [];
@@ -71,6 +79,11 @@
     }
 
     function writeActionLog(entries) {
+        if (storage && storage.write) {
+            storage.write("ai.log", Array.isArray(entries) ? entries.slice(-500) : []);
+            return;
+        }
+
         try {
             localStorage.setItem(LOG_KEY, JSON.stringify(entries.slice(-500)));
         } catch {

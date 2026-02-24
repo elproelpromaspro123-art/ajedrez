@@ -3,6 +3,9 @@
     const EXPLORER_CACHE_KEY = "ajedrez_opening_explorer_cache_v2";
     const CATALOG_TTL_MS = 1000 * 60 * 60 * 24 * 7;
     const EXPLORER_TTL_MS = 1000 * 60 * 60 * 24;
+    const storage = global.ReportModules && global.ReportModules.storage
+        ? global.ReportModules.storage
+        : null;
 
     function readJson(key, fallbackValue) {
         try {
@@ -37,7 +40,9 @@
     }
 
     function getCachedCatalog() {
-        const payload = readJson(CATALOG_CACHE_KEY, null);
+        const payload = storage && storage.read
+            ? storage.read("caches.openingsCatalog", null)
+            : readJson(CATALOG_CACHE_KEY, null);
         if (!payload || !Array.isArray(payload.openings) || typeof payload.savedAt !== "number") {
             return null;
         }
@@ -49,10 +54,17 @@
 
     function cacheCatalog(openings) {
         if (!Array.isArray(openings)) return;
-        writeJson(CATALOG_CACHE_KEY, {
+        const payload = {
             savedAt: Date.now(),
             openings
-        });
+        };
+
+        if (storage && storage.write) {
+            storage.write("caches.openingsCatalog", payload);
+            return;
+        }
+
+        writeJson(CATALOG_CACHE_KEY, payload);
     }
 
     async function fetchCatalog(forceRefresh) {
@@ -76,7 +88,9 @@
     }
 
     function getExplorerCacheMap() {
-        const payload = readJson(EXPLORER_CACHE_KEY, { entries: {} });
+        const payload = storage && storage.read
+            ? { entries: storage.read("caches.openingExplorer.entries", {}) }
+            : readJson(EXPLORER_CACHE_KEY, { entries: {} });
         if (!payload || typeof payload !== "object" || typeof payload.entries !== "object") {
             return {};
         }
@@ -84,6 +98,11 @@
     }
 
     function setExplorerCacheMap(entries) {
+        if (storage && storage.write) {
+            storage.write("caches.openingExplorer.entries", entries);
+            return;
+        }
+
         writeJson(EXPLORER_CACHE_KEY, { entries });
     }
 

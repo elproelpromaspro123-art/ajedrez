@@ -501,6 +501,33 @@ a:hover {
     font-size: 0.82rem;
 }
 
+.ai-audit-panel {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px dashed rgba(255, 255, 255, 0.09);
+    display: grid;
+    gap: 4px;
+}
+
+.ai-audit-panel h5 {
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+
+.ai-audit-list {
+    max-height: 110px;
+    overflow-y: auto;
+    padding-right: 4px;
+    margin: 0;
+}
+
+.ai-audit-list li {
+    font-size: 0.74rem;
+}
+
 .card-header {
     display: flex;
     justify-content: space-between;
@@ -1704,6 +1731,9 @@ button:disabled {
     padding: 6px;
     display: grid;
     gap: 2px;
+    scrollbar-gutter: stable;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
 }
 
 .eco-row {
@@ -1726,6 +1756,27 @@ button:disabled {
 .eco-row.is-active {
     border-color: rgba(129, 182, 76, 0.6);
     background: rgba(129, 182, 76, 0.12);
+}
+
+.eco-row.is-focus {
+    box-shadow: 0 0 0 2px rgba(126, 178, 218, 0.28);
+    border-color: rgba(126, 178, 218, 0.75);
+}
+
+.eco-row[aria-expanded="true"] .eco-row-main::before,
+.eco-row[aria-expanded="false"] .eco-row-main::before {
+    display: inline-block;
+    width: 10px;
+    margin-right: 4px;
+    color: var(--text-muted);
+}
+
+.eco-row[aria-expanded="true"] .eco-row-main::before {
+    content: "\25BE";
+}
+
+.eco-row[aria-expanded="false"] .eco-row-main::before {
+    content: "\25B8";
 }
 
 .eco-row-main {
@@ -2374,6 +2425,18 @@ textarea:focus-visible {
         grid-template-columns: 1fr;
     }
 
+    .eco-tree {
+        max-height: 52vh;
+    }
+
+    .eco-row {
+        padding: 9px 11px;
+    }
+
+    .eco-row-main {
+        font-size: 0.82rem;
+    }
+
     .resource-links {
         flex-direction: column;
     }
@@ -2396,5 +2459,22 @@ textarea:focus-visible {
 
     .endgame-content {
         padding: 16px;
+    }
+
+    .game-controls-row button {
+        min-height: 44px;
+        padding: 10px 12px;
+        font-size: 0.85rem;
+    }
+
+    .sidebar-tab {
+        padding: 10px 12px;
+        font-size: 0.82rem;
+    }
+
+    .ai-chat-input-wrap input,
+    .ai-chat-input-wrap button {
+        min-height: 42px;
+        font-size: 0.86rem;
     }
 }
