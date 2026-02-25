@@ -48,6 +48,7 @@ const OPENING_EXPLORER_ENDPOINT = "https://explorer.lichess.ovh/lichess";
 const EXPLORER_CACHE_TTL_MS = 1000 * 60 * 30;
 const EXPLORER_CACHE_MAX_ENTRIES = 500;
 const OPENING_EXPLORER_TIMEOUT_MS = 9000;
+const OPENING_EXPLORER_DEGRADED_MESSAGE = "Opening explorer data is temporarily unavailable. Using fallback.";
 const MAX_PGN_LENGTH = 120_000;
 const explorerCache = new Map<string, TimedCacheEntry<unknown>>();
 const AI_PROVIDER_TIMEOUT_MS = 9000;
@@ -151,6 +152,26 @@ function isJsonPayloadSizeSafe(value: unknown, maxBytes: number): boolean {
     } catch {
         return false;
     }
+}
+
+function buildEmptyOpeningExplorerPayload(fen: string) {
+    return {
+        fen,
+        white: 0,
+        draws: 0,
+        black: 0,
+        opening: null,
+        moves: []
+    };
+}
+
+function getExplorerFallbackPayload(cacheKey: string, fen: string) {
+    const cached = explorerCache.get(cacheKey);
+    if (cached && cached.payload && typeof cached.payload === "object") {
+        return cached.payload as Record<string, unknown>;
+    }
+
+    return buildEmptyOpeningExplorerPayload(fen) as Record<string, unknown>;
 }
 
 function getClientIdentifier(req: Request): string {
@@ -263,7 +284,12 @@ router.get("/profile-store", (_req, res) => {
         });
     } catch (err) {
         console.error("Profile store read failed:", err);
-        return res.status(500).json({ message: "Failed to read profile store." });
+        return res.json({
+            namespace: getDatabaseMeta().namespace,
+            data: {},
+            degraded: true,
+            message: "Profile store unavailable. Using local-only fallback."
+        });
     }
 });
 
@@ -301,7 +327,13 @@ router.post("/profile-store/sync", (req, res) => {
         });
     } catch (err) {
         console.error("Profile store sync failed:", err);
-        return res.status(500).json({ message: "Failed to sync profile store." });
+        return res.json({
+            ok: true,
+            namespace: getDatabaseMeta().namespace,
+            data: readScopedData(),
+            degraded: true,
+            message: "Profile store sync degraded to local memory fallback."
+        });
     }
 });
 
@@ -457,7 +489,10 @@ router.get("/opening-explorer", async (req, res) => {
         } catch {}
 
         if (!response.ok) {
-            return res.status(502).json({
+            const fallbackPayload = getExplorerFallbackPayload(cacheKey, fen);
+            return res.json({
+                ...fallbackPayload,
+                degraded: true,
                 message: payload?.error || `Opening explorer provider error (${response.status}).`
             });
         }
@@ -488,12 +523,21 @@ router.get("/opening-explorer", async (req, res) => {
 
         return res.json(safePayload);
     } catch (err) {
+        const fallbackPayload = getExplorerFallbackPayload(cacheKey, fen);
         if (err instanceof Error && err.name == "AbortError") {
-            return res.status(502).json({ message: `Opening explorer timeout (${OPENING_EXPLORER_TIMEOUT_MS}ms).` });
+            return res.json({
+                ...fallbackPayload,
+                degraded: true,
+                message: `Opening explorer timeout (${OPENING_EXPLORER_TIMEOUT_MS}ms).`
+            });
         }
 
         const message = err instanceof Error ? err.message : "Opening explorer request failed.";
-        return res.status(502).json({ message });
+        return res.json({
+            ...fallbackPayload,
+            degraded: true,
+            message: message || OPENING_EXPLORER_DEGRADED_MESSAGE
+        });
     } finally {
         clearTimeout(timeout);
     }

@@ -162,6 +162,8 @@ const el = {
     botPreset: document.querySelector("#bot-preset"),
     botCustomElo: document.querySelector("#bot-custom-elo"),
     playerColor: document.querySelector("#player-color"),
+    playMode: document.querySelector("#play-mode"),
+    playModeNote: document.querySelector("#play-mode-note"),
     coachDepth: document.querySelector("#coach-depth"),
     coachDepthValue: document.querySelector("#coach-depth-value"),
     coachMessage: document.querySelector("#coach-message"),
@@ -1140,11 +1142,29 @@ function updateEvalBarElements(evaluation, barEl, fillEl, whiteLbl, blackLbl) {
 
 /* ===== Play State ===== */
 
+const PLAY_MODES = {
+    CASUAL: "casual",
+    RANKED: "ranked"
+};
+
+const RANKED_FORCED_SETTINGS = {
+    coachAuto: false,
+    hints: false,
+    moveComments: false,
+    computer: true,
+    takebacks: false,
+    evalBar: false,
+    legalMoves: false,
+    threatArrows: false,
+    suggestionArrows: false
+};
+
 const playState = {
     board: new BoardView(el.playBoard, { orientation: "white", interactive: true, showCoordinates: true }),
     game: new Chess(),
     playerColor: "white",
     botColor: "black",
+    gameMode: PLAY_MODES.CASUAL,
     botElo: 1200,
     selectedSquare: null,
     legalTargets: [],
@@ -1215,6 +1235,87 @@ const lessonState = {
     selectedExerciseIndex: 0,
     progressByLesson: {}
 };
+
+function normalizePlayMode(value) {
+    return String(value || "").toLowerCase() === PLAY_MODES.RANKED
+        ? PLAY_MODES.RANKED
+        : PLAY_MODES.CASUAL;
+}
+
+function getSelectedPlayMode() {
+    return normalizePlayMode(el.playMode ? el.playMode.value : PLAY_MODES.CASUAL);
+}
+
+function isRankedActiveGame() {
+    return normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED
+        && Boolean(playState.startTime)
+        && !playState.game.isGameOver();
+}
+
+function getRankedLockedControls() {
+    return [
+        el.setCoachAuto,
+        el.setHints,
+        el.setMoveComments,
+        el.setComputer,
+        el.setTakebacks,
+        el.setEvalBar,
+        el.setLegal,
+        el.setThreatArrows,
+        el.setSuggestionArrows
+    ];
+}
+
+function enforceRankedSettings() {
+    if (el.setCoachAuto) el.setCoachAuto.checked = RANKED_FORCED_SETTINGS.coachAuto;
+    if (el.setHints) el.setHints.checked = RANKED_FORCED_SETTINGS.hints;
+    if (el.setMoveComments) el.setMoveComments.checked = RANKED_FORCED_SETTINGS.moveComments;
+    if (el.setComputer) el.setComputer.checked = RANKED_FORCED_SETTINGS.computer;
+    if (el.setTakebacks) el.setTakebacks.checked = RANKED_FORCED_SETTINGS.takebacks;
+    if (el.setEvalBar) el.setEvalBar.checked = RANKED_FORCED_SETTINGS.evalBar;
+    if (el.setLegal) el.setLegal.checked = RANKED_FORCED_SETTINGS.legalMoves;
+    if (el.setThreatArrows) el.setThreatArrows.checked = RANKED_FORCED_SETTINGS.threatArrows;
+    if (el.setSuggestionArrows) el.setSuggestionArrows.checked = RANKED_FORCED_SETTINGS.suggestionArrows;
+}
+
+function refreshPlayModeUiState() {
+    const rankedSelected = getSelectedPlayMode() === PLAY_MODES.RANKED;
+    const rankedLive = isRankedActiveGame();
+    const lockControls = rankedSelected || rankedLive;
+
+    if (lockControls) {
+        enforceRankedSettings();
+    }
+
+    getRankedLockedControls().forEach((control) => {
+        if (control) {
+            control.disabled = lockControls;
+        }
+    });
+
+    if (el.playModeNote) {
+        el.playModeNote.textContent = rankedSelected || rankedLive
+            ? "Clasificatoria: sin ayudas (pistas, deshacer, comentarios, eval bar ni jugadas legales). Solo este modo suma perfil."
+            : "Clasica: usa tus ajustes libremente. No suma estadisticas del perfil.";
+    }
+
+    if (el.playHintBtn) {
+        el.playHintBtn.disabled = rankedLive;
+    }
+    if (el.playUndoBtn) {
+        el.playUndoBtn.disabled = rankedLive;
+    }
+}
+
+function getRankedGamesOnly(games) {
+    const source = Array.isArray(games) ? games : [];
+    return source.filter((game) => {
+        if (!game || typeof game !== "object") {
+            return false;
+        }
+        return normalizePlayMode(game.mode) === PLAY_MODES.RANKED || game.ranked === true;
+    });
+}
 
 function getPlaySettings() {
     return {
@@ -2089,14 +2190,17 @@ function renderPlayStatus() {
     }
 
     const turn = sideFromTurn(playState.game.turn());
+    const modePrefix = normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED && playState.startTime
+        ? "Clasificatoria | "
+        : "";
 
     if (playState.thinking) {
-        el.playStatus.textContent = `Bot (${playState.botElo}) pensando...`;
+        el.playStatus.textContent = `${modePrefix}Bot (${playState.botElo}) pensando...`;
     } else if (turn === playState.playerColor) {
         const sideText = turn === "white" ? "blancas" : "negras";
-        el.playStatus.textContent = `Tu turno con ${sideText}.`;
+        el.playStatus.textContent = `${modePrefix}Tu turno con ${sideText}.`;
     } else {
-        el.playStatus.textContent = `Turno del bot (${playState.botElo}).`;
+        el.playStatus.textContent = `${modePrefix}Turno del bot (${playState.botElo}).`;
     }
 }
 
@@ -2155,6 +2259,7 @@ function renderPlayBoard() {
     if (el.playCancelPremoveBtn) {
         el.playCancelPremoveBtn.disabled = !playState.premove;
     }
+    refreshPlayModeUiState();
 
     renderPlayMoveList();
     renderPlayStatus();
@@ -2522,6 +2627,14 @@ async function playBotMove() {
 }
 
 async function requestCoachHint(isAuto = false) {
+    if (isRankedActiveGame()) {
+        if (!isAuto) {
+            playErrorSound();
+            setCoachMessage(coachNotice("warn", "Las pistas estan desactivadas en modo Clasificatoria."));
+        }
+        return;
+    }
+
     const settings = getPlaySettings();
 
     if (!isAuto && !settings.hintsEnabled) {
@@ -2786,6 +2899,7 @@ async function handleBoardDrop(from, to) {
 function goToPlaySetup(message = coachNotice("setup", "Configura una nueva partida para empezar.")) {
     playState.sessionId += 1;
     playState.game = new Chess();
+    playState.gameMode = getSelectedPlayMode();
     playState.lastMove = null;
     playState.hintMove = null;
     playState.thinking = false;
@@ -2821,6 +2935,7 @@ function goToPlaySetup(message = coachNotice("setup", "Configura una nueva parti
     }
 
     setCoachMessage(message);
+    refreshPlayModeUiState();
     renderPlayBoard();
     scheduleSessionSnapshotSave();
 }
@@ -2828,6 +2943,11 @@ function goToPlaySetup(message = coachNotice("setup", "Configura una nueva parti
 function startNewGame() {
     playState.sessionId += 1;
     playState.game = new Chess();
+    playState.gameMode = getSelectedPlayMode();
+
+    if (normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED) {
+        enforceRankedSettings();
+    }
 
     const chosenColor = el.playerColor.value === "random"
         ? (Math.random() < 0.5 ? "white" : "black")
@@ -2880,10 +3000,13 @@ function startNewGame() {
         el.playEvalBar.style.display = getPlaySettings().showEvalBar ? "" : "none";
     }
 
-    const eloMsg = getPlaySettings().computerEnabled
-        ? `Partida nueva. Bot configurado en ${playState.botElo} ELO. \u00a1Buena suerte!`
-        : `Partida nueva. Motor desactivado \u2014 juega ambos lados.`;
+    const eloMsg = normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED
+        ? `Clasificatoria iniciada contra bot ${playState.botElo} ELO. Sin ayudas: esta partida si cuenta para tu perfil.`
+        : (getPlaySettings().computerEnabled
+            ? `Partida clasica iniciada. Bot configurado en ${playState.botElo} ELO (no suma perfil).`
+            : "Partida clasica iniciada con motor desactivado (no suma perfil).");
     setCoachMessage(coachNotice("setup", eloMsg));
+    refreshPlayModeUiState();
 
     if (getPlaySettings().computerEnabled) {
         if (sideFromTurn(playState.game.turn()) === playState.botColor) {
@@ -4225,7 +4348,7 @@ function mergeProgressWithRemote(localProgress, remoteProgress) {
     const mergedGames = mergeListByKey(
         local.games,
         remote.games,
-        (item) => `${item.at || ""}|${item.opening || ""}|${item.result || ""}|${item.botElo || ""}|${item.color || ""}|${Number(item.accuracy || 0).toFixed(2)}`,
+        (item) => `${item.at || ""}|${item.opening || ""}|${item.result || ""}|${item.botElo || ""}|${item.color || ""}|${Number(item.accuracy || 0).toFixed(2)}|${item.mode || ""}|${item.ranked ? "1" : "0"}`,
         400
     );
 
@@ -4421,7 +4544,7 @@ function renderProfileDashboard() {
     }
 
     const progress = analysisModule.loadProgress();
-    const games = Array.isArray(progress.games) ? progress.games.slice() : [];
+    const games = getRankedGamesOnly(progress.games);
     profileState.games = games;
     profileState.eloTimeline = computeEloTimeline(games, 1200);
 
@@ -4445,10 +4568,14 @@ function renderProfileDashboard() {
 
     drawProfileEloGraph(profileState.eloTimeline);
     if (el.profileEloMeta) {
-        const startElo = profileState.eloTimeline.length > 0 ? profileState.eloTimeline[0].rating : 1200;
-        const delta = currentElo - startElo;
-        const sign = delta >= 0 ? "+" : "-";
-        el.profileEloMeta.textContent = `Tendencia: ${sign}${Math.abs(delta).toFixed(1)} desde tus primeras partidas guardadas.`;
+        if (games.length === 0) {
+            el.profileEloMeta.textContent = "Sin clasificatorias registradas. Juega en modo Clasificatoria para estimar ELO.";
+        } else {
+            const startElo = profileState.eloTimeline.length > 0 ? profileState.eloTimeline[0].rating : 1200;
+            const delta = currentElo - startElo;
+            const sign = delta >= 0 ? "+" : "-";
+            el.profileEloMeta.textContent = `Tendencia clasificatoria: ${sign}${Math.abs(delta).toFixed(1)} desde tus primeras partidas rankeadas.`;
+        }
     }
 
     if (el.profileTopOpenings) {
@@ -4464,7 +4591,7 @@ function renderProfileDashboard() {
             .slice(0, 7);
         if (top.length === 0) {
             const li = document.createElement("li");
-            li.textContent = "Aun no hay partidas guardadas.";
+            li.textContent = "Aun no hay clasificatorias guardadas.";
             el.profileTopOpenings.appendChild(li);
         } else {
             top.forEach(([name, count]) => {
@@ -4513,7 +4640,12 @@ function renderProgressDashboard(summary = null) {
         return;
     }
 
-    const computed = summary || analysisModule.summarize(analysisModule.loadProgress());
+    const progress = analysisModule.loadProgress();
+    const rankedOnlyProgress = {
+        ...(progress && typeof progress === "object" ? progress : {}),
+        games: getRankedGamesOnly(progress && progress.games)
+    };
+    const computed = analysisModule.summarize(rankedOnlyProgress);
     if (!computed) {
         return;
     }
@@ -4559,7 +4691,7 @@ function renderProgressDashboard(summary = null) {
         const topOpenings = Array.isArray(computed.topOpenings) ? computed.topOpenings : [];
         if (topOpenings.length === 0) {
             const li = document.createElement("li");
-            li.textContent = "Sin partidas registradas.";
+            li.textContent = "Sin clasificatorias registradas.";
             el.progressTopOpenings.appendChild(li);
         } else {
             topOpenings.forEach((entry) => {
@@ -4597,6 +4729,13 @@ function persistFinishedGame(openingName, winnerLabel) {
         return;
     }
 
+    if (normalizePlayMode(playState.gameMode) !== PLAY_MODES.RANKED) {
+        progressState.persistedGameSession = playState.sessionId;
+        setCoachMessage(coachNotice("info", "Partida clasica finalizada. No suma estadisticas de perfil (solo Clasificatoria)."));
+        scheduleSessionSnapshotSave();
+        return;
+    }
+
     const accuracy = analysisModule.computePlayerAccuracy
         ? analysisModule.computePlayerAccuracy(playState.moveClassifications, playState.playerColor)
         : 0;
@@ -4606,6 +4745,8 @@ function persistFinishedGame(openingName, winnerLabel) {
         result: getPlayerResultLabel(winnerLabel),
         color: playState.playerColor,
         botElo: playState.botElo,
+        mode: PLAY_MODES.RANKED,
+        ranked: true,
         accuracy,
         errors: computeErrorBucketsForPlayer()
     });
@@ -5185,6 +5326,10 @@ function bindTabs() {
 /* ===== Event Binding ===== */
 
 function applySettingsToBoard() {
+    if (getSelectedPlayMode() === PLAY_MODES.RANKED || isRankedActiveGame()) {
+        enforceRankedSettings();
+    }
+
     const s = getPlaySettings();
     playState.board.setCoordinatesVisible(s.showCoordinates);
     applyUiTheme(s.uiTheme, true);
@@ -5269,6 +5414,21 @@ function bindEvents() {
     }
 
     el.playStartBtn.addEventListener("click", startNewGame);
+    if (el.playMode) {
+        el.playMode.addEventListener("change", () => {
+            const selectedMode = getSelectedPlayMode();
+            writeStored("preferences.play_mode", selectedMode);
+            applySettingsToBoard();
+            if (!playState.startTime) {
+                const modeMessage = selectedMode === PLAY_MODES.RANKED
+                    ? "Modo Clasificatoria activado: sin ayudas y con impacto en perfil."
+                    : "Modo Clasico activado: puedes usar ajustes libres sin afectar perfil.";
+                setCoachMessage(coachNotice("setup", modeMessage));
+            }
+            refreshPlayModeUiState();
+            scheduleSessionSnapshotSave();
+        });
+    }
     if (el.playBackBtn) {
         el.playBackBtn.addEventListener("click", () => {
             goToPlaySetup(coachNotice("info", "Volviste al inicio. Ajusta color y nivel para una nueva partida."));
@@ -6058,6 +6218,11 @@ async function handleAiChat() {
     const question = aiChatInput.value.trim();
     if (!question) return;
 
+    if (isRankedActiveGame()) {
+        addAiMessage("La asistencia IA esta desactivada durante una clasificatoria en curso.", "ai-bot");
+        return;
+    }
+
     if (aiRuntimeState.inFlight) {
         addAiMessage("Espera a que termine la respuesta anterior.", "ai-bot");
         return;
@@ -6261,6 +6426,7 @@ function buildSessionSnapshot() {
             fen: playState.game.fen(),
             pgn: playState.game.pgn(),
             history: playState.game.history(),
+            gameMode: playState.gameMode,
             playerColor: playState.playerColor,
             botColor: playState.botColor,
             botElo: playState.botElo,
@@ -6379,9 +6545,13 @@ function restorePlayFromSnapshot(snapshot) {
     playState.playerColor = play.playerColor === "black" ? "black" : "white";
     playState.botColor = playState.playerColor === "white" ? "black" : "white";
     playState.botElo = Number.isFinite(play.botElo) ? clamp(Number(play.botElo), 400, 2800) : playState.botElo;
+    playState.gameMode = normalizePlayMode(play.gameMode);
 
     if (el.playerColor) {
         el.playerColor.value = playState.playerColor;
+    }
+    if (el.playMode) {
+        el.playMode.value = playState.gameMode;
     }
     if (el.botPreset) {
         el.botPreset.value = String(playState.botElo);
@@ -6396,6 +6566,8 @@ function restorePlayFromSnapshot(snapshot) {
 
     const orientation = play.boardOrientation === "black" ? "black" : playState.playerColor;
     playState.board.setOrientation(orientation);
+    applySettingsToBoard();
+    refreshPlayModeUiState();
     renderPlayBoard();
     renderPlayMoveList();
 }
@@ -6534,6 +6706,11 @@ async function init() {
         storageModule.removeLegacyKeys();
     }
 
+    if (el.playMode) {
+        el.playMode.value = normalizePlayMode(readStored("preferences.play_mode", PLAY_MODES.CASUAL));
+        playState.gameMode = el.playMode.value;
+    }
+
     restoreSessionPrefilters();
     lessonState.progressByLesson = readStored("session.lessonProgress", {});
 
@@ -6590,6 +6767,7 @@ async function init() {
     // Initialize play eval bar
     updatePlayEvalBar({ type: "cp", value: 0 });
     applySettingsToBoard();
+    refreshPlayModeUiState();
     await initOpeningExplorer();
     await hydrateProfileStoreFromDatabase();
     renderProgressDashboard();

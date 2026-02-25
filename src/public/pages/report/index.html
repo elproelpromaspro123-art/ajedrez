@@ -87,6 +87,12 @@
                                 <option value="black">&#9818; Negras</option>
                                 <option value="random">&#127922; Aleatorio</option>
                             </select>
+                            <label for="play-mode">Modo de partida</label>
+                            <select id="play-mode">
+                                <option value="casual" selected>Clasica (sin rating)</option>
+                                <option value="ranked">Clasificatoria (cuenta perfil)</option>
+                            </select>
+                            <p id="play-mode-note" class="muted">Solo Clasificatoria suma estadisticas y se juega sin ayudas.</p>
                             <label for="coach-depth">Profundidad del entrenador</label>
                             <input id="coach-depth" type="range" min="8" max="18" value="12" />
                             <p id="coach-depth-value" class="muted">12</p>
@@ -809,7 +815,7 @@
             <div class="panel-grid profile-grid">
                 <article class="card control-card">
                     <h3>&#128100; Perfil y estadisticas</h3>
-                    <p class="muted">Datos de partidas contra bots guardados localmente y sincronizados en DATA_BASE.</p>
+                    <p class="muted">Solo partidas en modo Clasificatoria contra bots cuentan para este perfil y se sincronizan en DATA_BASE.</p>
 
                     <div class="summary-grid profile-summary-grid">
                         <div class="summary-card">

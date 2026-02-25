@@ -2379,6 +2379,11 @@ button:disabled {
     font-size: 0.82rem;
 }
 
+#play-mode-note {
+    margin-top: 4px;
+    line-height: 1.35;
+}
+
 .study-note {
     margin-top: 10px;
     color: var(--text-muted);

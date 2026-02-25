@@ -2,6 +2,7 @@
 
 Webapp personal para:
 - Jugar contra bots con niveles ELO predefinidos y ELO personalizado.
+- Jugar en modo `Clasificatoria` (sin ayudas, contra bot) para que las estadisticas del perfil sean realistas.
 - Analizar partidas PGN con clasificacion de jugadas.
 - Estudiar ideas de ajedrez en secciones rapidas con posiciones de referencia.
 

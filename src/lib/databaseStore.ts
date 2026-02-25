@@ -13,6 +13,8 @@ interface DatabasePaths {
 }
 
 let cachedPaths: DatabasePaths | null = null;
+let memoryFallbackRoot: Record<string, unknown> = {};
+let storageMode: "file" | "memory_fallback" = "file";
 
 function parseDatabaseCandidatePath(): { source: string; candidatePath: string } {
     const raw = String(process.env.DATA_BASE || "").trim();
@@ -47,10 +49,17 @@ function parseDatabaseCandidatePath(): { source: string; candidatePath: string }
         };
     }
 
-    return {
-        source: "env_path",
-        candidatePath: path.isAbsolute(raw) ? raw : path.resolve(raw)
-    };
+    try {
+        return {
+            source: "env_path",
+            candidatePath: path.isAbsolute(raw) ? raw : path.resolve(raw)
+        };
+    } catch {
+        return {
+            source: "env_path_fallback",
+            candidatePath: DEFAULT_DB_FILE
+        };
+    }
 }
 
 function ensureJsonSafePath(candidatePath: string): string {
@@ -97,9 +106,24 @@ function ensureParentFolder(filePath: string): void {
     fs.mkdirSync(folder, { recursive: true });
 }
 
+function cloneRoot(root: Record<string, unknown>): Record<string, unknown> {
+    try {
+        return JSON.parse(JSON.stringify(root)) as Record<string, unknown>;
+    } catch {
+        return { ...root };
+    }
+}
+
 function readRootObject(): Record<string, unknown> {
     const paths = getPaths();
+    if (storageMode === "memory_fallback") {
+        return cloneRoot(memoryFallbackRoot);
+    }
+
     if (!fs.existsSync(paths.activePath)) {
+        if (Object.keys(memoryFallbackRoot).length > 0) {
+            return cloneRoot(memoryFallbackRoot);
+        }
         return {};
     }
 
@@ -107,20 +131,43 @@ function readRootObject(): Record<string, unknown> {
         const raw = fs.readFileSync(paths.activePath, "utf8");
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            memoryFallbackRoot = cloneRoot(parsed as Record<string, unknown>);
             return parsed as Record<string, unknown>;
         }
         return {};
     } catch {
+        if (Object.keys(memoryFallbackRoot).length > 0) {
+            return cloneRoot(memoryFallbackRoot);
+        }
         return {};
     }
 }
 
 function writeRootObject(root: Record<string, unknown>): void {
+    const safeRoot = cloneRoot(root);
+    memoryFallbackRoot = safeRoot;
+
+    if (storageMode === "memory_fallback") {
+        return;
+    }
+
     const paths = getPaths();
-    ensureParentFolder(paths.activePath);
     const tempPath = `${paths.activePath}.tmp`;
-    fs.writeFileSync(tempPath, JSON.stringify(root, null, 2), "utf8");
-    fs.renameSync(tempPath, paths.activePath);
+
+    try {
+        ensureParentFolder(paths.activePath);
+        fs.writeFileSync(tempPath, JSON.stringify(safeRoot, null, 2), "utf8");
+        fs.renameSync(tempPath, paths.activePath);
+    } catch {
+        storageMode = "memory_fallback";
+        try {
+            if (fs.existsSync(tempPath)) {
+                fs.rmSync(tempPath, { force: true });
+            }
+        } catch {
+            // ignore temp cleanup failures
+        }
+    }
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -204,6 +251,7 @@ export function getDatabaseMeta() {
         namespace: NAMESPACE,
         source: paths.source,
         candidatePath: paths.candidatePath,
-        activePath: paths.activePath
+        activePath: paths.activePath,
+        mode: storageMode
     };
 }
