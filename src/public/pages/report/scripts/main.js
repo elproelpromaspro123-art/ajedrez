@@ -123,6 +123,7 @@ const el = {
     playHintBtn: document.querySelector("#play-hint-btn"),
     playUndoBtn: document.querySelector("#play-undo-btn"),
     playCancelPremoveBtn: document.querySelector("#play-cancel-premove-btn"),
+    playResignBtn: document.querySelector("#play-resign-btn"),
     playFlipBtn: document.querySelector("#play-flip-btn"),
     playBackBtn: document.querySelector("#play-back-btn"),
     playNewGameBtn: document.querySelector("#play-new-game-btn"),
@@ -154,6 +155,9 @@ const el = {
     endgameDuration: document.querySelector("#endgame-duration"),
     endgameMoves: document.querySelector("#endgame-moves"),
     endgameOpening: document.querySelector("#endgame-opening"),
+    endgameAccuracyPlayer: document.querySelector("#endgame-accuracy-player"),
+    endgameAccuracyRival: document.querySelector("#endgame-accuracy-rival"),
+    endgameImpact: document.querySelector("#endgame-impact"),
     endgameAnalyzeBtn: document.querySelector("#endgame-analyze-btn"),
     endgamePgnBtn: document.querySelector("#endgame-pgn-btn"),
     endgameCloseBtn: document.querySelector("#endgame-close-btn"),
@@ -905,7 +909,7 @@ function runStockfishInternal(options, enginePath) {
         multipv,
         movetime,
         elo,
-        timeoutMs = 45000
+        timeoutMs = 60000
     } = options;
 
     return new Promise((resolve, reject) => {
@@ -930,6 +934,16 @@ function runStockfishInternal(options, enginePath) {
         }
 
         timeoutId = setTimeout(() => {
+            const partialLines = Array.from(linesById.values()).sort((a, b) => a.id - b.id);
+            if (!resolved && partialLines.length > 0) {
+                resolved = true;
+                cleanup();
+                resolve({
+                    bestMove: partialLines[0].moveUCI || "",
+                    lines: partialLines
+                });
+                return;
+            }
             cleanup();
             reject(new Error("Engine timeout."));
         }, timeoutMs);
@@ -1015,11 +1029,10 @@ async function warmEngineAsset() {
         return;
     }
     engineAssetWarm = true;
-    try {
-        await fetch(ENGINE_PRIMARY, { cache: "force-cache" });
-    } catch {
-        // ignore warmup failures
-    }
+    await Promise.allSettled([
+        fetch(ENGINE_PRIMARY, { cache: "force-cache" }),
+        fetch(ENGINE_FALLBACK, { cache: "force-cache" })
+    ]);
 }
 
 async function evaluateWithStockfish(options) {
@@ -1046,10 +1059,24 @@ async function evaluateWithStockfish(options) {
         markFirstEvalMetric(nowMs() - startedAt);
         return value;
     } catch {
-        const value = await runStockfishInternal(options, ENGINE_FALLBACK);
-        ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
-        markFirstEvalMetric(nowMs() - startedAt);
-        return value;
+        try {
+            const value = await runStockfishInternal(options, ENGINE_FALLBACK);
+            ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
+            markFirstEvalMetric(nowMs() - startedAt);
+            return value;
+        } catch {
+            const emergencyOptions = {
+                ...options,
+                multipv: 1,
+                movetime: clamp(Number(options.movetime || 900), 350, 1400),
+                depth: clamp(Number(options.depth || 10), 8, 14),
+                timeoutMs: 30000
+            };
+            const value = await runStockfishInternal(emergencyOptions, ENGINE_FALLBACK);
+            ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
+            markFirstEvalMetric(nowMs() - startedAt);
+            return value;
+        }
     }
 }
 
@@ -1182,8 +1209,11 @@ const playState = {
     premove: null, // {from,to,promotion}
     computerTopLines: [],    // latest engine top lines for computer panel
     moveHistory: [],         // persistent move history until new game
+    pendingEvaluations: 0,
     startTime: null,         // track game duration
     endgameShown: false,
+    manualGameOver: null,    // { title, reason, winner } for resign outcomes
+    lastRankedProfileDelta: null, // summary of profile changes after a ranked game
     lastAnimatedMoveKey: ""
 };
 
@@ -1246,10 +1276,14 @@ function getSelectedPlayMode() {
     return normalizePlayMode(el.playMode ? el.playMode.value : PLAY_MODES.CASUAL);
 }
 
+function isPlayGameOver() {
+    return playState.game.isGameOver() || Boolean(playState.manualGameOver);
+}
+
 function isRankedActiveGame() {
     return normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED
         && Boolean(playState.startTime)
-        && !playState.game.isGameOver();
+        && !isPlayGameOver();
 }
 
 function getRankedLockedControls() {
@@ -1312,6 +1346,9 @@ function refreshPlayModeUiState() {
     }
     if (el.playUndoBtn) {
         el.playUndoBtn.disabled = rankedLive;
+    }
+    if (el.playResignBtn) {
+        el.playResignBtn.disabled = !playState.startTime || isPlayGameOver();
     }
 }
 
@@ -1966,15 +2003,18 @@ async function getPositionEval(fen, localSession) {
 /** Full move evaluation: compare eval before vs after */
 async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveIndex, historyAtMove) {
     const settings = getPlaySettings();
-    if (!settings.computerEnabled || !settings.moveComments) {
+    if (!settings.computerEnabled) {
         return;
     }
+    const commentsEnabled = Boolean(settings.moveComments);
 
     const isPlayerMove = move.color === (playState.playerColor === "white" ? "w" : "b");
 
-    if (isPlayerMove) {
+    if (isPlayerMove && commentsEnabled) {
         setCoachMessage(coachNotice("engine", "Evaluando tu jugada..."));
     }
+
+    playState.pendingEvaluations += 1;
 
     try {
         // Get eval BEFORE (from white's perspective)
@@ -2029,19 +2069,27 @@ async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveInd
             }
             : null;
 
-        if (isPlayerMove) {
+        if (isPlayerMove && commentsEnabled) {
             showMoveBadge(cls, "Tu jugada", bookDetail, openingContext);
             setCoachMessage(buildCoachComment(cls, move, evalAfter, bookResult.name), openingContext || undefined);
-        } else {
+        } else if (!isPlayerMove && commentsEnabled) {
             showMoveBadge(cls, "Rival", bookDetail, openingContext);
             const baseComment = buildCoachComment(cls, move, evalAfter, bookResult.name);
             setCoachMessage(`\ud83e\udd16 Rival \u2022 ${baseComment} \u2022 Tu turno.`, openingContext || undefined);
         }
     } catch {
+        if (!commentsEnabled) {
+            return;
+        }
         if (isPlayerMove) {
             setCoachMessage(coachNotice("warn", "Jugaste " + move.san + ". No se pudo evaluar."));
         } else {
             setCoachMessage(coachNotice("warn", "El rival jugo " + move.san + ". No se pudo evaluar su calidad."));
+        }
+    } finally {
+        playState.pendingEvaluations = Math.max(0, playState.pendingEvaluations - 1);
+        if (playState.endgameShown) {
+            renderEndgameAccuracies();
         }
     }
 }
@@ -2084,6 +2132,119 @@ function formatDurationFromStart() {
     return mins + "m " + secs + "s";
 }
 
+function countClassifiedPliesForColor(color) {
+    const isWhite = color === "white";
+    return Object.keys(playState.moveClassifications || {}).reduce((total, key) => {
+        const ply = Number(key);
+        if (!Number.isFinite(ply)) {
+            return total;
+        }
+        const colorMoved = isWhite ? (ply % 2 === 0) : (ply % 2 === 1);
+        return colorMoved ? total + 1 : total;
+    }, 0);
+}
+
+function computeAccuracyForColor(color) {
+    if (!analysisModule || !analysisModule.computePlayerAccuracy) {
+        return null;
+    }
+    const plies = countClassifiedPliesForColor(color);
+    if (plies <= 0) {
+        return null;
+    }
+    return analysisModule.computePlayerAccuracy(playState.moveClassifications, color);
+}
+
+function renderEndgameAccuracies() {
+    if (el.endgameAccuracyPlayer) {
+        const playerAccuracy = computeAccuracyForColor(playState.playerColor);
+        if (Number.isFinite(playerAccuracy)) {
+            el.endgameAccuracyPlayer.textContent = `${playerAccuracy.toFixed(1)}%`;
+        } else {
+            el.endgameAccuracyPlayer.textContent = playState.pendingEvaluations > 0 ? "Calculando..." : "--";
+        }
+    }
+    if (el.endgameAccuracyRival) {
+        const rivalColor = playState.playerColor === "white" ? "black" : "white";
+        const rivalAccuracy = computeAccuracyForColor(rivalColor);
+        if (Number.isFinite(rivalAccuracy)) {
+            el.endgameAccuracyRival.textContent = `${rivalAccuracy.toFixed(1)}%`;
+        } else {
+            el.endgameAccuracyRival.textContent = playState.pendingEvaluations > 0 ? "Calculando..." : "--";
+        }
+    }
+}
+
+function formatSignedDelta(value, decimals = 1, suffix = "") {
+    const numeric = Number(value || 0);
+    const sign = numeric > 0 ? "+" : (numeric < 0 ? "-" : "");
+    return `${sign}${Math.abs(numeric).toFixed(decimals)}${suffix}`;
+}
+
+function renderEndgameRankedImpact(winner) {
+    if (!el.endgameImpact) {
+        return;
+    }
+
+    const delta = playState.lastRankedProfileDelta;
+    const playerResult = getPlayerResultLabel(winner);
+    const shouldShow = normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED
+        && playerResult === "loss"
+        && delta
+        && delta.before
+        && delta.after;
+
+    if (!shouldShow) {
+        el.endgameImpact.style.display = "none";
+        el.endgameImpact.innerHTML = "";
+        return;
+    }
+
+    const gamesDelta = Math.round(Number(delta.after.gamesCount || 0) - Number(delta.before.gamesCount || 0));
+    const eloDelta = Number(delta.after.currentElo || 0) - Number(delta.before.currentElo || 0);
+    const winrateDelta = Number(delta.after.winrate || 0) - Number(delta.before.winrate || 0);
+    const accuracyDelta = Number(delta.after.avgAccuracy || 0) - Number(delta.before.avgAccuracy || 0);
+
+    el.endgameImpact.style.display = "grid";
+    el.endgameImpact.innerHTML = [
+        '<h4>Impacto en tu perfil (esta clasificatoria)</h4>',
+        '<ul class="compact-list">',
+        `<li>ELO estimado: ${Math.round(Number(delta.after.currentElo || 1200))} (${formatSignedDelta(eloDelta, 1)})</li>`,
+        `<li>Winrate: ${Number(delta.after.winrate || 0).toFixed(1)}% (${formatSignedDelta(winrateDelta, 1, "%")})</li>`,
+        `<li>Accuracy media: ${Number(delta.after.avgAccuracy || 0).toFixed(1)}% (${formatSignedDelta(accuracyDelta, 1, "%")})</li>`,
+        `<li>Partidas rankeadas: ${Math.round(Number(delta.after.gamesCount || 0))} (${gamesDelta >= 0 ? "+" : ""}${gamesDelta})</li>`,
+        "</ul>"
+    ].join("");
+}
+
+function showEndgameSummary(title, reason, winner) {
+    if (playState.endgameShown || !el.endgameModal) {
+        return;
+    }
+    playState.endgameShown = true;
+
+    const opening = detectOpening(playState.game.history(), playState.game.fen()) || "Sin apertura detectada";
+    const totalPly = playState.game.history().length;
+    const totalMoves = Math.ceil(totalPly / 2);
+    const durationText = formatDurationFromStart();
+
+    if (el.endgameTitle) el.endgameTitle.textContent = title;
+    if (el.endgameReason) el.endgameReason.textContent = reason;
+    if (el.endgameWinner) el.endgameWinner.textContent = winner;
+    if (el.endgameDuration) el.endgameDuration.textContent = durationText;
+    if (el.endgameMoves) el.endgameMoves.textContent = String(totalMoves);
+    if (el.endgameOpening) el.endgameOpening.textContent = opening;
+    persistFinishedGame(opening, winner);
+    renderEndgameAccuracies();
+    renderEndgameRankedImpact(winner);
+
+    el.endgameModal.style.display = "flex";
+    setTimeout(() => {
+        el.endgameModal.style.opacity = "1";
+        el.endgameModal.style.pointerEvents = "auto";
+    }, 10);
+}
+
 function formatGameOver(game) {
     let title = "Juego terminado";
     let reason = "Partida finalizada";
@@ -2115,30 +2276,21 @@ function formatGameOver(game) {
         reason = "por tablas";
     }
 
-    if (!playState.endgameShown && el.endgameModal) {
-        playState.endgameShown = true;
-
-        const opening = detectOpening(playState.game.history(), playState.game.fen()) || "Sin apertura detectada";
-        const totalPly = playState.game.history().length;
-        const totalMoves = Math.ceil(totalPly / 2);
-        const durationText = formatDurationFromStart();
-
-        if (el.endgameTitle) el.endgameTitle.textContent = title;
-        if (el.endgameReason) el.endgameReason.textContent = reason;
-        if (el.endgameWinner) el.endgameWinner.textContent = winner;
-        if (el.endgameDuration) el.endgameDuration.textContent = durationText;
-        if (el.endgameMoves) el.endgameMoves.textContent = String(totalMoves);
-        if (el.endgameOpening) el.endgameOpening.textContent = opening;
-        persistFinishedGame(opening, winner);
-
-        el.endgameModal.style.display = "flex";
-        setTimeout(() => {
-            el.endgameModal.style.opacity = "1";
-            el.endgameModal.style.pointerEvents = "auto";
-        }, 10);
-    }
+    showEndgameSummary(title, reason, winner);
 
     return title + " - " + reason;
+}
+
+function getCurrentGameOverText() {
+    if (playState.manualGameOver) {
+        showEndgameSummary(
+            playState.manualGameOver.title,
+            playState.manualGameOver.reason,
+            playState.manualGameOver.winner
+        );
+        return `${playState.manualGameOver.title} - ${playState.manualGameOver.reason}`;
+    }
+    return formatGameOver(playState.game);
 }
 
 function renderPlayMoves() {
@@ -2192,8 +2344,8 @@ function renderPlayLiveMetrics() {
 }
 
 function renderPlayStatus() {
-    if (playState.game.isGameOver()) {
-        el.playStatus.textContent = formatGameOver(playState.game);
+    if (isPlayGameOver()) {
+        el.playStatus.textContent = getCurrentGameOverText();
         return;
     }
 
@@ -2283,7 +2435,7 @@ function clearPlaySelection() {
 }
 
 function canPlayerDragFrom(square) {
-    if (playState.thinking || playState.game.isGameOver()) {
+    if (playState.thinking || isPlayGameOver()) {
         return false;
     }
 
@@ -2310,6 +2462,11 @@ function updateComputerPanelTitle() {
 function renderComputerPanel() {
     const settings = getPlaySettings();
     if (!el.computerPanel || !el.computerLines) return;
+    if (normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED) {
+        playState.computerTopLines = [];
+        el.computerPanel.style.display = "none";
+        return;
+    }
     updateComputerPanelTitle();
     const isPlayerTurn = sideFromTurn(playState.game.turn()) === playState.playerColor;
 
@@ -2421,8 +2578,8 @@ async function confirmSuggestedMove() {
     const localSession = playState.sessionId;
     evaluateLastMove(move, fenBefore, fenAfter, localSession, moveIndex, historyAtMove);
 
-    if (playState.game.isGameOver()) {
-        setCoachMessage(coachNotice("game", formatGameOver(playState.game)));
+    if (isPlayGameOver()) {
+        setCoachMessage(coachNotice("game", getCurrentGameOverText()));
         if (getPlaySettings().sound) playAudio(el.fxEnd);
         renderPlayStatus();
         return;
@@ -2437,6 +2594,11 @@ async function confirmSuggestedMove() {
 
 async function updateComputerLines(fen, localSession) {
     const settings = getPlaySettings();
+    if (normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED) {
+        playState.computerTopLines = [];
+        renderComputerPanel();
+        return;
+    }
     if (!settings.computerEnabled) return;
     const turnFromFen = fen.includes(" w ") ? "white" : "black";
     if (turnFromFen !== playState.playerColor) {
@@ -2490,7 +2652,7 @@ async function tryExecuteQueuedPremove(localSession) {
     if (localSession !== playState.sessionId) {
         return false;
     }
-    if (!playState.premove || playState.game.isGameOver()) {
+    if (!playState.premove || isPlayGameOver()) {
         return false;
     }
     if (sideFromTurn(playState.game.turn()) !== playState.playerColor) {
@@ -2527,8 +2689,8 @@ async function tryExecuteQueuedPremove(localSession) {
     scheduleSessionSnapshotSave();
     evaluateLastMove(move, fenBeforeMove, fenAfterMove, localSession, moveIndex, historyAtMove);
 
-    if (playState.game.isGameOver()) {
-        setCoachMessage(coachNotice("game", formatGameOver(playState.game)));
+    if (isPlayGameOver()) {
+        setCoachMessage(coachNotice("game", getCurrentGameOverText()));
         if (getPlaySettings().sound) playAudio(el.fxEnd);
         renderPlayStatus();
         return true;
@@ -2547,7 +2709,7 @@ async function maybeAutoCoach() {
         return;
     }
 
-    if (playState.game.isGameOver()) {
+    if (isPlayGameOver()) {
         return;
     }
 
@@ -2566,7 +2728,7 @@ async function maybeAutoCoach() {
 
 async function playBotMove() {
     const turn = sideFromTurn(playState.game.turn());
-    if (turn !== playState.botColor || playState.game.isGameOver()) {
+    if (turn !== playState.botColor || isPlayGameOver()) {
         return;
     }
 
@@ -2661,7 +2823,7 @@ async function requestCoachHint(isAuto = false) {
         return;
     }
 
-    if (playState.game.isGameOver()) {
+    if (isPlayGameOver()) {
         setCoachMessage(coachNotice("info", "La partida termino. Inicia una nueva para seguir entrenando."));
         return;
     }
@@ -2735,7 +2897,7 @@ async function requestCoachHint(isAuto = false) {
 }
 
 async function onPlaySquareClick(square) {
-    if (playState.game.isGameOver()) {
+    if (isPlayGameOver()) {
         return;
     }
 
@@ -2871,8 +3033,8 @@ async function onPlaySquareClick(square) {
     const localSession = playState.sessionId;
     evaluateLastMove(move, fenBeforeMove, fenAfterMove, localSession, moveIndex, historyAtMove);
 
-    if (playState.game.isGameOver()) {
-        setCoachMessage(coachNotice("game", formatGameOver(playState.game)));
+    if (isPlayGameOver()) {
+        setCoachMessage(coachNotice("game", getCurrentGameOverText()));
         if (getPlaySettings().sound) playAudio(el.fxEnd);
         renderPlayStatus();
         return;
@@ -2887,7 +3049,7 @@ async function onPlaySquareClick(square) {
 }
 
 async function handleBoardDrop(from, to) {
-    if (playState.game.isGameOver()) return;
+    if (isPlayGameOver()) return;
     const currentTurn = sideFromTurn(playState.game.turn());
     const playerTurn = !playState.thinking && currentTurn === playState.playerColor;
     if (!playerTurn && !getPlaySettings().premoveEnabled) return;
@@ -2923,8 +3085,11 @@ function goToPlaySetup(message = coachNotice("setup", "Configura una nueva parti
     playState.premove = null;
     playState.computerTopLines = [];
     playState.moveHistory = [];
+    playState.pendingEvaluations = 0;
     playState.startTime = null;
     playState.endgameShown = false;
+    playState.manualGameOver = null;
+    playState.lastRankedProfileDelta = null;
     playState.lastAnimatedMoveKey = "";
     progressState.persistedGameSession = null;
     clearPlaySelection();
@@ -2986,8 +3151,11 @@ function startNewGame() {
     playState.premove = null;
     playState.computerTopLines = [];
     playState.moveHistory = [];
+    playState.pendingEvaluations = 0;
     playState.startTime = Date.now();
     playState.endgameShown = false;
+    playState.manualGameOver = null;
+    playState.lastRankedProfileDelta = null;
     playState.lastAnimatedMoveKey = "";
     progressState.persistedGameSession = null;
     clearPlaySelection();
@@ -3059,11 +3227,41 @@ function undoPlayMove() {
     playState.lastMove = null;
     playState.hintMove = null;
     playState.premove = null;
+    playState.pendingEvaluations = 0;
     playState.lastAnimatedMoveKey = "";
     clearPlaySelection();
     setCoachMessage(coachNotice("ok", "Jugada deshecha. Es tu turno."));
     renderPlayBoard();
     renderPlayMoveList();
+    scheduleSessionSnapshotSave();
+}
+
+function resignCurrentGame() {
+    if (!playState.startTime || isPlayGameOver()) {
+        playErrorSound();
+        return;
+    }
+
+    playState.thinking = false;
+    playState.coaching = false;
+    playState.hintMove = null;
+    playState.premove = null;
+    playState.computerTopLines = [];
+    clearPlaySelection();
+    cancelMoveConfirmation();
+
+    const winner = playState.playerColor === "white" ? "Negras" : "Blancas";
+    const title = "Derrota";
+    const reason = "por abandono";
+    playState.manualGameOver = { title, reason, winner };
+
+    showEndgameSummary(title, reason, winner);
+    setCoachMessage(coachNotice("game", `${title} - ${reason}`));
+    if (getPlaySettings().sound) {
+        playAudio(el.fxEnd);
+    }
+    renderPlayBoard();
+    renderPlayStatus();
     scheduleSessionSnapshotSave();
 }
 
@@ -3812,11 +4010,24 @@ async function runAnalysis() {
             el.analysisProgress.value = progress;
             setAnalysisStatus(`Evaluando posici\u00f3n ${i + 1} de ${positions.length}...`);
 
-            const evaluation = await evaluateWithStockfish({
-                fen: positions[i].fen,
-                depth,
-                multipv: 2
-            });
+            let evaluation;
+            try {
+                evaluation = await evaluateWithStockfish({
+                    fen: positions[i].fen,
+                    depth,
+                    multipv: 2
+                });
+            } catch {
+                evaluation = {
+                    bestMove: "",
+                    lines: [{
+                        id: 1,
+                        depth: 0,
+                        moveUCI: "",
+                        evaluation: { type: "cp", value: 0 }
+                    }]
+                };
+            }
 
             if (localRunId !== analysisState.runId) {
                 return;
@@ -4494,6 +4705,33 @@ function computeEloTimeline(games, initialRating = 1200) {
     return timeline;
 }
 
+function computeProfileHeadlineMetrics(games) {
+    const source = Array.isArray(games) ? games : [];
+    const completedGames = source.filter((game) => {
+        const result = String(game && game.result ? game.result : "manual");
+        return result === "win" || result === "loss" || result === "draw";
+    });
+    const wins = completedGames.filter((game) => game.result === "win").length;
+    const avgAccuracy = source.length > 0
+        ? source.reduce((acc, game) => acc + Number(game.accuracy || 0), 0) / source.length
+        : 0;
+    const winrate = completedGames.length > 0 ? (wins / completedGames.length) * 100 : 0;
+    const eloTimeline = computeEloTimeline(source, 1200);
+    const currentElo = eloTimeline.length > 0
+        ? Number(eloTimeline[eloTimeline.length - 1].rating || 1200)
+        : 1200;
+
+    return {
+        gamesCount: source.length,
+        completedGamesCount: completedGames.length,
+        wins,
+        avgAccuracy,
+        winrate,
+        currentElo,
+        eloTimeline
+    };
+}
+
 function drawProfileEloGraph(timeline) {
     const canvas = el.profileEloGraph;
     if (!canvas) {
@@ -4560,26 +4798,14 @@ function renderProfileDashboard() {
 
     const progress = analysisModule.loadProgress();
     const games = getRankedGamesOnly(progress.games);
+    const metrics = computeProfileHeadlineMetrics(games);
     profileState.games = games;
-    profileState.eloTimeline = computeEloTimeline(games, 1200);
+    profileState.eloTimeline = metrics.eloTimeline;
 
-    const completedGames = games.filter((game) => {
-        const result = String(game && game.result ? game.result : "manual");
-        return result === "win" || result === "loss" || result === "draw";
-    });
-    const wins = completedGames.filter((game) => game.result === "win").length;
-    const avgAccuracy = games.length > 0
-        ? games.reduce((acc, game) => acc + Number(game.accuracy || 0), 0) / games.length
-        : 0;
-    const winrate = completedGames.length > 0 ? (wins / completedGames.length) * 100 : 0;
-    const currentElo = profileState.eloTimeline.length > 0
-        ? profileState.eloTimeline[profileState.eloTimeline.length - 1].rating
-        : 1200;
-
-    if (el.profileGamesTotal) el.profileGamesTotal.textContent = String(games.length);
-    if (el.profileWinrate) el.profileWinrate.textContent = `${winrate.toFixed(1)}%`;
-    if (el.profileAvgAccuracy) el.profileAvgAccuracy.textContent = `${avgAccuracy.toFixed(1)}%`;
-    if (el.profileEstimatedElo) el.profileEstimatedElo.textContent = String(Math.round(currentElo));
+    if (el.profileGamesTotal) el.profileGamesTotal.textContent = String(metrics.gamesCount);
+    if (el.profileWinrate) el.profileWinrate.textContent = `${metrics.winrate.toFixed(1)}%`;
+    if (el.profileAvgAccuracy) el.profileAvgAccuracy.textContent = `${metrics.avgAccuracy.toFixed(1)}%`;
+    if (el.profileEstimatedElo) el.profileEstimatedElo.textContent = String(Math.round(metrics.currentElo));
 
     drawProfileEloGraph(profileState.eloTimeline);
     if (el.profileEloMeta) {
@@ -4587,7 +4813,7 @@ function renderProfileDashboard() {
             el.profileEloMeta.textContent = "Sin clasificatorias registradas. Juega en modo Clasificatoria para estimar ELO.";
         } else {
             const startElo = profileState.eloTimeline.length > 0 ? profileState.eloTimeline[0].rating : 1200;
-            const delta = currentElo - startElo;
+            const delta = metrics.currentElo - startElo;
             const sign = delta >= 0 ? "+" : "-";
             el.profileEloMeta.textContent = `Tendencia clasificatoria: ${sign}${Math.abs(delta).toFixed(1)} desde tus primeras partidas rankeadas.`;
         }
@@ -4736,6 +4962,15 @@ function renderProgressDashboard(summary = null) {
     renderProfileDashboard();
 }
 
+function readRankedProfileMetricsSnapshot() {
+    if (!analysisModule || !analysisModule.loadProgress) {
+        return null;
+    }
+    const progress = analysisModule.loadProgress();
+    const games = getRankedGamesOnly(progress && progress.games);
+    return computeProfileHeadlineMetrics(games);
+}
+
 function persistFinishedGame(openingName, winnerLabel) {
     if (!analysisModule || !analysisModule.registerFinishedGame) {
         return;
@@ -4744,6 +4979,8 @@ function persistFinishedGame(openingName, winnerLabel) {
         return;
     }
 
+    playState.lastRankedProfileDelta = null;
+
     if (normalizePlayMode(playState.gameMode) !== PLAY_MODES.RANKED) {
         progressState.persistedGameSession = playState.sessionId;
         setCoachMessage(coachNotice("info", "Partida clasica finalizada. No suma estadisticas de perfil (solo Clasificatoria)."));
@@ -4751,9 +4988,8 @@ function persistFinishedGame(openingName, winnerLabel) {
         return;
     }
 
-    const accuracy = analysisModule.computePlayerAccuracy
-        ? analysisModule.computePlayerAccuracy(playState.moveClassifications, playState.playerColor)
-        : 0;
+    const beforeMetrics = readRankedProfileMetricsSnapshot();
+    const accuracy = computeAccuracyForColor(playState.playerColor) || 0;
 
     const summary = analysisModule.registerFinishedGame({
         opening: openingName || "Sin apertura detectada",
@@ -4765,6 +5001,14 @@ function persistFinishedGame(openingName, winnerLabel) {
         accuracy,
         errors: computeErrorBucketsForPlayer()
     });
+
+    const afterMetrics = readRankedProfileMetricsSnapshot();
+    if (beforeMetrics && afterMetrics) {
+        playState.lastRankedProfileDelta = {
+            before: beforeMetrics,
+            after: afterMetrics
+        };
+    }
 
     progressState.persistedGameSession = playState.sessionId;
     renderProgressDashboard(summary);
@@ -5373,7 +5617,7 @@ function applySettingsToBoard() {
     if (!s.computerEnabled) {
         playState.computerTopLines = [];
     } else if (playState.startTime
-        && !playState.game.isGameOver()
+        && !isPlayGameOver()
         && sideFromTurn(playState.game.turn()) === playState.playerColor
         && playState.computerTopLines.length === 0) {
         updateComputerLines(playState.game.fen(), playState.sessionId);
@@ -5454,6 +5698,9 @@ function bindEvents() {
     });
     el.playHintBtn.addEventListener("click", () => requestCoachHint(false));
     el.playUndoBtn.addEventListener("click", undoPlayMove);
+    if (el.playResignBtn) {
+        el.playResignBtn.addEventListener("click", resignCurrentGame);
+    }
     if (el.playCancelPremoveBtn) {
         el.playCancelPremoveBtn.addEventListener("click", () => {
             if (!playState.premove) {
@@ -6448,9 +6695,11 @@ function buildSessionSnapshot() {
             pgn: playState.game.pgn(),
             history: playState.game.history(),
             gameMode: playState.gameMode,
+            startTime: playState.startTime,
             playerColor: playState.playerColor,
             botColor: playState.botColor,
             botElo: playState.botElo,
+            manualGameOver: playState.manualGameOver,
             boardOrientation: playState.board.getOrientation ? playState.board.getOrientation() : playState.playerColor
         },
         explorer: {
@@ -6567,6 +6816,15 @@ function restorePlayFromSnapshot(snapshot) {
     playState.botColor = playState.playerColor === "white" ? "black" : "white";
     playState.botElo = Number.isFinite(play.botElo) ? clamp(Number(play.botElo), 400, 2800) : playState.botElo;
     playState.gameMode = normalizePlayMode(play.gameMode);
+    playState.startTime = Number.isFinite(Number(play.startTime)) ? Number(play.startTime) : null;
+    playState.manualGameOver = play && typeof play.manualGameOver === "object" && play.manualGameOver
+        ? {
+            title: String(play.manualGameOver.title || "Juego terminado"),
+            reason: String(play.manualGameOver.reason || "Partida finalizada"),
+            winner: String(play.manualGameOver.winner || "Empate")
+        }
+        : null;
+    playState.endgameShown = false;
 
     if (el.playerColor) {
         el.playerColor.value = playState.playerColor;

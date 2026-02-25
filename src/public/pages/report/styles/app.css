@@ -2125,6 +2125,20 @@ button:disabled {
     width: 100%;
 }
 
+.endgame-impact {
+    border: 1px solid rgba(126, 178, 218, 0.35);
+    border-radius: 10px;
+    background: rgba(126, 178, 218, 0.08);
+    padding: 10px 12px;
+    gap: 8px;
+}
+
+.endgame-impact h4 {
+    margin: 0;
+    font-size: 0.86rem;
+    color: var(--accent);
+}
+
 /* ===== Study Section - Category Landing ===== */
 .study-landing {
     text-align: center;

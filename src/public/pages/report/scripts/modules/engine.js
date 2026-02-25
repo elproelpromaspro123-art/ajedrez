@@ -73,7 +73,7 @@
             multipv,
             movetime,
             elo,
-            timeoutMs = 45000
+            timeoutMs = 60000
         } = options;
 
         return new Promise((resolve, reject) => {
@@ -98,6 +98,16 @@
             }
 
             timeoutId = setTimeout(() => {
+                const partialLines = Array.from(linesById.values()).sort((a, b) => a.id - b.id);
+                if (!resolved && partialLines.length > 0) {
+                    resolved = true;
+                    cleanup();
+                    resolve({
+                        bestMove: partialLines[0].moveUCI || "",
+                        lines: partialLines
+                    });
+                    return;
+                }
                 cleanup();
                 reject(new Error("Engine timeout."));
             }, timeoutMs);
@@ -180,11 +190,10 @@
             return;
         }
         engineAssetWarm = true;
-        try {
-            await fetch(ENGINE_PRIMARY, { cache: "force-cache" });
-        } catch {
-            // ignore warmup failures
-        }
+        await Promise.allSettled([
+            fetch(ENGINE_PRIMARY, { cache: "force-cache" }),
+            fetch(ENGINE_FALLBACK, { cache: "force-cache" })
+        ]);
     }
 
     async function evaluateWithStockfish(options) {
@@ -211,9 +220,22 @@
             ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
             return value;
         } catch {
-            const value = await runStockfishInternal(options, ENGINE_FALLBACK);
-            ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
-            return value;
+            try {
+                const value = await runStockfishInternal(options, ENGINE_FALLBACK);
+                ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
+                return value;
+            } catch {
+                const emergencyOptions = {
+                    ...options,
+                    multipv: 1,
+                    movetime: clamp(Number(options.movetime || 900), 350, 1400),
+                    depth: clamp(Number(options.depth || 10), 8, 14),
+                    timeoutMs: 30000
+                };
+                const value = await runStockfishInternal(emergencyOptions, ENGINE_FALLBACK);
+                ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
+                return value;
+            }
         }
     }
 

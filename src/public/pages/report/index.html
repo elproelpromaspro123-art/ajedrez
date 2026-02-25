@@ -13,7 +13,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
         rel="stylesheet" />
-    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260225_ranked1" />
+    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260225_ranked3" />
     <link rel="shortcut icon" href="/static/media/favicon-freechess.ico" type="image/x-icon" />
 </head>
 
@@ -112,6 +112,7 @@
                             <button id="play-back-btn" class="ghost-btn" type="button">&#11013; Volver</button>
                             <button id="play-new-game-btn" class="ghost-btn" type="button">&#10227; Nueva</button>
                             <button id="play-flip-btn" class="ghost-btn" type="button">&#8645; Girar</button>
+                            <button id="play-resign-btn" class="ghost-btn" type="button">&#9873; Rendirse</button>
                             <button id="play-hint-btn" class="ghost-btn" type="button">&#128161; Pista</button>
                             <button id="play-undo-btn" class="ghost-btn" type="button">&#8617; Deshacer</button>
                             <button id="play-cancel-premove-btn" class="ghost-btn" type="button">&#10006; Pre-move</button>
@@ -1026,7 +1027,17 @@
                     <span>Apertura</span>
                     <strong id="endgame-opening">Sin detectar</strong>
                 </div>
+                <div class="endgame-meta-item">
+                    <span>Accuracy tuya</span>
+                    <strong id="endgame-accuracy-player">--</strong>
+                </div>
+                <div class="endgame-meta-item">
+                    <span>Accuracy rival</span>
+                    <strong id="endgame-accuracy-rival">--</strong>
+                </div>
             </div>
+
+            <div id="endgame-impact" class="endgame-impact" style="display:none;"></div>
 
             <div class="endgame-actions">
                 <button id="endgame-analyze-btn" class="primary-btn" type="button">&#128269; Analizar partida</button>
@@ -1044,15 +1055,15 @@
     <audio id="fx-end" src="/static/media/game_end.mp3"></audio>
 
     <script src="/static/scripts/vendor/chess.global.js?v=20260223"></script>
-    <script src="/static/pages/report/scripts/modules/engine.js?v=20260225_ranked1"></script>
-    <script src="/static/pages/report/scripts/modules/storage.js?v=20260225_ranked1"></script>
-    <script src="/static/pages/report/scripts/modules/ui.js?v=20260225_ranked1"></script>
-    <script src="/static/pages/report/scripts/modules/openings.js?v=20260225_ranked1"></script>
-    <script src="/static/pages/report/scripts/modules/study.js?v=20260225_ranked1"></script>
-    <script src="/static/pages/report/scripts/modules/ai.js?v=20260225_ranked1"></script>
-    <script src="/static/pages/report/scripts/modules/play.js?v=20260225_ranked1"></script>
-    <script src="/static/pages/report/scripts/modules/analysis.js?v=20260225_ranked1"></script>
-    <script src="/static/pages/report/scripts/main.js?v=20260225_ranked1"></script>
+    <script src="/static/pages/report/scripts/modules/engine.js?v=20260225_ranked3"></script>
+    <script src="/static/pages/report/scripts/modules/storage.js?v=20260225_ranked3"></script>
+    <script src="/static/pages/report/scripts/modules/ui.js?v=20260225_ranked3"></script>
+    <script src="/static/pages/report/scripts/modules/openings.js?v=20260225_ranked3"></script>
+    <script src="/static/pages/report/scripts/modules/study.js?v=20260225_ranked3"></script>
+    <script src="/static/pages/report/scripts/modules/ai.js?v=20260225_ranked3"></script>
+    <script src="/static/pages/report/scripts/modules/play.js?v=20260225_ranked3"></script>
+    <script src="/static/pages/report/scripts/modules/analysis.js?v=20260225_ranked3"></script>
+    <script src="/static/pages/report/scripts/main.js?v=20260225_ranked3"></script>
 </body>
 
 </html>
