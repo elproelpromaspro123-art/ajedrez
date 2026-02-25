@@ -1,10 +1,11 @@
-import { Request, Router } from "express";
+import { Request, Response as ExpressResponse, Router } from "express";
+import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
 import { Chess } from "chess.js";
 import pgnParser from "pgn-parser";
 
 import analyse from "./lib/analysis";
 import { parseStructuredAIResponse } from "./lib/aiActions";
-import { getDatabaseMeta, mergeScopedData, readScopedData } from "./lib/databaseStore";
+import { getDatabaseMeta, readScopedData, replaceScopedData } from "./lib/databaseStore";
 import {
     buildExplorerCacheKey,
     getFreshTimedCacheValue,
@@ -44,6 +45,34 @@ interface ProfileStoreSyncBody {
     profile?: unknown;
 }
 
+interface AuthBody {
+    username?: unknown;
+    password?: unknown;
+}
+
+interface UserRecord {
+    username: string;
+    passwordSalt: string;
+    passwordHash: string;
+    createdAt: string;
+    updatedAt: string;
+    store: Record<string, unknown>;
+}
+
+interface SessionRecord {
+    userKey: string;
+    createdAt: string;
+    updatedAt: string;
+    expiresAt: string;
+    ip: string;
+    userAgent: string;
+}
+
+interface AuthRootState {
+    users: Record<string, UserRecord>;
+    sessions: Record<string, SessionRecord>;
+}
+
 const OPENING_EXPLORER_ENDPOINT = "https://explorer.lichess.ovh/lichess";
 const EXPLORER_CACHE_TTL_MS = 1000 * 60 * 30;
 const EXPLORER_CACHE_MAX_ENTRIES = 500;
@@ -58,6 +87,13 @@ const PROFILE_SYNC_MAX_BYTES = 850_000;
 const PROFILE_PROGRESS_GAMES_MAX = 400;
 const PROFILE_PROGRESS_ACTIVITIES_MAX = 1200;
 const PROFILE_LESSON_KEYS_MAX = 250;
+const AUTH_COOKIE_NAME = "freechess_auth";
+const AUTH_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
+const AUTH_SESSION_MAX = 5000;
+const USERNAME_MIN = 3;
+const USERNAME_MAX = 24;
+const PASSWORD_MIN = 8;
+const PASSWORD_MAX = 120;
 const aiRateLimiter = new Map<string, number[]>();
 
 // Prune stale rate-limiter entries every 60 seconds
@@ -213,6 +249,311 @@ function checkAIRateLimit(clientId: string) {
     };
 }
 
+function normalizeUsername(value: unknown): string | null {
+    if (!isNonEmptyString(value)) {
+        return null;
+    }
+
+    const trimmed = value.trim();
+    if (trimmed.length < USERNAME_MIN || trimmed.length > USERNAME_MAX) {
+        return null;
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(trimmed)) {
+        return null;
+    }
+
+    return trimmed;
+}
+
+function normalizePassword(value: unknown): string | null {
+    if (typeof value !== "string") {
+        return null;
+    }
+    const password = value.trim();
+    if (password.length < PASSWORD_MIN || password.length > PASSWORD_MAX) {
+        return null;
+    }
+    return password;
+}
+
+function usernameToKey(username: string): string {
+    return username.trim().toLowerCase();
+}
+
+function hashPassword(password: string, saltHex?: string) {
+    const salt = saltHex ? Buffer.from(saltHex, "hex") : randomBytes(16);
+    const hash = scryptSync(password, salt, 64);
+    return {
+        saltHex: salt.toString("hex"),
+        hashHex: hash.toString("hex")
+    };
+}
+
+function verifyPassword(password: string, saltHex: string, expectedHashHex: string): boolean {
+    try {
+        const candidate = hashPassword(password, saltHex);
+        const expected = Buffer.from(expectedHashHex, "hex");
+        const actual = Buffer.from(candidate.hashHex, "hex");
+        if (expected.length !== actual.length) {
+            return false;
+        }
+        return timingSafeEqual(expected, actual);
+    } catch {
+        return false;
+    }
+}
+
+function parseCookies(req: Request): Record<string, string> {
+    const cookieHeader = req.headers.cookie;
+    if (!isNonEmptyString(cookieHeader)) {
+        return {};
+    }
+
+    const parsed: Record<string, string> = {};
+    const chunks = cookieHeader.split(";");
+    chunks.forEach((entry) => {
+        const idx = entry.indexOf("=");
+        if (idx <= 0) {
+            return;
+        }
+        const key = entry.slice(0, idx).trim();
+        const value = entry.slice(idx + 1).trim();
+        if (!key) {
+            return;
+        }
+        parsed[key] = decodeURIComponent(value);
+    });
+    return parsed;
+}
+
+function getAuthCookieToken(req: Request): string | null {
+    const cookies = parseCookies(req);
+    const token = cookies[AUTH_COOKIE_NAME];
+    return isNonEmptyString(token) ? token : null;
+}
+
+function setAuthCookie(res: ExpressResponse, token: string, expiresAtMs: number) {
+    const maxAgeSec = Math.max(1, Math.floor((expiresAtMs - Date.now()) / 1000));
+    const secureFlag = process.env.NODE_ENV === "production" ? "; Secure" : "";
+    res.setHeader(
+        "Set-Cookie",
+        `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}${secureFlag}`
+    );
+}
+
+function clearAuthCookie(res: ExpressResponse) {
+    const secureFlag = process.env.NODE_ENV === "production" ? "; Secure" : "";
+    res.setHeader(
+        "Set-Cookie",
+        `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureFlag}`
+    );
+}
+
+function readAuthState(): { scopedData: Record<string, unknown>; auth: AuthRootState } {
+    const scopedData = readScopedData();
+    const accounts = asObject(scopedData.accounts) || {};
+    const usersRaw = asObject(accounts.users) || {};
+    const sessionsRaw = asObject(accounts.sessions) || {};
+
+    const users: Record<string, UserRecord> = {};
+    Object.entries(usersRaw).forEach(([userKey, value]) => {
+        const userObj = asObject(value);
+        if (!userObj) {
+            return;
+        }
+        const username = normalizeUsername(userObj.username);
+        const passwordSalt = isNonEmptyString(userObj.passwordSalt) ? userObj.passwordSalt.trim() : "";
+        const passwordHash = isNonEmptyString(userObj.passwordHash) ? userObj.passwordHash.trim() : "";
+        if (!username || !passwordSalt || !passwordHash) {
+            return;
+        }
+
+        users[userKey] = {
+            username,
+            passwordSalt,
+            passwordHash,
+            createdAt: isNonEmptyString(userObj.createdAt) ? userObj.createdAt : new Date().toISOString(),
+            updatedAt: isNonEmptyString(userObj.updatedAt) ? userObj.updatedAt : new Date().toISOString(),
+            store: asObject(userObj.store) || {}
+        };
+    });
+
+    const sessions: Record<string, SessionRecord> = {};
+    Object.entries(sessionsRaw).forEach(([token, value]) => {
+        const sessionObj = asObject(value);
+        if (!sessionObj) {
+            return;
+        }
+        const userKey = isNonEmptyString(sessionObj.userKey) ? sessionObj.userKey.trim() : "";
+        if (!userKey) {
+            return;
+        }
+        sessions[token] = {
+            userKey,
+            createdAt: isNonEmptyString(sessionObj.createdAt) ? sessionObj.createdAt : new Date().toISOString(),
+            updatedAt: isNonEmptyString(sessionObj.updatedAt) ? sessionObj.updatedAt : new Date().toISOString(),
+            expiresAt: isNonEmptyString(sessionObj.expiresAt) ? sessionObj.expiresAt : new Date(0).toISOString(),
+            ip: isNonEmptyString(sessionObj.ip) ? sessionObj.ip : "",
+            userAgent: isNonEmptyString(sessionObj.userAgent) ? clampText(sessionObj.userAgent, 240) : ""
+        };
+    });
+
+    return {
+        scopedData,
+        auth: { users, sessions }
+    };
+}
+
+function persistAuthState(scopedData: Record<string, unknown>, auth: AuthRootState) {
+    const currentAccounts = asObject(scopedData.accounts) || {};
+    const nextAccounts = {
+        ...currentAccounts,
+        users: auth.users,
+        sessions: auth.sessions
+    };
+
+    return replaceScopedData({
+        ...scopedData,
+        accounts: nextAccounts
+    });
+}
+
+function pruneSessions(auth: AuthRootState) {
+    const now = Date.now();
+    Object.entries(auth.sessions).forEach(([token, session]) => {
+        const userExists = Boolean(auth.users[session.userKey]);
+        const expiresAtMs = Date.parse(session.expiresAt);
+        if (!userExists || !Number.isFinite(expiresAtMs) || expiresAtMs <= now) {
+            delete auth.sessions[token];
+        }
+    });
+
+    const sessionEntries = Object.entries(auth.sessions);
+    if (sessionEntries.length <= AUTH_SESSION_MAX) {
+        return;
+    }
+
+    sessionEntries
+        .sort((a, b) => {
+            const left = Date.parse(a[1].updatedAt || a[1].createdAt || "");
+            const right = Date.parse(b[1].updatedAt || b[1].createdAt || "");
+            return left - right;
+        })
+        .slice(0, sessionEntries.length - AUTH_SESSION_MAX)
+        .forEach(([token]) => {
+            delete auth.sessions[token];
+        });
+}
+
+function parseAuthCredentials(payload: unknown): { username: string; password: string } | null {
+    const body = asObject(payload) as AuthBody | null;
+    if (!body) {
+        return null;
+    }
+    const username = normalizeUsername(body.username);
+    const password = normalizePassword(body.password);
+    if (!username || !password) {
+        return null;
+    }
+    return { username, password };
+}
+
+function mergeObjectDeep(baseValue: unknown, patchValue: unknown, depth = 0): unknown {
+    if (depth > 20) {
+        return asObject(baseValue) || {};
+    }
+
+    const baseObj = asObject(baseValue);
+    const patchObj = asObject(patchValue);
+    if (!baseObj && !patchObj) {
+        return patchValue;
+    }
+    if (!patchObj) {
+        return baseObj || {};
+    }
+
+    const merged: Record<string, unknown> = { ...(baseObj || {}) };
+    Object.entries(patchObj).forEach(([key, value]) => {
+        const nestedPatch = asObject(value);
+        if (nestedPatch) {
+            merged[key] = mergeObjectDeep(merged[key], nestedPatch, depth + 1);
+            return;
+        }
+        merged[key] = value;
+    });
+    return merged;
+}
+
+function buildSessionRecord(req: Request, userKey: string): SessionRecord {
+    const now = new Date();
+    return {
+        userKey,
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+        expiresAt: new Date(now.getTime() + AUTH_SESSION_TTL_MS).toISOString(),
+        ip: clampText(getClientIdentifier(req), 120),
+        userAgent: clampText(String(req.headers["user-agent"] || ""), 240)
+    };
+}
+
+function unauthorized(res: ExpressResponse, message = "Debes iniciar sesion para acceder al perfil en la base de datos.") {
+    return res.status(401).json({
+        authenticated: false,
+        message
+    });
+}
+
+function resolveAuthContext(req: Request): {
+    scopedData: Record<string, unknown>;
+    auth: AuthRootState;
+    token: string;
+    userKey: string;
+    user: UserRecord;
+} | null {
+    const token = getAuthCookieToken(req);
+    if (!token) {
+        return null;
+    }
+
+    const { scopedData, auth } = readAuthState();
+    pruneSessions(auth);
+    const session = auth.sessions[token];
+    if (!session) {
+        return null;
+    }
+
+    const user = auth.users[session.userKey];
+    if (!user) {
+        delete auth.sessions[token];
+        persistAuthState(scopedData, auth);
+        return null;
+    }
+
+    const expiresAtMs = Date.parse(session.expiresAt);
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+        delete auth.sessions[token];
+        persistAuthState(scopedData, auth);
+        return null;
+    }
+
+    const updatedMs = Date.parse(session.updatedAt);
+    if (!Number.isFinite(updatedMs) || Date.now() - updatedMs > 1000 * 60 * 5) {
+        auth.sessions[token] = {
+            ...session,
+            updatedAt: new Date().toISOString()
+        };
+        persistAuthState(scopedData, auth);
+    }
+
+    return {
+        scopedData,
+        auth,
+        token,
+        userKey: session.userKey,
+        user
+    };
+}
+
 async function requestGroqChatCompletion(systemPrompt: string, question: string): Promise<string> {
     const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
@@ -275,20 +616,158 @@ async function requestGroqChatCompletion(systemPrompt: string, question: string)
     return content.trim();
 }
 
-router.get("/profile-store", (_req, res) => {
+router.post("/auth/register", (req, res) => {
+    const credentials = parseAuthCredentials(req.body);
+    if (!credentials) {
+        return res.status(400).json({
+            message: `Usuario/contraseña invalidos. Usuario: ${USERNAME_MIN}-${USERNAME_MAX} caracteres [A-Za-z0-9_], contraseña: ${PASSWORD_MIN}-${PASSWORD_MAX} caracteres.`
+        });
+    }
+
     try {
-        const data = readScopedData();
+        const { scopedData, auth } = readAuthState();
+        pruneSessions(auth);
+
+        const userKey = usernameToKey(credentials.username);
+        if (auth.users[userKey]) {
+            return res.status(409).json({ message: "Ese usuario ya existe." });
+        }
+
+        const nowIso = new Date().toISOString();
+        const hashed = hashPassword(credentials.password);
+        auth.users[userKey] = {
+            username: credentials.username,
+            passwordSalt: hashed.saltHex,
+            passwordHash: hashed.hashHex,
+            createdAt: nowIso,
+            updatedAt: nowIso,
+            store: {}
+        };
+
+        const token = randomBytes(32).toString("hex");
+        const session = buildSessionRecord(req, userKey);
+        auth.sessions[token] = session;
+        pruneSessions(auth);
+
+        persistAuthState(scopedData, auth);
+        setAuthCookie(res, token, Date.parse(session.expiresAt));
+
+        return res.status(201).json({
+            ok: true,
+            authenticated: true,
+            user: {
+                username: auth.users[userKey].username
+            },
+            warning: "No hay recuperacion de contraseña. Guardala en un lugar seguro."
+        });
+    } catch (err) {
+        console.error("Auth register failed:", err);
+        return res.status(500).json({ message: "No se pudo crear la cuenta." });
+    }
+});
+
+router.post("/auth/login", (req, res) => {
+    const credentials = parseAuthCredentials(req.body);
+    if (!credentials) {
+        return res.status(400).json({ message: "Credenciales invalidas." });
+    }
+
+    try {
+        const { scopedData, auth } = readAuthState();
+        pruneSessions(auth);
+
+        const userKey = usernameToKey(credentials.username);
+        const user = auth.users[userKey];
+        if (!user || !verifyPassword(credentials.password, user.passwordSalt, user.passwordHash)) {
+            return res.status(401).json({ message: "Usuario o contraseña incorrectos." });
+        }
+
+        const token = randomBytes(32).toString("hex");
+        const session = buildSessionRecord(req, userKey);
+        auth.sessions[token] = session;
+        pruneSessions(auth);
+        persistAuthState(scopedData, auth);
+        setAuthCookie(res, token, Date.parse(session.expiresAt));
+
+        return res.json({
+            ok: true,
+            authenticated: true,
+            user: {
+                username: user.username
+            }
+        });
+    } catch (err) {
+        console.error("Auth login failed:", err);
+        return res.status(500).json({ message: "No se pudo iniciar sesion." });
+    }
+});
+
+router.post("/auth/logout", (req, res) => {
+    const token = getAuthCookieToken(req);
+
+    try {
+        if (token) {
+            const { scopedData, auth } = readAuthState();
+            if (auth.sessions[token]) {
+                delete auth.sessions[token];
+                pruneSessions(auth);
+                persistAuthState(scopedData, auth);
+            }
+        }
+    } catch (err) {
+        console.error("Auth logout failed:", err);
+    }
+
+    clearAuthCookie(res);
+    return res.json({
+        ok: true,
+        authenticated: false
+    });
+});
+
+router.get("/auth/session", (req, res) => {
+    try {
+        const ctx = resolveAuthContext(req);
+        if (!ctx) {
+            return res.json({
+                authenticated: false
+            });
+        }
+
+        return res.json({
+            authenticated: true,
+            user: {
+                username: ctx.user.username
+            }
+        });
+    } catch (err) {
+        console.error("Auth session check failed:", err);
+        return res.status(500).json({
+            authenticated: false,
+            message: "No se pudo validar la sesion."
+        });
+    }
+});
+
+router.get("/profile-store", (req, res) => {
+    try {
+        const ctx = resolveAuthContext(req);
+        if (!ctx) {
+            clearAuthCookie(res);
+            return unauthorized(res);
+        }
+
         return res.json({
             namespace: getDatabaseMeta().namespace,
-            data
+            user: {
+                username: ctx.user.username
+            },
+            data: asObject(ctx.user.store) || {}
         });
     } catch (err) {
         console.error("Profile store read failed:", err);
-        return res.json({
-            namespace: getDatabaseMeta().namespace,
-            data: {},
-            degraded: true,
-            message: "Profile store unavailable. Using local-only fallback."
+        return res.status(500).json({
+            message: "No se pudo leer el perfil en base de datos."
         });
     }
 });
@@ -319,20 +798,35 @@ router.post("/profile-store/sync", (req, res) => {
     }
 
     try {
-        const data = mergeScopedData(patch);
+        const ctx = resolveAuthContext(req);
+        if (!ctx) {
+            clearAuthCookie(res);
+            return unauthorized(res);
+        }
+
+        const currentStore = asObject(ctx.user.store) || {};
+        const mergedStore = mergeObjectDeep(currentStore, patch);
+        const updatedUser: UserRecord = {
+            ...ctx.user,
+            updatedAt: new Date().toISOString(),
+            store: asObject(mergedStore) || {}
+        };
+        ctx.auth.users[ctx.userKey] = updatedUser;
+        pruneSessions(ctx.auth);
+        persistAuthState(ctx.scopedData, ctx.auth);
+
         return res.json({
             ok: true,
             namespace: getDatabaseMeta().namespace,
-            data
+            user: {
+                username: updatedUser.username
+            },
+            data: updatedUser.store
         });
     } catch (err) {
         console.error("Profile store sync failed:", err);
-        return res.json({
-            ok: true,
-            namespace: getDatabaseMeta().namespace,
-            data: readScopedData(),
-            degraded: true,
-            message: "Profile store sync degraded to local memory fallback."
+        return res.status(500).json({
+            message: "No se pudo sincronizar el perfil en base de datos."
         });
     }
 });

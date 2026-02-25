@@ -185,6 +185,33 @@ async function runApiIntegrationTests() {
             throw new Error("Could not resolve API test server address.");
         }
         const baseUrl = `http://127.0.0.1:${address.port}`;
+        let authCookie = "";
+
+        const captureAuthCookie = (response: Response) => {
+            const anyHeaders = response.headers as unknown as { getSetCookie?: () => string[] };
+            const setCookies = typeof anyHeaders.getSetCookie === "function"
+                ? anyHeaders.getSetCookie()
+                : [];
+            if (Array.isArray(setCookies) && setCookies[0]) {
+                authCookie = String(setCookies[0]).split(";")[0];
+                return;
+            }
+
+            const fallback = response.headers.get("set-cookie");
+            if (fallback) {
+                authCookie = String(fallback).split(";")[0];
+            }
+        };
+
+        const withAuthHeaders = (base: Record<string, string> = {}) => {
+            if (!authCookie) {
+                return base;
+            }
+            return {
+                ...base,
+                Cookie: authCookie
+            };
+        };
 
         let response = await fetch(`${baseUrl}/healthz`);
         assert(response.status === 200, "Health endpoint should return 200.");
@@ -246,20 +273,59 @@ async function runApiIntegrationTests() {
         response = await fetch(`${baseUrl}/api/opening-explorer?ratings=1600,9999`);
         assert(response.status === 400, "Invalid explorer ratings should return 400.");
 
-        response = await fetch(`${baseUrl}/api/profile-store/sync`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json"
-            },
-            body: JSON.stringify({})
-        });
-        assert(response.status === 400, "Empty profile sync payload should return 400.");
+        response = await fetch(`${baseUrl}/api/profile-store`);
+        assert(response.status === 401, "Profile store read should require authentication.");
 
         response = await fetch(`${baseUrl}/api/profile-store/sync`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
+            body: JSON.stringify({
+                progress: {
+                    games: [{ at: "2026-02-25T00:00:00.000Z", accuracy: 88.5 }]
+                }
+            })
+        });
+        assert(response.status === 401, "Profile store sync should require authentication.");
+
+        response = await fetch(`${baseUrl}/api/auth/register`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                username: "test_user",
+                password: "segura123"
+            })
+        });
+        assert(response.status === 201, "Auth register should return 201.");
+        captureAuthCookie(response);
+        const registerPayload = await response.json() as { warning?: string };
+        assert(Boolean(registerPayload.warning), "Auth register should include no-recovery warning.");
+        assert(Boolean(authCookie), "Auth register should return session cookie.");
+
+        response = await fetch(`${baseUrl}/api/auth/session`, {
+            headers: withAuthHeaders()
+        });
+        assert(response.status === 200, "Auth session should return 200.");
+        const sessionPayload = await response.json() as { authenticated?: boolean };
+        assert(sessionPayload.authenticated === true, "Auth session should report authenticated.");
+
+        response = await fetch(`${baseUrl}/api/profile-store/sync`, {
+            method: "POST",
+            headers: withAuthHeaders({
+                "Content-Type": "application/json"
+            }),
+            body: JSON.stringify({})
+        });
+        assert(response.status === 400, "Empty profile sync payload should return 400.");
+
+        response = await fetch(`${baseUrl}/api/profile-store/sync`, {
+            method: "POST",
+            headers: withAuthHeaders({
+                "Content-Type": "application/json"
+            }),
             body: JSON.stringify({
                 profile: {
                     note: "x".repeat(860_000)
@@ -270,9 +336,9 @@ async function runApiIntegrationTests() {
 
         response = await fetch(`${baseUrl}/api/profile-store/sync`, {
             method: "POST",
-            headers: {
+            headers: withAuthHeaders({
                 "Content-Type": "application/json"
-            },
+            }),
             body: JSON.stringify({
                 progress: {
                     games: [{ at: "2026-02-25T00:00:00.000Z", accuracy: 88.5 }]
@@ -284,12 +350,21 @@ async function runApiIntegrationTests() {
         });
         assert(response.status === 200, "Valid profile sync payload should return 200.");
 
-        response = await fetch(`${baseUrl}/api/profile-store`);
+        response = await fetch(`${baseUrl}/api/profile-store`, {
+            headers: withAuthHeaders()
+        });
         assert(response.status === 200, "Profile store read should return 200.");
         const storePayload = await response.json() as { data?: Record<string, unknown> };
         assert(Boolean(storePayload.data && typeof storePayload.data === "object"), "Profile store response should include data object.");
         const progress = storePayload.data?.progress as { games?: unknown[] } | undefined;
         assert(Boolean(progress && Array.isArray(progress.games) && progress.games.length === 1), "Profile store should persist synced games.");
+
+        response = await fetch(`${baseUrl}/api/auth/logout`, {
+            method: "POST",
+            headers: withAuthHeaders()
+        });
+        assert(response.status === 200, "Auth logout should return 200.");
+        authCookie = "";
 
         console.log("API integration smoke tests passed.");
     } finally {

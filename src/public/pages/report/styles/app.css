@@ -1465,6 +1465,30 @@ button:disabled {
     margin-left: 2px;
 }
 
+.auth-group .auth-status {
+    text-align: left;
+    font-weight: 600;
+}
+
+.auth-guest-panel,
+.auth-user-panel {
+    display: grid;
+    gap: 8px;
+}
+
+.auth-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.auth-warning {
+    margin: 0;
+    font-size: 0.78rem;
+    line-height: 1.25;
+    color: #f6c66e;
+}
+
 /* Clickable moves in AI responses */
 .clickable-move {
     cursor: pointer;
@@ -2722,6 +2746,10 @@ textarea:focus-visible {
 
     .endgame-content {
         padding: 16px;
+    }
+
+    .auth-actions {
+        grid-template-columns: 1fr;
     }
 
     .analysis-retry-board-wrap,

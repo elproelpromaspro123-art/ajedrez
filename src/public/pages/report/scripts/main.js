@@ -120,6 +120,15 @@ const el = {
     playStatus: document.querySelector("#play-status"),
     playMoveList: document.querySelector("#play-move-list"),
     playStartBtn: document.querySelector("#play-start-btn"),
+    authStatus: document.querySelector("#auth-status"),
+    authUsername: document.querySelector("#auth-username"),
+    authPassword: document.querySelector("#auth-password"),
+    authLoginBtn: document.querySelector("#auth-login-btn"),
+    authRegisterBtn: document.querySelector("#auth-register-btn"),
+    authGuestPanel: document.querySelector("#auth-guest-panel"),
+    authUserPanel: document.querySelector("#auth-user-panel"),
+    authUserLabel: document.querySelector("#auth-user-label"),
+    authLogoutBtn: document.querySelector("#auth-logout-btn"),
     playHintBtn: document.querySelector("#play-hint-btn"),
     playUndoBtn: document.querySelector("#play-undo-btn"),
     playCancelPremoveBtn: document.querySelector("#play-cancel-premove-btn"),
@@ -337,6 +346,191 @@ function mutateStored(mutator) {
         return null;
     }
     return storageModule.mutate(mutator);
+}
+
+async function readJsonResponseSafe(response) {
+    try {
+        return await response.json();
+    } catch {
+        return null;
+    }
+}
+
+function setAuthStatus(message) {
+    if (!el.authStatus) {
+        return;
+    }
+    el.authStatus.textContent = String(message || "");
+}
+
+function applyAuthUiState() {
+    if (el.authGuestPanel) {
+        el.authGuestPanel.style.display = authState.authenticated ? "none" : "";
+    }
+    if (el.authUserPanel) {
+        el.authUserPanel.style.display = authState.authenticated ? "" : "none";
+    }
+    if (el.authUserLabel) {
+        el.authUserLabel.textContent = authState.username || "--";
+    }
+}
+
+function setAuthBusy(isBusy) {
+    authState.busy = Boolean(isBusy);
+
+    [el.authUsername, el.authPassword].forEach((input) => {
+        if (input) {
+            input.disabled = authState.busy;
+        }
+    });
+    [el.authLoginBtn, el.authRegisterBtn, el.authLogoutBtn].forEach((button) => {
+        if (button) {
+            button.disabled = authState.busy;
+        }
+    });
+}
+
+function setAuthState(authenticated, username = "") {
+    authState.authenticated = Boolean(authenticated);
+    authState.username = authState.authenticated ? String(username || "") : "";
+    applyAuthUiState();
+}
+
+function getAuthInputCredentials() {
+    const username = el.authUsername ? String(el.authUsername.value || "").trim() : "";
+    const password = el.authPassword ? String(el.authPassword.value || "").trim() : "";
+    if (!username || !password) {
+        return null;
+    }
+    return { username, password };
+}
+
+function clearAuthPasswordInput() {
+    if (el.authPassword) {
+        el.authPassword.value = "";
+    }
+}
+
+async function refreshAuthSessionStatus() {
+    try {
+        const response = await fetch("/api/auth/session");
+        const payload = await readJsonResponseSafe(response);
+        const authenticated = Boolean(payload && payload.authenticated);
+        if (authenticated) {
+            const username = payload && payload.user && payload.user.username ? String(payload.user.username) : "";
+            setAuthState(true, username);
+            setAuthStatus(`Sesion iniciada como ${username}. Tus datos se guardan en base de datos.`);
+            return true;
+        }
+
+        setAuthState(false, "");
+        setAuthStatus("No has iniciado sesion. Inicia para guardar todo en base de datos.");
+        return false;
+    } catch {
+        setAuthState(false, "");
+        setAuthStatus("No se pudo validar la sesion con el servidor.");
+        return false;
+    }
+}
+
+async function onAuthenticatedSessionChanged() {
+    progressState.remoteHydrated = false;
+    if (!authState.authenticated) {
+        renderProgressDashboard();
+        return;
+    }
+
+    await hydrateProfileStoreFromDatabase();
+    scheduleProfileStoreSync(120);
+    renderProgressDashboard();
+}
+
+async function registerWithCredentials() {
+    const credentials = getAuthInputCredentials();
+    if (!credentials) {
+        setAuthStatus("Completa usuario y contraseña para crear cuenta.");
+        return;
+    }
+
+    setAuthBusy(true);
+    try {
+        const response = await fetch("/api/auth/register", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(credentials)
+        });
+        const payload = await readJsonResponseSafe(response);
+        if (!response.ok) {
+            const message = payload && payload.message ? String(payload.message) : "No se pudo crear la cuenta.";
+            setAuthStatus(message);
+            return;
+        }
+
+        const username = payload && payload.user && payload.user.username ? String(payload.user.username) : credentials.username;
+        setAuthState(true, username);
+        const warning = payload && payload.warning ? ` ${String(payload.warning)}` : "";
+        setAuthStatus(`Cuenta creada e iniciada como ${username}.${warning}`);
+        clearAuthPasswordInput();
+        await onAuthenticatedSessionChanged();
+    } catch {
+        setAuthStatus("No se pudo crear la cuenta por un error de red.");
+    } finally {
+        setAuthBusy(false);
+    }
+}
+
+async function loginWithCredentials() {
+    const credentials = getAuthInputCredentials();
+    if (!credentials) {
+        setAuthStatus("Completa usuario y contraseña para iniciar sesion.");
+        return;
+    }
+
+    setAuthBusy(true);
+    try {
+        const response = await fetch("/api/auth/login", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(credentials)
+        });
+        const payload = await readJsonResponseSafe(response);
+        if (!response.ok) {
+            const message = payload && payload.message ? String(payload.message) : "No se pudo iniciar sesion.";
+            setAuthStatus(message);
+            return;
+        }
+
+        const username = payload && payload.user && payload.user.username ? String(payload.user.username) : credentials.username;
+        setAuthState(true, username);
+        setAuthStatus(`Sesion iniciada como ${username}.`);
+        clearAuthPasswordInput();
+        await onAuthenticatedSessionChanged();
+    } catch {
+        setAuthStatus("No se pudo iniciar sesion por un error de red.");
+    } finally {
+        setAuthBusy(false);
+    }
+}
+
+async function logoutCurrentSession() {
+    setAuthBusy(true);
+    try {
+        await fetch("/api/auth/logout", {
+            method: "POST"
+        });
+    } catch {
+        // ignore network errors; we still clear local auth state
+    } finally {
+        setAuthState(false, "");
+        setAuthStatus("Sesion cerrada. El guardado remoto queda desactivado hasta iniciar sesion.");
+        clearAuthPasswordInput();
+        progressState.remoteHydrated = false;
+        setAuthBusy(false);
+    }
 }
 
 function formatDurationMs(ms) {
@@ -1222,6 +1416,12 @@ const progressState = {
     remoteHydrated: false,
     remoteSyncTimer: null,
     remoteSyncInFlight: false
+};
+
+const authState = {
+    authenticated: false,
+    username: "",
+    busy: false
 };
 
 const perfState = {
@@ -4595,17 +4795,29 @@ async function hydrateProfileStoreFromDatabase() {
     if (!analysisModule || !analysisModule.loadProgress || !analysisModule.saveProgress) {
         return;
     }
+    if (!authState.authenticated) {
+        return;
+    }
     if (progressState.remoteHydrated) {
         return;
     }
 
     try {
         const response = await fetch("/api/profile-store");
+        if (response.status === 401) {
+            const payload = await readJsonResponseSafe(response);
+            setAuthState(false, "");
+            progressState.remoteHydrated = false;
+            setAuthStatus(payload && payload.message
+                ? String(payload.message)
+                : "Sesion expirada. Vuelve a iniciar sesion.");
+            return;
+        }
         if (!response.ok) {
             throw new Error("Remote store unavailable");
         }
 
-        const payload = await response.json();
+        const payload = await readJsonResponseSafe(response);
         const remoteData = payload && payload.data && typeof payload.data === "object"
             ? payload.data
             : {};
@@ -4631,6 +4843,9 @@ async function syncProfileStoreToDatabaseNow() {
     if (!analysisModule || !analysisModule.loadProgress) {
         return;
     }
+    if (!authState.authenticated) {
+        return;
+    }
     if (progressState.remoteSyncInFlight) {
         return;
     }
@@ -4653,6 +4868,15 @@ async function syncProfileStoreToDatabaseNow() {
                 }
             })
         });
+        if (response.status === 401) {
+            const payload = await readJsonResponseSafe(response);
+            setAuthState(false, "");
+            progressState.remoteHydrated = false;
+            setAuthStatus(payload && payload.message
+                ? String(payload.message)
+                : "Sesion expirada. Vuelve a iniciar sesion.");
+            return;
+        }
         if (!response.ok) {
             throw new Error(`Remote profile sync failed (${response.status}).`);
         }
@@ -5630,6 +5854,31 @@ function bindEvents() {
     playState.board.onSquareClick = onPlaySquareClick;
     playState.board.onDrop = handleBoardDrop;
     playState.board.canDragFrom = canPlayerDragFrom;
+
+    if (el.authLoginBtn) {
+        el.authLoginBtn.addEventListener("click", () => {
+            loginWithCredentials();
+        });
+    }
+    if (el.authRegisterBtn) {
+        el.authRegisterBtn.addEventListener("click", () => {
+            registerWithCredentials();
+        });
+    }
+    if (el.authLogoutBtn) {
+        el.authLogoutBtn.addEventListener("click", () => {
+            logoutCurrentSession();
+        });
+    }
+    if (el.authPassword) {
+        el.authPassword.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter") {
+                return;
+            }
+            event.preventDefault();
+            loginWithCredentials();
+        });
+    }
 
     if (el.endgameCloseBtn) {
         el.endgameCloseBtn.addEventListener("click", () => {
@@ -7017,6 +7266,8 @@ async function init() {
 
     bindTabs();
     bindEvents();
+    setAuthState(false, "");
+    setAuthStatus("Validando sesion...");
     bindLessonsUi();
     bindAiChat();
     loadOpeningCatalog();
@@ -7048,6 +7299,7 @@ async function init() {
     applySettingsToBoard();
     refreshPlayModeUiState();
     await initOpeningExplorer();
+    await refreshAuthSessionStatus();
     await hydrateProfileStoreFromDatabase();
     renderProgressDashboard();
     bindGlobalShortcuts();
