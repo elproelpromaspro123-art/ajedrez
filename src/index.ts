@@ -14,7 +14,7 @@ app.use(express.json({ limit: "1mb" }));
 app.use((_req, res, next) => {
     res.setHeader("Content-Security-Policy", [
         "default-src 'self'",
-        "script-src 'self' blob:",
+        "script-src 'self' blob: 'wasm-unsafe-eval'",
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' https://fonts.gstatic.com",
         "img-src 'self' data:",
