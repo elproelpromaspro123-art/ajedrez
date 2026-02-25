@@ -49,6 +49,50 @@ async function installWorkerMock(page: Page) {
 }
 
 async function installApiMocks(page: Page) {
+    await page.route("**/api/auth/session", async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({
+                authenticated: true,
+                user: {
+                    username: "tester_e2e"
+                }
+            })
+        });
+    });
+
+    await page.route("**/api/profile-store", async (route) => {
+        if (route.request().method() === "GET") {
+            await route.fulfill({
+                status: 200,
+                contentType: "application/json",
+                body: JSON.stringify({
+                    data: {
+                        progress: { games: [], activities: [] },
+                        lessons: { progressByLesson: {} },
+                        profile: {}
+                    }
+                })
+            });
+            return;
+        }
+
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ ok: true })
+        });
+    });
+
+    await page.route("**/api/profile-store/sync", async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ ok: true })
+        });
+    });
+
     await page.route("**/api/opening-explorer**", async (route) => {
         const url = new URL(route.request().url());
         const fen = url.searchParams.get("fen") || "startpos";
@@ -139,6 +183,7 @@ test.beforeEach(async ({ page }) => {
 
 test("flujo critico: jugar -> analizar -> estudio -> IA -> guardado", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator("body")).not.toHaveClass(/auth-locked/);
     await disableComputerBeforeGame(page);
 
     await page.click("#play-start-btn");
@@ -182,6 +227,7 @@ test("flujo critico: jugar -> analizar -> estudio -> IA -> guardado", async ({ p
 
 test("recupera sesion: tablero, historial, filtros ECO y chat IA", async ({ page }) => {
     await page.goto("/");
+    await expect(page.locator("body")).not.toHaveClass(/auth-locked/);
     await disableComputerBeforeGame(page);
 
     await page.click("#play-start-btn");

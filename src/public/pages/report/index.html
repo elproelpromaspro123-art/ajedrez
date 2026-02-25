@@ -13,7 +13,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
         rel="stylesheet" />
-    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260225_auth1" />
+    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260225_polish6" />
     <link rel="shortcut icon" href="/static/media/favicon-freechess.ico" type="image/x-icon" />
 </head>
 
@@ -67,6 +67,8 @@
                             <p class="setup-group-title">Cuenta</p>
                             <p id="auth-status" class="muted auth-status">No has iniciado sesion. Inicia para guardar todo en base de datos.</p>
                             <div id="auth-guest-panel" class="auth-guest-panel">
+                                <p class="auth-modal-title">Inicia sesion o registrate para continuar</p>
+                                <p class="auth-modal-subtitle">Sin sesion iniciada no se guarda informacion en tu perfil.</p>
                                 <label for="auth-username">Usuario</label>
                                 <input id="auth-username" type="text" maxlength="24" autocomplete="username" placeholder="Tu usuario" />
                                 <label for="auth-password">Contraseña</label>
@@ -1062,10 +1064,13 @@
             <div class="endgame-actions">
                 <button id="endgame-analyze-btn" class="primary-btn" type="button">&#128269; Analizar partida</button>
                 <button id="endgame-pgn-btn" class="ghost-btn" type="button">&#128190; Descargar PGN</button>
+                <button id="endgame-home-btn" class="ghost-btn" type="button">&#127968; Volver al inicio</button>
                 <button id="endgame-close-btn" class="ghost-btn" type="button">Cerrar</button>
             </div>
         </div>
     </div>
+
+    <div id="auth-lock-overlay" class="auth-lock-overlay" aria-hidden="true"></div>
 
     <audio id="fx-move" src="/static/media/move.mp3"></audio>
     <audio id="fx-capture" src="/static/media/capture.mp3"></audio>
@@ -1075,15 +1080,15 @@
     <audio id="fx-end" src="/static/media/game_end.mp3"></audio>
 
     <script src="/static/scripts/vendor/chess.global.js?v=20260223"></script>
-    <script src="/static/pages/report/scripts/modules/engine.js?v=20260225_auth1"></script>
-    <script src="/static/pages/report/scripts/modules/storage.js?v=20260225_auth1"></script>
-    <script src="/static/pages/report/scripts/modules/ui.js?v=20260225_auth1"></script>
-    <script src="/static/pages/report/scripts/modules/openings.js?v=20260225_auth1"></script>
-    <script src="/static/pages/report/scripts/modules/study.js?v=20260225_auth1"></script>
-    <script src="/static/pages/report/scripts/modules/ai.js?v=20260225_auth1"></script>
-    <script src="/static/pages/report/scripts/modules/play.js?v=20260225_auth1"></script>
-    <script src="/static/pages/report/scripts/modules/analysis.js?v=20260225_auth1"></script>
-    <script src="/static/pages/report/scripts/main.js?v=20260225_auth1"></script>
+    <script src="/static/pages/report/scripts/modules/engine.js?v=20260225_polish6"></script>
+    <script src="/static/pages/report/scripts/modules/storage.js?v=20260225_polish6"></script>
+    <script src="/static/pages/report/scripts/modules/ui.js?v=20260225_polish6"></script>
+    <script src="/static/pages/report/scripts/modules/openings.js?v=20260225_polish6"></script>
+    <script src="/static/pages/report/scripts/modules/study.js?v=20260225_polish6"></script>
+    <script src="/static/pages/report/scripts/modules/ai.js?v=20260225_polish6"></script>
+    <script src="/static/pages/report/scripts/modules/play.js?v=20260225_polish6"></script>
+    <script src="/static/pages/report/scripts/modules/analysis.js?v=20260225_polish6"></script>
+    <script src="/static/pages/report/scripts/main.js?v=20260225_polish6"></script>
 </body>
 
 </html>

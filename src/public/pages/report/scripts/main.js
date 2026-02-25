@@ -93,8 +93,8 @@ const CLASSIFICATION_DOT_COLOR = {
     blunder: "#ca3431"
 };
 
-const ENGINE_PRIMARY = "/static/scripts/stockfish-nnue-16.js";
-const ENGINE_FALLBACK = "/static/scripts/stockfish.js";
+const ENGINE_PRIMARY = "/static/scripts/stockfish.js";
+const ENGINE_FALLBACK = "/static/scripts/stockfish-nnue-16.js";
 const APP_BOOT_AT = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
 const APP_MODULES = window.ReportModules || {};
 const storageModule = APP_MODULES.storage || null;
@@ -129,6 +129,7 @@ const el = {
     authUserPanel: document.querySelector("#auth-user-panel"),
     authUserLabel: document.querySelector("#auth-user-label"),
     authLogoutBtn: document.querySelector("#auth-logout-btn"),
+    authLockOverlay: document.querySelector("#auth-lock-overlay"),
     playHintBtn: document.querySelector("#play-hint-btn"),
     playUndoBtn: document.querySelector("#play-undo-btn"),
     playCancelPremoveBtn: document.querySelector("#play-cancel-premove-btn"),
@@ -169,6 +170,7 @@ const el = {
     endgameImpact: document.querySelector("#endgame-impact"),
     endgameAnalyzeBtn: document.querySelector("#endgame-analyze-btn"),
     endgamePgnBtn: document.querySelector("#endgame-pgn-btn"),
+    endgameHomeBtn: document.querySelector("#endgame-home-btn"),
     endgameCloseBtn: document.querySelector("#endgame-close-btn"),
 
 
@@ -327,6 +329,10 @@ function nowMs() {
         : Date.now();
 }
 
+function canPersistLocalData() {
+    return Boolean(authState && authState.authenticated);
+}
+
 function readStored(path, fallbackValue) {
     if (!storageModule || !storageModule.read) {
         return fallbackValue;
@@ -338,11 +344,17 @@ function writeStored(path, value) {
     if (!storageModule || !storageModule.write) {
         return value;
     }
+    if (!canPersistLocalData()) {
+        return value;
+    }
     return storageModule.write(path, value);
 }
 
 function mutateStored(mutator) {
     if (!storageModule || !storageModule.mutate) {
+        return null;
+    }
+    if (!canPersistLocalData()) {
         return null;
     }
     return storageModule.mutate(mutator);
@@ -361,6 +373,43 @@ function setAuthStatus(message) {
         return;
     }
     el.authStatus.textContent = String(message || "");
+}
+
+function applyAuthLockState() {
+    if (typeof document === "undefined" || !document.body) {
+        return;
+    }
+    const locked = !authState.authenticated;
+    document.body.classList.toggle("auth-locked", locked);
+    if (el.authLockOverlay) {
+        el.authLockOverlay.setAttribute("aria-hidden", locked ? "false" : "true");
+    }
+    if (locked && el.authUsername && !authState.busy) {
+        setTimeout(() => {
+            if (el.authUsername && !authState.authenticated) {
+                el.authUsername.focus();
+            }
+        }, 40);
+    }
+}
+
+function clearGuestPersistedData() {
+    if (!storageModule || !storageModule.mutate) {
+        return;
+    }
+
+    storageModule.mutate((data) => {
+        if (!data || typeof data !== "object") {
+            return;
+        }
+
+        data.progress = { games: [], activities: [] };
+        data.ai = { log: [], chatHistory: [] };
+        data.session = { snapshot: null };
+        data.metrics = { entries: [] };
+    });
+
+    sessionRuntimeState.restorePayload = null;
 }
 
 function applyAuthUiState() {
@@ -391,9 +440,15 @@ function setAuthBusy(isBusy) {
 }
 
 function setAuthState(authenticated, username = "") {
+    const wasAuthenticated = authState.authenticated;
     authState.authenticated = Boolean(authenticated);
     authState.username = authState.authenticated ? String(username || "") : "";
     applyAuthUiState();
+    applyAuthLockState();
+    refreshPlayModeUiState();
+    if (wasAuthenticated && !authState.authenticated) {
+        clearGuestPersistedData();
+    }
 }
 
 function getAuthInputCredentials() {
@@ -424,11 +479,13 @@ async function refreshAuthSessionStatus() {
         }
 
         setAuthState(false, "");
+        clearGuestPersistedData();
         setAuthStatus("No has iniciado sesion. Inicia para guardar todo en base de datos.");
         return false;
     } catch {
         setAuthState(false, "");
-        setAuthStatus("No se pudo validar la sesion con el servidor.");
+        clearGuestPersistedData();
+        setAuthStatus("No se pudo validar la sesion con el servidor. Inicia sesion para continuar.");
         return false;
     }
 }
@@ -436,6 +493,9 @@ async function refreshAuthSessionStatus() {
 async function onAuthenticatedSessionChanged() {
     progressState.remoteHydrated = false;
     if (!authState.authenticated) {
+        profileState.games = [];
+        profileState.eloTimeline = [];
+        lessonState.progressByLesson = {};
         renderProgressDashboard();
         return;
     }
@@ -529,6 +589,7 @@ async function logoutCurrentSession() {
         setAuthStatus("Sesion cerrada. El guardado remoto queda desactivado hasta iniciar sesion.");
         clearAuthPasswordInput();
         progressState.remoteHydrated = false;
+        await onAuthenticatedSessionChanged();
         setAuthBusy(false);
     }
 }
@@ -1139,7 +1200,7 @@ function runStockfishInternal(options, enginePath) {
                 return;
             }
             cleanup();
-            reject(new Error("Engine timeout."));
+            reject(new Error("El motor tardo demasiado en responder."));
         }, timeoutMs);
 
         worker.onmessage = (event) => {
@@ -1513,6 +1574,7 @@ function enforceRankedSettings() {
 }
 
 function refreshPlayModeUiState() {
+    const requiresAuth = !authState.authenticated;
     const rankedSelected = getSelectedPlayMode() === PLAY_MODES.RANKED;
     const rankedLive = isRankedActiveGame();
     const lockControls = rankedSelected || rankedLive;
@@ -1536,9 +1598,13 @@ function refreshPlayModeUiState() {
     }
 
     if (el.playModeNote) {
-        el.playModeNote.textContent = rankedSelected || rankedLive
-            ? "Clasificatoria: color aleatorio (blancas/negras) y sin ayudas. Solo este modo suma perfil."
-            : "Clasica: usa tus ajustes libremente. No suma estadisticas del perfil.";
+        if (requiresAuth) {
+            el.playModeNote.textContent = "Inicia sesion para jugar y guardar datos en tu perfil.";
+        } else {
+            el.playModeNote.textContent = rankedSelected || rankedLive
+                ? "Clasificatoria: color aleatorio (blancas/negras) y sin ayudas. Solo este modo suma perfil."
+                : "Clasica: usa tus ajustes libremente. No suma estadisticas del perfil.";
+        }
     }
 
     if (el.playHintBtn) {
@@ -1549,6 +1615,9 @@ function refreshPlayModeUiState() {
     }
     if (el.playResignBtn) {
         el.playResignBtn.disabled = !playState.startTime || isPlayGameOver();
+    }
+    if (el.playStartBtn) {
+        el.playStartBtn.disabled = requiresAuth;
     }
 }
 
@@ -1762,11 +1831,6 @@ function decorateMoveSpan(span, isPlayerMove, classificationKey, moveIndex) {
         return;
     }
 
-    const clsTag = document.createElement("span");
-    clsTag.className = `move-cls-label cls-${classificationKey}`;
-    clsTag.textContent = label;
-    span.appendChild(clsTag);
-
     if (classificationKey === "book") {
         const openingDetail = playState.moveOpeningDetails[moveIndex];
         if (openingDetail && openingDetail.name) {
@@ -1782,6 +1846,11 @@ function decorateMoveSpan(span, isPlayerMove, classificationKey, moveIndex) {
             span.appendChild(openingLink);
         }
     }
+
+    const clsTag = document.createElement("span");
+    clsTag.className = `move-cls-label cls-${classificationKey}`;
+    clsTag.textContent = label;
+    span.appendChild(clsTag);
 }
 
 function buildMoveSpanContent(san, dotColor, symbol) {
@@ -2445,6 +2514,19 @@ function showEndgameSummary(title, reason, winner) {
     }, 10);
 }
 
+function closeEndgameModal() {
+    if (!el.endgameModal) {
+        return;
+    }
+    el.endgameModal.style.opacity = "0";
+    el.endgameModal.style.pointerEvents = "none";
+    setTimeout(() => {
+        if (el.endgameModal) {
+            el.endgameModal.style.display = "none";
+        }
+    }, 300);
+}
+
 function formatGameOver(game) {
     let title = "Juego terminado";
     let reason = "Partida finalizada";
@@ -2956,12 +3038,12 @@ async function playBotMove() {
 
         const parsed = parseUciMove(result.bestMove);
         if (!parsed) {
-            throw new Error("Engine returned invalid move.");
+            throw new Error("El motor devolvio una jugada invalida.");
         }
 
         const move = playState.game.move(parsed);
         if (!move) {
-            throw new Error("Could not apply bot move.");
+            throw new Error("No se pudo aplicar la jugada del bot.");
         }
 
         const fenAfterMove = playState.game.fen();
@@ -3316,6 +3398,12 @@ function goToPlaySetup(message = coachNotice("setup", "Configura una nueva parti
 }
 
 function startNewGame() {
+    if (!authState.authenticated) {
+        setAuthStatus("Debes iniciar sesion para comenzar una partida.");
+        applyAuthLockState();
+        return;
+    }
+
     playState.sessionId += 1;
     playState.game = new Chess();
     playState.gameMode = getSelectedPlayMode();
@@ -4293,7 +4381,7 @@ async function runAnalysis() {
         fillClassificationTable(analysisState.report.classifications);
         renderAnalysisPosition();
 
-        if (analysisModule && analysisModule.registerActivity) {
+        if (authState.authenticated && analysisModule && analysisModule.registerActivity) {
             const summary = analysisModule.registerActivity("analysis", {
                 whiteAccuracy: analysisState.report.accuracies.white,
                 blackAccuracy: analysisState.report.accuracies.black
@@ -4588,7 +4676,7 @@ function createOpeningStudyLink(openingName, context = {}, variant = "inline") {
     button.type = "button";
     button.className = `opening-link opening-link-${variant}`;
     button.textContent = openingName;
-    button.title = "Abrir en Estudio en una nueva pesta\u00f1a";
+    button.title = `${openingName} - Abrir en Estudio en una nueva pestana`;
 
     button.addEventListener("click", (event) => {
         event.preventDefault();
@@ -5203,6 +5291,13 @@ function persistFinishedGame(openingName, winnerLabel) {
         return;
     }
 
+    if (!authState.authenticated) {
+        progressState.persistedGameSession = playState.sessionId;
+        setCoachMessage(coachNotice("warn", "Partida finalizada. Inicia sesion para guardar estadisticas del perfil."));
+        scheduleSessionSnapshotSave();
+        return;
+    }
+
     playState.lastRankedProfileDelta = null;
 
     if (normalizePlayMode(playState.gameMode) !== PLAY_MODES.RANKED) {
@@ -5242,6 +5337,9 @@ function persistFinishedGame(openingName, winnerLabel) {
 
 function registerStudyActivity(payload) {
     if (!analysisModule || !analysisModule.registerActivity) {
+        return;
+    }
+    if (!authState.authenticated) {
         return;
     }
     const summary = analysisModule.registerActivity("study", payload || null);
@@ -5882,9 +5980,7 @@ function bindEvents() {
 
     if (el.endgameCloseBtn) {
         el.endgameCloseBtn.addEventListener("click", () => {
-            el.endgameModal.style.opacity = "0";
-            el.endgameModal.style.pointerEvents = "none";
-            setTimeout(() => el.endgameModal.style.display = "none", 300);
+            closeEndgameModal();
         });
     }
 
@@ -5908,9 +6004,7 @@ function bindEvents() {
                 el.analysisPgn.value = pgn;
             }
 
-            el.endgameModal.style.opacity = "0";
-            el.endgameModal.style.pointerEvents = "none";
-            setTimeout(() => el.endgameModal.style.display = "none", 300);
+            closeEndgameModal();
 
             // Switch to analysis tab automatically
             const tabBtn = document.querySelector('[data-tab-target="analysis-section"]');
@@ -5918,6 +6012,13 @@ function bindEvents() {
 
             // Trigger analysis loading
             if (el.analysisRunBtn) el.analysisRunBtn.click();
+        });
+    }
+
+    if (el.endgameHomeBtn) {
+        el.endgameHomeBtn.addEventListener("click", () => {
+            closeEndgameModal();
+            goToPlaySetup(coachNotice("info", "Volviste al inicio. Ajusta color y nivel para una nueva partida."));
         });
     }
 
@@ -6042,9 +6143,7 @@ function bindEvents() {
             return;
         }
         if (el.endgameModal && el.endgameModal.style.display === "flex") {
-            el.endgameModal.style.opacity = "0";
-            el.endgameModal.style.pointerEvents = "none";
-            setTimeout(() => el.endgameModal.style.display = "none", 300);
+            closeEndgameModal();
         }
     });
 
@@ -6973,10 +7072,16 @@ function persistSessionSnapshotNow() {
         clearTimeout(sessionRuntimeState.saveTimer);
         sessionRuntimeState.saveTimer = null;
     }
+    if (!authState.authenticated) {
+        return;
+    }
     writeStored("session.snapshot", buildSessionSnapshot());
 }
 
 function scheduleSessionSnapshotSave(delayMs = 260) {
+    if (!authState.authenticated) {
+        return;
+    }
     if (sessionRuntimeState.saveTimer) {
         clearTimeout(sessionRuntimeState.saveTimer);
     }
@@ -7217,7 +7322,7 @@ function renderAiActionAudit() {
 }
 
 function logAiActionEvent(action, status, meta) {
-    if (aiModule && aiModule.logAction) {
+    if (authState.authenticated && aiModule && aiModule.logAction) {
         aiModule.logAction(action, status, meta || null);
     }
     renderAiActionAudit();
@@ -7239,8 +7344,7 @@ async function init() {
         playState.gameMode = el.playMode.value;
     }
 
-    restoreSessionPrefilters();
-    lessonState.progressByLesson = readStored("session.lessonProgress", {});
+    lessonState.progressByLesson = {};
 
     if (uiModule && uiModule.applyStoredThemes) {
         uiModule.applyStoredThemes();
@@ -7299,16 +7403,29 @@ async function init() {
     applySettingsToBoard();
     refreshPlayModeUiState();
     await initOpeningExplorer();
-    await refreshAuthSessionStatus();
-    await hydrateProfileStoreFromDatabase();
+    const authenticated = await refreshAuthSessionStatus();
+    if (authenticated) {
+        sessionRuntimeState.restorePayload = readStored("session.snapshot", null);
+        restoreSessionPrefilters();
+        lessonState.progressByLesson = readStored("session.lessonProgress", {});
+        await hydrateProfileStoreFromDatabase();
+    } else {
+        sessionRuntimeState.restorePayload = null;
+        lessonState.progressByLesson = {};
+        if (storageModule && storageModule.write) {
+            storageModule.write("session.snapshot", null);
+        }
+    }
     renderProgressDashboard();
     bindGlobalShortcuts();
     renderLessonSelection("opening_principles");
 
-    if (hasExplicitDeepLink()) {
-        applyStudyDeepLinkFromUrl();
-    } else {
-        restoreSessionAfterInit();
+    if (authState.authenticated) {
+        if (hasExplicitDeepLink()) {
+            applyStudyDeepLinkFromUrl();
+        } else {
+            restoreSessionAfterInit();
+        }
     }
 
     scheduleSessionSnapshotSave(0);

@@ -1,8 +1,8 @@
 (function initEngineModule(global) {
     const Chess = global.Chess;
 
-    const ENGINE_PRIMARY = "/static/scripts/stockfish-nnue-16.js";
-    const ENGINE_FALLBACK = "/static/scripts/stockfish.js";
+    const ENGINE_PRIMARY = "/static/scripts/stockfish.js";
+    const ENGINE_FALLBACK = "/static/scripts/stockfish-nnue-16.js";
     const ENGINE_EVAL_CACHE = new Map();
     const CACHE_TTL_MS = 2200;
     let engineAssetWarm = false;
@@ -109,7 +109,7 @@
                     return;
                 }
                 cleanup();
-                reject(new Error("Engine timeout."));
+                reject(new Error("El motor tardo demasiado en responder."));
             }, timeoutMs);
 
             worker.onmessage = (event) => {

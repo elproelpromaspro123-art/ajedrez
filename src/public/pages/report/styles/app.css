@@ -1298,6 +1298,7 @@ button:disabled {
     min-height: 40px;
     max-height: 280px;
     overflow-y: auto;
+    overflow-x: hidden;
     scrollbar-width: thin;
     border-radius: 8px;
 }
@@ -1339,6 +1340,7 @@ button:disabled {
     gap: 4px;
     padding: 4px 6px;
     min-width: 0;
+    overflow: hidden;
     border: 1px solid transparent;
     border-radius: 6px;
 }
@@ -1383,6 +1385,9 @@ button:disabled {
 
 .move-san-text {
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
 }
 
 .move-cls-label {
@@ -1393,10 +1398,17 @@ button:disabled {
     border-radius: 4px;
     padding: 1px 5px;
     white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .move-san .opening-link-mini {
     margin-left: 4px;
+    max-width: min(48%, 9.2rem);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-shrink: 1;
+    min-width: 0;
 }
 
 .play-game-panel {
@@ -1476,6 +1488,21 @@ button:disabled {
     gap: 8px;
 }
 
+.auth-modal-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    color: var(--text);
+}
+
+.auth-modal-subtitle {
+    margin: 0;
+    font-size: 0.82rem;
+    line-height: 1.35;
+    color: var(--text-muted);
+}
+
 .auth-actions {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1487,6 +1514,52 @@ button:disabled {
     font-size: 0.78rem;
     line-height: 1.25;
     color: #f6c66e;
+}
+
+.auth-lock-overlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    background: rgba(8, 10, 18, 0.82);
+    backdrop-filter: blur(6px);
+    z-index: 2600;
+}
+
+body.auth-locked .auth-lock-overlay {
+    display: block;
+}
+
+body.auth-locked #auth-guest-panel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(92vw, 430px);
+    padding: 20px 18px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: linear-gradient(170deg, rgba(22, 27, 40, 0.98), rgba(14, 17, 28, 0.98));
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.58);
+    z-index: 2601;
+}
+
+body.auth-locked #auth-user-panel {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(92vw, 430px);
+    padding: 20px 18px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: linear-gradient(170deg, rgba(22, 27, 40, 0.98), rgba(14, 17, 28, 0.98));
+    box-shadow: 0 28px 80px rgba(0, 0, 0, 0.58);
+    z-index: 2601;
+}
+
+body.auth-locked .settings-modal,
+body.auth-locked .modal-overlay.endgame-modal {
+    display: none !important;
 }
 
 /* Clickable moves in AI responses */
@@ -1542,6 +1615,12 @@ button:disabled {
 .opening-link-mini {
     font-size: 0.7rem;
     padding: 1px 6px;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
 }
 
 .opening-link-badge {
