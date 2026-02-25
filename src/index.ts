@@ -1,4 +1,4 @@
-import express from "express";
+import express, { ErrorRequestHandler } from "express";
 import path from "path";
 import dotenv from "dotenv";
 dotenv.config();
@@ -9,7 +9,7 @@ const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
 
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
 
 app.use((_req, res, next) => {
     res.setHeader("Content-Security-Policy", [
@@ -49,6 +49,15 @@ app.use("/api", apiRouter);
 app.get("/", async (req, res) => {
     res.sendFile(path.resolve("src/public/pages/report/index.html"));
 });
+
+const jsonErrorHandler: ErrorRequestHandler = (err, _req, res, next) => {
+    if (err instanceof SyntaxError && "body" in err) {
+        return res.status(400).json({ message: "Invalid JSON body." });
+    }
+    return next(err);
+};
+
+app.use(jsonErrorHandler);
 
 const port = Number(process.env.PORT) || 3000;
 

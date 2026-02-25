@@ -4,6 +4,17 @@ import pgnParser from "pgn-parser";
 
 import analyse from "./lib/analysis";
 import { parseStructuredAIResponse } from "./lib/aiActions";
+import { getDatabaseMeta, mergeScopedData, readScopedData } from "./lib/databaseStore";
+import {
+    buildExplorerCacheKey,
+    getFreshTimedCacheValue,
+    parseExplorerMoves,
+    sanitizeExplorerFen,
+    sanitizeExplorerRatings,
+    sanitizeExplorerSpeeds,
+    setTimedCacheValue,
+    TimedCacheEntry
+} from "./lib/openingExplorer";
 import { Position } from "./lib/types/Position";
 import { AIChatRequestBody, ParseRequestBody, ReportRequestBody } from "./lib/types/RequestBody";
 import openings from "./resources/openings.json";
@@ -27,21 +38,25 @@ interface OpeningCatalogEntry {
     fen?: string;
 }
 
-interface ExplorerCacheEntry {
-    at: number;
-    payload: unknown;
+interface ProfileStoreSyncBody {
+    progress?: unknown;
+    lessons?: unknown;
+    profile?: unknown;
 }
 
 const OPENING_EXPLORER_ENDPOINT = "https://explorer.lichess.ovh/lichess";
 const EXPLORER_CACHE_TTL_MS = 1000 * 60 * 30;
-const explorerCache = new Map<string, ExplorerCacheEntry>();
+const EXPLORER_CACHE_MAX_ENTRIES = 500;
+const OPENING_EXPLORER_TIMEOUT_MS = 9000;
+const MAX_PGN_LENGTH = 120_000;
+const explorerCache = new Map<string, TimedCacheEntry<unknown>>();
 const AI_PROVIDER_TIMEOUT_MS = 9000;
 const AI_RATE_WINDOW_MS = 10000;
 const AI_RATE_MAX_REQUESTS = 1;
 const aiRateLimiter = new Map<string, number[]>();
 
 // Prune stale rate-limiter entries every 60 seconds
-setInterval(() => {
+const aiLimiterPruneTimer = setInterval(() => {
     const now = Date.now();
     for (const [clientId, timestamps] of aiRateLimiter) {
         const active = timestamps.filter((t) => now - t < AI_RATE_WINDOW_MS);
@@ -52,6 +67,7 @@ setInterval(() => {
         }
     }
 }, 60_000);
+aiLimiterPruneTimer.unref?.();
 
 function isNonEmptyString(value: unknown): value is string {
     return typeof value == "string" && value.trim().length > 0;
@@ -166,6 +182,50 @@ async function requestGroqChatCompletion(systemPrompt: string, question: string)
     return content.trim();
 }
 
+router.get("/profile-store", (_req, res) => {
+    try {
+        const data = readScopedData();
+        return res.json({
+            namespace: getDatabaseMeta().namespace,
+            data
+        });
+    } catch (err) {
+        console.error("Profile store read failed:", err);
+        return res.status(500).json({ message: "Failed to read profile store." });
+    }
+});
+
+router.post("/profile-store/sync", (req, res) => {
+    const payload: ProfileStoreSyncBody = req.body || {};
+    const patch: Record<string, unknown> = {};
+
+    if (payload.progress && typeof payload.progress === "object" && !Array.isArray(payload.progress)) {
+        patch.progress = payload.progress;
+    }
+    if (payload.lessons && typeof payload.lessons === "object" && !Array.isArray(payload.lessons)) {
+        patch.lessons = payload.lessons;
+    }
+    if (payload.profile && typeof payload.profile === "object" && !Array.isArray(payload.profile)) {
+        patch.profile = payload.profile;
+    }
+
+    if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ message: "Invalid sync payload." });
+    }
+
+    try {
+        const data = mergeScopedData(patch);
+        return res.json({
+            ok: true,
+            namespace: getDatabaseMeta().namespace,
+            data
+        });
+    } catch (err) {
+        console.error("Profile store sync failed:", err);
+        return res.status(500).json({ message: "Failed to sync profile store." });
+    }
+});
+
 router.post("/parse", async (req, res) => {
 
     let { pgn }: ParseRequestBody = req.body || {};
@@ -175,6 +235,9 @@ router.post("/parse", async (req, res) => {
     }
 
     pgn = pgn.trim();
+    if (pgn.length > MAX_PGN_LENGTH) {
+        return res.status(413).json({ message: "PGN too large." });
+    }
 
     // Accept PGNs that do not explicitly include a result marker.
     if (!/(1-0|0-1|1\/2-1\/2|\*)\s*$/.test(pgn)) {
@@ -266,43 +329,54 @@ router.get("/openings", async (_req, res) => {
 });
 
 router.get("/opening-explorer", async (req, res) => {
-    const fen = isNonEmptyString(req.query.fen) ? req.query.fen.trim() : "startpos";
-    const moves = isNonEmptyString(req.query.moves) ? req.query.moves.trim() : "16";
-    const speeds = isNonEmptyString(req.query.speeds) ? req.query.speeds.trim() : "rapid,blitz,classical";
-    const ratings = isNonEmptyString(req.query.ratings) ? req.query.ratings.trim() : "1600,1800,2000";
-
-    if (fen.length > 200) {
-        return res.status(400).json({ message: "FEN too long." });
+    const fen = sanitizeExplorerFen(req.query.fen);
+    if (!fen) {
+        return res.status(400).json({ message: "Invalid FEN." });
     }
 
-    const movesNum = parseInt(moves, 10);
-    if (!Number.isFinite(movesNum) || movesNum < 1 || movesNum > 24) {
+    const movesNum = parseExplorerMoves(req.query.moves);
+    if (movesNum == null) {
         return res.status(400).json({ message: "Invalid moves parameter." });
     }
 
-    const cacheKey = `${fen}|${moves}|${speeds}|${ratings}`;
-    const cached = explorerCache.get(cacheKey);
-    if (cached && Date.now() - cached.at <= EXPLORER_CACHE_TTL_MS) {
-        return res.json(cached.payload);
+    const speeds = sanitizeExplorerSpeeds(req.query.speeds);
+    if (!speeds) {
+        return res.status(400).json({ message: "Invalid speeds parameter." });
+    }
+
+    const ratings = sanitizeExplorerRatings(req.query.ratings);
+    if (!ratings) {
+        return res.status(400).json({ message: "Invalid ratings parameter." });
+    }
+
+    const cacheKey = buildExplorerCacheKey(fen, movesNum, speeds, ratings);
+    const cached = getFreshTimedCacheValue(explorerCache, cacheKey, EXPLORER_CACHE_TTL_MS);
+    if (cached) {
+        return res.json(cached);
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 9000);
+    const timeout = setTimeout(() => controller.abort(), OPENING_EXPLORER_TIMEOUT_MS);
 
     try {
         const query = new URLSearchParams({
             variant: "standard",
             fen,
-            moves,
-            speeds,
-            ratings
+            moves: String(movesNum),
+            speeds: speeds.join(","),
+            ratings: ratings.join(",")
         });
 
         const response = await fetch(`${OPENING_EXPLORER_ENDPOINT}?${query.toString()}`, {
             signal: controller.signal
         });
 
-        const payload = await response.json();
+        const rawPayload = await response.text();
+        let payload: Record<string, unknown> = {};
+        try {
+            payload = JSON.parse(rawPayload) as Record<string, unknown>;
+        } catch {}
+
         if (!response.ok) {
             return res.status(502).json({
                 message: payload?.error || `Opening explorer provider error (${response.status}).`
@@ -328,23 +402,17 @@ router.get("/opening-explorer", async (req, res) => {
                 : []
         };
 
-        // Prune expired entries if cache grows too large
-        if (explorerCache.size > 500) {
-            const now = Date.now();
-            for (const [key, entry] of explorerCache) {
-                if (now - entry.at > EXPLORER_CACHE_TTL_MS) {
-                    explorerCache.delete(key);
-                }
-            }
-        }
-
-        explorerCache.set(cacheKey, {
-            at: Date.now(),
-            payload: safePayload
+        setTimedCacheValue(explorerCache, cacheKey, safePayload, {
+            ttlMs: EXPLORER_CACHE_TTL_MS,
+            maxEntries: EXPLORER_CACHE_MAX_ENTRIES
         });
 
         return res.json(safePayload);
     } catch (err) {
+        if (err instanceof Error && err.name == "AbortError") {
+            return res.status(502).json({ message: `Opening explorer timeout (${OPENING_EXPLORER_TIMEOUT_MS}ms).` });
+        }
+
         const message = err instanceof Error ? err.message : "Opening explorer request failed.";
         return res.status(502).json({ message });
     } finally {

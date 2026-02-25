@@ -122,9 +122,12 @@ const el = {
     playStartBtn: document.querySelector("#play-start-btn"),
     playHintBtn: document.querySelector("#play-hint-btn"),
     playUndoBtn: document.querySelector("#play-undo-btn"),
+    playCancelPremoveBtn: document.querySelector("#play-cancel-premove-btn"),
     playFlipBtn: document.querySelector("#play-flip-btn"),
     playBackBtn: document.querySelector("#play-back-btn"),
     playNewGameBtn: document.querySelector("#play-new-game-btn"),
+    playAccuracyScore: document.querySelector("#play-accuracy-score"),
+    playPremoveState: document.querySelector("#play-premove-state"),
 
     playSetupPanel: document.querySelector("#play-setup-panel"),
     playGamePanel: document.querySelector("#play-game-panel"),
@@ -178,6 +181,10 @@ const el = {
     setBoardTheme: document.querySelector("#set-board-theme"),
     setPieceTheme: document.querySelector("#set-piece-theme"),
     setSound: document.querySelector("#set-sound"),
+    setErrorSound: document.querySelector("#set-error-sound"),
+    setUiTheme: document.querySelector("#set-ui-theme"),
+    setPieceAnim: document.querySelector("#set-piece-anim"),
+    setPremove: document.querySelector("#set-premove"),
     setAutoPromo: document.querySelector("#set-autopromo"),
     setTimeControl: document.querySelector("#set-time-control"),
     setGameType: document.querySelector("#set-game-type"),
@@ -194,6 +201,7 @@ const el = {
     analysisRunBtn: document.querySelector("#analysis-run-btn"),
     analysisProgress: document.querySelector("#analysis-progress"),
     analysisStatus: document.querySelector("#analysis-status"),
+    analysisOverallAccuracy: document.querySelector("#analysis-overall-accuracy"),
     analysisWhiteAccuracy: document.querySelector("#analysis-white-accuracy"),
     analysisBlackAccuracy: document.querySelector("#analysis-black-accuracy"),
     analysisOpening: document.querySelector("#analysis-opening"),
@@ -205,6 +213,15 @@ const el = {
     analysisPrevBtn: document.querySelector("#analysis-prev-btn"),
     analysisNextBtn: document.querySelector("#analysis-next-btn"),
     analysisEndBtn: document.querySelector("#analysis-end-btn"),
+    analysisRetryBtn: document.querySelector("#analysis-retry-btn"),
+    analysisEvalGraph: document.querySelector("#analysis-eval-graph"),
+    analysisGraphLegend: document.querySelector("#analysis-graph-legend"),
+    analysisMoveExplanation: document.querySelector("#analysis-move-explanation"),
+    analysisExplainAiBtn: document.querySelector("#analysis-explain-ai-btn"),
+    analysisRetryStatus: document.querySelector("#analysis-retry-status"),
+    analysisRetryBoard: document.querySelector("#analysis-retry-board"),
+    analysisRetryStartBtn: document.querySelector("#analysis-retry-start-btn"),
+    analysisRetrySolutionBtn: document.querySelector("#analysis-retry-solution-btn"),
     progressStudyStreak: document.querySelector("#progress-study-streak"),
     progressGamesCount: document.querySelector("#progress-games-count"),
     progressWeeklyChart: document.querySelector("#progress-weekly-chart"),
@@ -240,6 +257,23 @@ const el = {
     ecoDetailPlan: document.querySelector("#eco-detail-plan"),
     ecoLoadPlayBtn: document.querySelector("#eco-load-play-btn"),
     aiActionAudit: document.querySelector("#ai-action-audit"),
+    lessonCards: Array.from(document.querySelectorAll(".lesson-course-card")),
+    lessonTitle: document.querySelector("#lesson-title"),
+    lessonDescription: document.querySelector("#lesson-description"),
+    lessonSteps: document.querySelector("#lesson-steps"),
+    lessonPracticeBoard: document.querySelector("#lesson-practice-board"),
+    lessonPrompt: document.querySelector("#lesson-prompt"),
+    lessonOptions: document.querySelector("#lesson-options"),
+    lessonFeedback: document.querySelector("#lesson-feedback"),
+    profileGamesTotal: document.querySelector("#profile-games-total"),
+    profileWinrate: document.querySelector("#profile-winrate"),
+    profileAvgAccuracy: document.querySelector("#profile-avg-accuracy"),
+    profileEstimatedElo: document.querySelector("#profile-estimated-elo"),
+    profileEloGraph: document.querySelector("#profile-elo-graph"),
+    profileEloMeta: document.querySelector("#profile-elo-meta"),
+    profileTopOpenings: document.querySelector("#profile-top-openings"),
+    profileHistoryBody: document.querySelector("#profile-history-body"),
+    profileRefreshBtn: document.querySelector("#profile-refresh-btn"),
 
     fxMove: document.querySelector("#fx-move"),
     fxCapture: document.querySelector("#fx-capture"),
@@ -259,6 +293,17 @@ function sideFromTurn(turn) {
 
 function turnFromSide(side) {
     return side === "white" ? "w" : "b";
+}
+
+function pieceSymbolFromMove(move) {
+    if (!move || !move.piece || !move.color) {
+        return null;
+    }
+    const base = String(move.piece).toLowerCase();
+    if (!/^[pnbrqk]$/.test(base)) {
+        return null;
+    }
+    return move.color === "w" ? base.toUpperCase() : base;
 }
 
 function nowMs() {
@@ -307,6 +352,36 @@ function formatMemoryBytes(bytes) {
         return `${kb.toFixed(0)} KB`;
     }
     return `${(kb / 1024).toFixed(2)} MB`;
+}
+
+function resolveUiTheme(theme) {
+    const requested = String(theme || "dark").toLowerCase();
+    if (requested === "light" || requested === "dark") {
+        return requested;
+    }
+
+    if (typeof window !== "undefined" && window.matchMedia) {
+        return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    }
+
+    return "dark";
+}
+
+function applyUiTheme(theme, persist = true) {
+    const requested = String(theme || "dark").toLowerCase();
+    const resolved = resolveUiTheme(requested);
+    document.body.dataset.uiTheme = resolved;
+    document.documentElement.style.colorScheme = resolved;
+
+    const themeColor = resolved === "light" ? "#f3f4f7" : "#0f1117";
+    const themeMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeMeta) {
+        themeMeta.setAttribute("content", themeColor);
+    }
+
+    if (persist && uiModule && uiModule.savePreference) {
+        uiModule.savePreference("ui_theme", requested);
+    }
 }
 
 function formatEval(evaluation) {
@@ -609,9 +684,85 @@ class BoardView {
         });
     }
 
+    animateMove(move, options = {}) {
+        if (!move || !move.from || !move.to) {
+            return;
+        }
+
+        const fromEl = this.squareMap.get(move.from);
+        const toEl = this.squareMap.get(move.to);
+        if (!fromEl || !toEl) {
+            return;
+        }
+
+        const destinationImg = toEl.querySelector("img");
+        if (!destinationImg) {
+            return;
+        }
+
+        const pieceSymbol = options.pieceSymbol || pieceSymbolFromMove(move) || destinationImg.alt;
+        const pieceSrc = PIECE_IMAGE[pieceSymbol];
+        if (!pieceSrc) {
+            return;
+        }
+
+        const fromRect = fromEl.getBoundingClientRect();
+        const toRect = toEl.getBoundingClientRect();
+        if (!fromRect.width || !toRect.width) {
+            return;
+        }
+
+        const ghost = document.createElement("img");
+        ghost.className = "piece-glide-ghost";
+        ghost.src = pieceSrc;
+        ghost.alt = "";
+        ghost.style.width = `${toRect.width * 0.88}px`;
+        ghost.style.height = `${toRect.height * 0.88}px`;
+        ghost.style.left = `${fromRect.left + (fromRect.width * 0.06)}px`;
+        ghost.style.top = `${fromRect.top + (fromRect.height * 0.06)}px`;
+        ghost.style.opacity = "0.96";
+
+        document.body.appendChild(ghost);
+        destinationImg.style.opacity = "0";
+
+        const dx = toRect.left - fromRect.left;
+        const dy = toRect.top - fromRect.top;
+        const duration = Number.isFinite(options.durationMs) ? options.durationMs : 210;
+
+        const cleanup = () => {
+            if (ghost.parentNode) {
+                ghost.parentNode.removeChild(ghost);
+            }
+            destinationImg.style.opacity = "";
+        };
+
+        if (ghost.animate) {
+            const animation = ghost.animate(
+                [
+                    { transform: "translate(0px, 0px) scale(1)", opacity: 0.96 },
+                    { transform: `translate(${dx}px, ${dy}px) scale(1)`, opacity: 0.86 }
+                ],
+                {
+                    duration,
+                    easing: "cubic-bezier(0.22, 1, 0.36, 1)"
+                }
+            );
+            animation.onfinish = cleanup;
+            animation.oncancel = cleanup;
+            return;
+        }
+
+        ghost.style.transition = `transform ${duration}ms cubic-bezier(0.22,1,0.36,1), opacity ${duration}ms ease`;
+        requestAnimationFrame(() => {
+            ghost.style.transform = `translate(${dx}px, ${dy}px)`;
+            ghost.style.opacity = "0.86";
+        });
+        window.setTimeout(cleanup, duration + 30);
+    }
+
     clearHighlights() {
         this.squareMap.forEach((squareEl) => {
-            squareEl.classList.remove("selected", "legal", "legal-capture", "last-from", "last-to", "hint-from", "hint-to", "preview-from", "preview-to");
+            squareEl.classList.remove("selected", "legal", "legal-capture", "last-from", "last-to", "hint-from", "hint-to", "preview-from", "preview-to", "premove-from", "premove-to");
             const dot = squareEl.querySelector(".legal-dot");
             if (dot) {
                 dot.remove();
@@ -652,6 +803,48 @@ function playAudio(audioElement) {
 
     audioElement.currentTime = 0;
     audioElement.play().catch(() => { });
+}
+
+let errorAudioContext = null;
+
+function playErrorSound() {
+    const settings = getPlaySettings();
+    if (!settings.sound || !settings.errorSound) {
+        return;
+    }
+
+    try {
+        if (typeof window === "undefined" || !window.AudioContext) {
+            return;
+        }
+
+        if (!errorAudioContext) {
+            errorAudioContext = new window.AudioContext();
+        }
+
+        const context = errorAudioContext;
+        if (context.state === "suspended") {
+            context.resume().catch(() => {});
+        }
+
+        const now = context.currentTime;
+        const osc = context.createOscillator();
+        const gain = context.createGain();
+
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(250, now);
+        osc.frequency.linearRampToValueAtTime(130, now + 0.09);
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.linearRampToValueAtTime(0.1, now + 0.01);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+
+        osc.connect(gain);
+        gain.connect(context.destination);
+        osc.start(now);
+        osc.stop(now + 0.12);
+    } catch {
+        // ignore audio failures
+    }
 }
 
 function parseInfoLine(message, fen) {
@@ -966,14 +1159,19 @@ const playState = {
     moveOpeningDetails: {},
     previewMove: null,       // {from, to} for visual preview highlight
     pendingConfirmMove: null, // {from, to, san, promotion} awaiting yes/no
+    premove: null, // {from,to,promotion}
     computerTopLines: [],    // latest engine top lines for computer panel
     moveHistory: [],         // persistent move history until new game
     startTime: null,         // track game duration
-    endgameShown: false
+    endgameShown: false,
+    lastAnimatedMoveKey: ""
 };
 
 const progressState = {
-    persistedGameSession: null
+    persistedGameSession: null,
+    remoteHydrated: false,
+    remoteSyncTimer: null,
+    remoteSyncInFlight: false
 };
 
 const perfState = {
@@ -1005,6 +1203,18 @@ const openingExplorerState = {
     collapsedIds: new Set()
 };
 
+const profileState = {
+    games: [],
+    eloTimeline: []
+};
+
+const lessonState = {
+    board: null,
+    selectedLessonId: null,
+    selectedExerciseIndex: 0,
+    progressByLesson: {}
+};
+
 function getPlaySettings() {
     return {
         showLegal: el.setLegal ? el.setLegal.checked : true,
@@ -1012,6 +1222,10 @@ function getPlaySettings() {
         autoCoach: el.setCoachAuto ? el.setCoachAuto.checked : true,
         showCoordinates: el.setCoordinates ? el.setCoordinates.checked : true,
         sound: el.setSound ? el.setSound.checked : true,
+        errorSound: el.setErrorSound ? el.setErrorSound.checked : true,
+        uiTheme: el.setUiTheme ? el.setUiTheme.value : "dark",
+        pieceAnimation: el.setPieceAnim ? el.setPieceAnim.checked : true,
+        premoveEnabled: el.setPremove ? el.setPremove.checked : true,
         autoPromotion: el.setAutoPromo ? el.setAutoPromo.checked : true,
         showEvalBar: el.setEvalBar ? el.setEvalBar.checked : true,
         hintsEnabled: el.setHints ? el.setHints.checked : true,
@@ -1849,6 +2063,24 @@ function renderPlayMoves() {
     el.playMoveList.scrollTop = el.playMoveList.scrollHeight;
 }
 
+function renderPlayLiveMetrics() {
+    if (el.playAccuracyScore) {
+        const accuracy = analysisModule && analysisModule.computePlayerAccuracy
+            ? analysisModule.computePlayerAccuracy(playState.moveClassifications, playState.playerColor)
+            : 0;
+        const hasMoves = playState.game.history().length > 0;
+        el.playAccuracyScore.textContent = hasMoves ? `${accuracy.toFixed(1)}%` : "--";
+    }
+
+    if (el.playPremoveState) {
+        if (playState.premove && playState.premove.from && playState.premove.to) {
+            el.playPremoveState.textContent = `${playState.premove.from}-${playState.premove.to}`;
+        } else {
+            el.playPremoveState.textContent = "No armado";
+        }
+    }
+}
+
 function renderPlayStatus() {
     if (playState.game.isGameOver()) {
         el.playStatus.textContent = formatGameOver(playState.game);
@@ -1872,6 +2104,15 @@ function renderPlayBoard() {
 
     playState.board.setCoordinatesVisible(settings.showCoordinates);
     playState.board.setFen(playState.game.fen());
+    const moveKey = playState.lastMove
+        ? `${playState.game.history().length}:${playState.lastMove.from}${playState.lastMove.to}${playState.lastMove.san}`
+        : "";
+    if (!moveKey) {
+        playState.lastAnimatedMoveKey = "";
+    } else if (settings.pieceAnimation && moveKey !== playState.lastAnimatedMoveKey) {
+        playState.lastAnimatedMoveKey = moveKey;
+        playState.board.animateMove(playState.lastMove, { durationMs: 220 });
+    }
     playState.board.clearHighlights();
 
     if (settings.showLastMove && playState.lastMove) {
@@ -1890,6 +2131,11 @@ function renderPlayBoard() {
         playState.board.highlightSquares([playState.previewMove.to], "preview-to");
     }
 
+    if (playState.premove) {
+        playState.board.highlightSquares([playState.premove.from], "premove-from");
+        playState.board.highlightSquares([playState.premove.to], "premove-to");
+    }
+
     if (playState.selectedSquare) {
         playState.board.highlightSquares([playState.selectedSquare], "selected");
 
@@ -1905,9 +2151,13 @@ function renderPlayBoard() {
     if (el.playFlipBtn) {
         el.playFlipBtn.disabled = playState.thinking || playState.game.history().length > 0;
     }
+    if (el.playCancelPremoveBtn) {
+        el.playCancelPremoveBtn.disabled = !playState.premove;
+    }
 
     renderPlayMoveList();
     renderPlayStatus();
+    renderPlayLiveMetrics();
     renderComputerPanel();
 }
 
@@ -2034,6 +2284,7 @@ async function confirmSuggestedMove() {
     });
 
     if (!move) {
+        playErrorSound();
         setCoachMessage(coachNotice("error", "No se pudo ejecutar ese movimiento."));
         renderPlayBoard();
         return;
@@ -2044,6 +2295,7 @@ async function confirmSuggestedMove() {
 
     playState.lastMove = move;
     playState.hintMove = null;
+    playState.premove = null;
     playState.computerTopLines = [];
     clearPlaySelection();
     playMoveSound(move);
@@ -2102,6 +2354,75 @@ function currentBotElo() {
     }
 
     return clamp(parseInt(el.botPreset.value, 10), 400, 2800);
+}
+
+function clearPremove(showNotice = false) {
+    if (!playState.premove) {
+        return;
+    }
+
+    playState.premove = null;
+    clearPlaySelection();
+    if (showNotice) {
+        setCoachMessage(coachNotice("info", "Pre-move cancelado."));
+    }
+    renderPlayBoard();
+    scheduleSessionSnapshotSave();
+}
+
+async function tryExecuteQueuedPremove(localSession) {
+    if (localSession !== playState.sessionId) {
+        return false;
+    }
+    if (!playState.premove || playState.game.isGameOver()) {
+        return false;
+    }
+    if (sideFromTurn(playState.game.turn()) !== playState.playerColor) {
+        return false;
+    }
+
+    const queued = playState.premove;
+    playState.premove = null;
+    const fenBeforeMove = playState.game.fen();
+    const move = playState.game.move({
+        from: queued.from,
+        to: queued.to,
+        promotion: queued.promotion || "q"
+    });
+
+    if (!move) {
+        playErrorSound();
+        setCoachMessage(coachNotice("warn", "Tu pre-move ya no era legal y fue cancelado."));
+        renderPlayBoard();
+        scheduleSessionSnapshotSave();
+        return false;
+    }
+
+    const fenAfterMove = playState.game.fen();
+    const moveIndex = playState.game.history().length - 1;
+    const historyAtMove = playState.game.history().slice();
+
+    playState.lastMove = move;
+    playState.hintMove = null;
+    playState.computerTopLines = [];
+    clearPlaySelection();
+    playMoveSound(move);
+    renderPlayBoard();
+    scheduleSessionSnapshotSave();
+    evaluateLastMove(move, fenBeforeMove, fenAfterMove, localSession, moveIndex, historyAtMove);
+
+    if (playState.game.isGameOver()) {
+        setCoachMessage(coachNotice("game", formatGameOver(playState.game)));
+        if (getPlaySettings().sound) playAudio(el.fxEnd);
+        renderPlayStatus();
+        return true;
+    }
+
+    if (getPlaySettings().computerEnabled) {
+        await playBotMove();
+    }
+
+    return true;
 }
 
 async function maybeAutoCoach() {
@@ -2180,6 +2501,10 @@ async function playBotMove() {
         // Evaluate bot's move
         evaluateLastMove(move, fenBeforeMove, fenAfterMove, localSession, moveIndex, historyAtMove);
 
+        const premoveExecuted = await tryExecuteQueuedPremove(localSession);
+        if (premoveExecuted) {
+            return;
+        }
 
         // Update computer lines for player's turn
         updateComputerLines(playState.game.fen(), localSession);
@@ -2286,20 +2611,73 @@ async function requestCoachHint(isAuto = false) {
 }
 
 async function onPlaySquareClick(square) {
-    if (playState.thinking || playState.game.isGameOver()) {
+    if (playState.game.isGameOver()) {
         return;
     }
 
+    const settings = getPlaySettings();
     const currentTurn = sideFromTurn(playState.game.turn());
-    if (currentTurn !== playState.playerColor) {
-        return;
-    }
+    const playerTurn = !playState.thinking && currentTurn === playState.playerColor;
 
     const currentPiece = playState.game.get(square);
     const ownPiece = currentPiece && currentPiece.color === turnFromSide(playState.playerColor);
 
+    if (!playerTurn) {
+        if (!settings.premoveEnabled) {
+            playErrorSound();
+            return;
+        }
+
+        if (!playState.selectedSquare) {
+            if (!ownPiece) {
+                return;
+            }
+
+            playState.selectedSquare = square;
+            playState.legalTargets = playState.game.moves({ square, verbose: true }).map((move) => move.to);
+            renderPlayBoard();
+            return;
+        }
+
+        if (square === playState.selectedSquare) {
+            clearPlaySelection();
+            renderPlayBoard();
+            return;
+        }
+
+        const premoveCandidates = playState.game.moves({ square: playState.selectedSquare, verbose: true });
+        const premove = premoveCandidates.find((move) => move.to === square);
+
+        if (!premove) {
+            if (ownPiece) {
+                playState.selectedSquare = square;
+                playState.legalTargets = playState.game.moves({ square, verbose: true }).map((move) => move.to);
+                renderPlayBoard();
+                return;
+            }
+
+            clearPlaySelection();
+            playErrorSound();
+            renderPlayBoard();
+            return;
+        }
+
+        const autoPromotion = settings.autoPromotion ? "q" : (premove.promotion || "q");
+        playState.premove = {
+            from: premove.from,
+            to: premove.to,
+            promotion: autoPromotion
+        };
+        clearPlaySelection();
+        setCoachMessage(coachNotice("tip", `Pre-move armado: ${premove.san || `${premove.from}-${premove.to}`}.`));
+        renderPlayBoard();
+        scheduleSessionSnapshotSave();
+        return;
+    }
+
     if (!playState.selectedSquare) {
         if (!ownPiece) {
+            playErrorSound();
             return;
         }
 
@@ -2327,6 +2705,7 @@ async function onPlaySquareClick(square) {
         }
 
         clearPlaySelection();
+        playErrorSound();
         renderPlayBoard();
         return;
     }
@@ -2359,6 +2738,7 @@ async function onPlaySquareClick(square) {
 
     playState.lastMove = move;
     playState.hintMove = null;
+    playState.premove = null;
     playState.computerTopLines = [];
     clearPlaySelection();
     playMoveSound(move);
@@ -2383,9 +2763,10 @@ async function onPlaySquareClick(square) {
 }
 
 async function handleBoardDrop(from, to) {
-    if (playState.thinking || playState.game.isGameOver()) return;
+    if (playState.game.isGameOver()) return;
     const currentTurn = sideFromTurn(playState.game.turn());
-    if (currentTurn !== playState.playerColor) return;
+    const playerTurn = !playState.thinking && currentTurn === playState.playerColor;
+    if (!playerTurn && !getPlaySettings().premoveEnabled) return;
 
     const legalMoves = playState.game.moves({ square: from, verbose: true });
     const intendedMove = legalMoves.find((move) => move.to === to);
@@ -2414,10 +2795,12 @@ function goToPlaySetup(message = coachNotice("setup", "Configura una nueva parti
     playState.moveOpeningDetails = {};
     playState.previewMove = null;
     playState.pendingConfirmMove = null;
+    playState.premove = null;
     playState.computerTopLines = [];
     playState.moveHistory = [];
     playState.startTime = null;
     playState.endgameShown = false;
+    playState.lastAnimatedMoveKey = "";
     progressState.persistedGameSession = null;
     clearPlaySelection();
     cancelMoveConfirmation();
@@ -2464,10 +2847,12 @@ function startNewGame() {
     playState.moveOpeningDetails = {};
     playState.previewMove = null;
     playState.pendingConfirmMove = null;
+    playState.premove = null;
     playState.computerTopLines = [];
     playState.moveHistory = [];
     playState.startTime = Date.now();
     playState.endgameShown = false;
+    playState.lastAnimatedMoveKey = "";
     progressState.persistedGameSession = null;
     clearPlaySelection();
     cancelMoveConfirmation();
@@ -2516,11 +2901,13 @@ function undoPlayMove() {
     }
 
     if (!getPlaySettings().takebacksEnabled) {
+        playErrorSound();
         setCoachMessage(coachNotice("warn", "Los retrocesos estan desactivados. Activalos en Ajustes."));
         return;
     }
 
     if (playState.game.history().length === 0) {
+        playErrorSound();
         return;
     }
 
@@ -2532,6 +2919,8 @@ function undoPlayMove() {
 
     playState.lastMove = null;
     playState.hintMove = null;
+    playState.premove = null;
+    playState.lastAnimatedMoveKey = "";
     clearPlaySelection();
     setCoachMessage(coachNotice("ok", "Jugada deshecha. Es tu turno."));
     renderPlayBoard();
@@ -2543,10 +2932,20 @@ function undoPlayMove() {
 
 const analysisState = {
     board: new BoardView(el.analysisBoard, { orientation: "white", interactive: false, showCoordinates: true }),
+    retryBoard: el.analysisRetryBoard
+        ? new BoardView(el.analysisRetryBoard, { orientation: "white", interactive: true, showCoordinates: false })
+        : null,
     report: null,
     currentIndex: 0,
     running: false,
-    runId: 0
+    runId: 0,
+    retryGame: null,
+    retrySelection: null,
+    retryLegalTargets: [],
+    retryExpectedMoveUci: "",
+    retrySourceIndex: 0,
+    retryStartFen: "",
+    retrySolved: false
 };
 
 function setAnalysisStatus(message) {
@@ -2554,6 +2953,9 @@ function setAnalysisStatus(message) {
 }
 
 function resetAnalysisSummary() {
+    if (el.analysisOverallAccuracy) {
+        el.analysisOverallAccuracy.textContent = "--";
+    }
     el.analysisWhiteAccuracy.textContent = "--";
     el.analysisBlackAccuracy.textContent = "--";
     el.analysisOpening.textContent = "--";
@@ -2565,10 +2967,28 @@ function resetAnalysisSummary() {
 
     analysisState.report = null;
     analysisState.currentIndex = 0;
+    analysisState.retryGame = null;
+    analysisState.retrySelection = null;
+    analysisState.retryLegalTargets = [];
+    analysisState.retryExpectedMoveUci = "";
+    analysisState.retrySourceIndex = 0;
+    analysisState.retryStartFen = "";
+    analysisState.retrySolved = false;
 
     analysisState.board.setFen("8/8/8/8/8/8/8/8 w - - 0 1");
     analysisState.board.clearHighlights();
+    if (analysisState.retryBoard) {
+        analysisState.retryBoard.setFen("8/8/8/8/8/8/8/8 w - - 0 1");
+        analysisState.retryBoard.clearHighlights();
+    }
+    if (el.analysisMoveExplanation) {
+        el.analysisMoveExplanation.textContent = "Selecciona una jugada para ver su explicacion.";
+    }
+    if (el.analysisRetryStatus) {
+        el.analysisRetryStatus.textContent = "Carga una jugada marcada como inexactitud/error/blunder para practicar.";
+    }
     updateEvalBar(null);
+    renderAnalysisEvalGraph();
 }
 
 function fillClassificationTable(classifications) {
@@ -2598,6 +3018,420 @@ function fillClassificationTable(classifications) {
         row.append(nameCell, whiteCell, blackCell);
         el.analysisClassificationBody.appendChild(row);
     });
+}
+
+function isAnalysisErrorClassification(classification) {
+    return classification === "inaccuracy" || classification === "mistake" || classification === "blunder";
+}
+
+function getAnalysisTopLine(position) {
+    if (!position || !Array.isArray(position.topLines)) {
+        return null;
+    }
+    return position.topLines.find((line) => line && line.id === 1) || position.topLines[0] || null;
+}
+
+function evaluationCpForAnalysisPosition(position) {
+    const topLine = getAnalysisTopLine(position);
+    if (!topLine || !topLine.evaluation) {
+        return 0;
+    }
+    const cp = evalToCp(topLine.evaluation);
+    return clamp(cp, -1800, 1800);
+}
+
+function computeOverallAccuracyFromReport(report) {
+    if (!report || !report.accuracies) {
+        return 0;
+    }
+    const white = Number(report.accuracies.white || 0);
+    const black = Number(report.accuracies.black || 0);
+    if (!Number.isFinite(white) || !Number.isFinite(black)) {
+        return 0;
+    }
+    return (white + black) / 2;
+}
+
+function renderAnalysisEvalGraph() {
+    const canvas = el.analysisEvalGraph;
+    if (!canvas) {
+        return;
+    }
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+        return;
+    }
+
+    const ratio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const cssWidth = Math.max(180, canvas.clientWidth || 640);
+    const cssHeight = Math.max(120, canvas.clientHeight || 150);
+    canvas.width = Math.round(cssWidth * ratio);
+    canvas.height = Math.round(cssHeight * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+    ctx.fillStyle = "rgba(0,0,0,0.16)";
+    ctx.fillRect(0, 0, cssWidth, cssHeight);
+
+    if (!analysisState.report || !Array.isArray(analysisState.report.positions) || analysisState.report.positions.length < 2) {
+        ctx.fillStyle = "rgba(255,255,255,0.55)";
+        ctx.font = "12px Instrument Sans, sans-serif";
+        ctx.fillText("Sin datos de evaluacion.", 12, cssHeight / 2);
+        return;
+    }
+
+    const positions = analysisState.report.positions;
+    const values = positions.map((position) => evaluationCpForAnalysisPosition(position));
+    const absMax = Math.max(150, ...values.map((v) => Math.abs(v)));
+    const range = Math.min(1800, Math.max(220, absMax));
+    const padX = 12;
+    const padY = 10;
+    const chartWidth = cssWidth - padX * 2;
+    const chartHeight = cssHeight - padY * 2;
+    const centerY = padY + chartHeight / 2;
+
+    const toX = (index) => padX + ((values.length === 1 ? 0 : index / (values.length - 1)) * chartWidth);
+    const toY = (cp) => centerY - (cp / range) * (chartHeight / 2);
+
+    ctx.strokeStyle = "rgba(255,255,255,0.2)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(padX, centerY);
+    ctx.lineTo(padX + chartWidth, centerY);
+    ctx.stroke();
+
+    ctx.beginPath();
+    for (let i = 0; i < values.length; i += 1) {
+        const x = toX(i);
+        const y = toY(values[i]);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = "#96bc4b";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    for (let i = 1; i < positions.length; i += 1) {
+        if (!isAnalysisErrorClassification(positions[i].classification)) continue;
+        const x = toX(i);
+        const y = toY(values[i]);
+        ctx.fillStyle = "rgba(229, 143, 42, 0.9)";
+        ctx.beginPath();
+        ctx.arc(x, y, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    const activeIndex = clamp(analysisState.currentIndex || 0, 0, values.length - 1);
+    const activeX = toX(activeIndex);
+    const activeY = toY(values[activeIndex]);
+    ctx.fillStyle = "#7eb2da";
+    ctx.beginPath();
+    ctx.arc(activeX, activeY, 4.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (el.analysisGraphLegend) {
+        const value = values[activeIndex] / 100;
+        const sign = value >= 0 ? "+" : "-";
+        el.analysisGraphLegend.textContent = `Jugada ${activeIndex} | Eval ${sign}${Math.abs(value).toFixed(2)}`;
+    }
+}
+
+function buildAnalysisMoveExplanation(position, index, positions) {
+    if (!position || index <= 0) {
+        return "Posicion inicial. Todavia no hay jugadas para explicar.";
+    }
+
+    const previous = positions[index - 1];
+    const prevCp = evaluationCpForAnalysisPosition(previous);
+    const currCp = evaluationCpForAnalysisPosition(position);
+    const moverColor = index % 2 === 1 ? "blancas" : "negras";
+    const moverSwing = index % 2 === 1 ? (currCp - prevCp) : (prevCp - currCp);
+    const centi = Math.round(Math.abs(moverSwing));
+    const classKey = position.classification || "";
+    const classLabel = CLASSIFICATION_LABEL[classKey] || "Jugada";
+    const moveSan = position.move && position.move.san ? position.move.san : "--";
+    const moveDesc = sanToSpanish(moveSan);
+
+    let qualityText = "";
+    if (classKey === "brilliant" || classKey === "great" || classKey === "best") {
+        qualityText = `Fue una ${classLabel.toLowerCase()} que mejoro la posicion para ${moverColor}.`;
+    } else if (classKey === "good" || classKey === "excellent" || classKey === "book" || classKey === "forced") {
+        qualityText = `Mantiene una idea solida para ${moverColor}.`;
+    } else if (isAnalysisErrorClassification(classKey)) {
+        qualityText = `Esta jugada cedio aproximadamente ${centi} centipeones para ${moverColor}.`;
+    } else {
+        qualityText = "Movimiento evaluado por el motor.";
+    }
+
+    const evalText = `Eval despues de la jugada: ${formatEval(getAnalysisTopLine(position)?.evaluation || null)}.`;
+    const openingText = position.opening ? ` Se mantiene en ${position.opening}.` : "";
+    return `${moveDesc} (${moveSan}). ${qualityText} ${evalText}${openingText}`.trim();
+}
+
+function renderAnalysisMoveExplanation() {
+    if (!el.analysisMoveExplanation) {
+        return;
+    }
+
+    if (!analysisState.report) {
+        el.analysisMoveExplanation.textContent = "Selecciona una jugada para ver su explicacion.";
+        return;
+    }
+
+    const positions = analysisState.report.positions || [];
+    const index = clamp(analysisState.currentIndex || 0, 0, Math.max(0, positions.length - 1));
+    const position = positions[index];
+    el.analysisMoveExplanation.textContent = buildAnalysisMoveExplanation(position, index, positions);
+}
+
+async function explainCurrentAnalysisMoveWithAI() {
+    if (!analysisState.report || !el.analysisMoveExplanation) {
+        return;
+    }
+
+    const positions = analysisState.report.positions || [];
+    const index = clamp(analysisState.currentIndex || 0, 0, Math.max(0, positions.length - 1));
+    if (index <= 0 || !positions[index] || !positions[index].move) {
+        el.analysisMoveExplanation.textContent = "Selecciona una jugada real para pedir explicacion IA.";
+        return;
+    }
+
+    const position = positions[index];
+    const previous = positions[index - 1] || null;
+    const defaultExplanation = buildAnalysisMoveExplanation(position, index, positions);
+
+    if (el.analysisExplainAiBtn) {
+        el.analysisExplainAiBtn.disabled = true;
+    }
+    el.analysisMoveExplanation.textContent = "Consultando IA...";
+
+    const systemPrompt = "Eres un entrenador de ajedrez. Explica una jugada en espanol de forma corta y humana. Maximo 3 oraciones. Incluye idea estrategica y error/beneficio principal.";
+    const question = [
+        `Jugada: ${position.move.san}`,
+        `Clasificacion: ${position.classification || "sin clasificar"}`,
+        `FEN antes: ${previous ? previous.fen : ""}`,
+        `FEN despues: ${position.fen}`,
+        `Eval antes: ${previous ? formatEval(getAnalysisTopLine(previous)?.evaluation || null) : "--"}`,
+        `Eval despues: ${formatEval(getAnalysisTopLine(position)?.evaluation || null)}`
+    ].join("\n");
+
+    try {
+        const response = await fetch("/api/ai-chat", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                systemPrompt,
+                question
+            })
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload.message || "No fue posible obtener explicacion IA.");
+        }
+
+        const aiText = typeof payload.content === "string" ? payload.content.trim() : "";
+        el.analysisMoveExplanation.textContent = aiText || defaultExplanation;
+    } catch {
+        el.analysisMoveExplanation.textContent = defaultExplanation;
+    } finally {
+        if (el.analysisExplainAiBtn) {
+            el.analysisExplainAiBtn.disabled = false;
+        }
+    }
+}
+
+function renderAnalysisRetryBoard() {
+    if (!analysisState.retryBoard || !analysisState.retryGame) {
+        return;
+    }
+
+    analysisState.retryBoard.setFen(analysisState.retryGame.fen());
+    analysisState.retryBoard.clearHighlights();
+
+    if (analysisState.retrySelection) {
+        analysisState.retryBoard.highlightSquares([analysisState.retrySelection], "selected");
+        if (analysisState.retryLegalTargets.length > 0) {
+            analysisState.retryBoard.highlightLegalMoves(analysisState.retryLegalTargets, analysisState.retryGame.fen());
+        }
+    }
+}
+
+function loadRetryFromAnalysisIndex(index) {
+    if (!analysisState.report || !analysisState.retryBoard) {
+        return;
+    }
+
+    const positions = analysisState.report.positions || [];
+    const targetIndex = clamp(index, 1, positions.length - 1);
+    const target = positions[targetIndex];
+    const previous = positions[targetIndex - 1];
+    if (!target || !previous) {
+        return;
+    }
+    if (!isAnalysisErrorClassification(target.classification)) {
+        if (el.analysisRetryStatus) {
+            el.analysisRetryStatus.textContent = "La jugada actual no es error/inexactitud. Elige otra.";
+        }
+        return;
+    }
+
+    try {
+        analysisState.retryGame = new Chess(previous.fen);
+    } catch {
+        if (el.analysisRetryStatus) {
+            el.analysisRetryStatus.textContent = "No se pudo cargar la posicion para reintento.";
+        }
+        return;
+    }
+
+    analysisState.retrySelection = null;
+    analysisState.retryLegalTargets = [];
+    analysisState.retrySourceIndex = targetIndex;
+    analysisState.retryStartFen = previous.fen;
+    analysisState.retrySolved = false;
+    const expectedUci = getAnalysisTopLine(previous)?.moveUCI || "";
+    analysisState.retryExpectedMoveUci = expectedUci;
+
+    const orientation = analysisState.retryGame.turn() === "w" ? "white" : "black";
+    analysisState.retryBoard.setOrientation(orientation);
+    renderAnalysisRetryBoard();
+
+    const expectedSan = expectedUci ? uciToSanFromFen(previous.fen, expectedUci) : "";
+    if (el.analysisRetryStatus) {
+        el.analysisRetryStatus.textContent = expectedSan
+            ? `Juega la mejor linea para esta posicion (${orientation === "white" ? "blancas" : "negras"}).`
+            : "Juega la mejor linea para esta posicion.";
+    }
+}
+
+function showRetrySolutionLine() {
+    if (!analysisState.retryGame || !analysisState.retryExpectedMoveUci || !analysisState.retryStartFen) {
+        return;
+    }
+
+    try {
+        const solutionGame = new Chess(analysisState.retryStartFen);
+        const parsed = parseUciMove(analysisState.retryExpectedMoveUci);
+        if (!parsed) {
+            return;
+        }
+        const move = solutionGame.move(parsed);
+        if (!move) {
+            return;
+        }
+        analysisState.retryGame = solutionGame;
+        analysisState.retrySelection = null;
+        analysisState.retryLegalTargets = [];
+        analysisState.retrySolved = true;
+        renderAnalysisRetryBoard();
+        if (el.analysisRetryStatus) {
+            el.analysisRetryStatus.textContent = `Linea correcta: ${move.san} (${sanToSpanish(move.san)}).`;
+        }
+    } catch {
+        // ignore
+    }
+}
+
+function canRetryDragFrom(square) {
+    if (!analysisState.retryGame || analysisState.retrySolved) {
+        return false;
+    }
+    const piece = analysisState.retryGame.get(square);
+    return Boolean(piece && piece.color === analysisState.retryGame.turn());
+}
+
+function onRetryBoardSquareClick(square) {
+    if (!analysisState.retryGame || analysisState.retrySolved) {
+        return;
+    }
+
+    const piece = analysisState.retryGame.get(square);
+    const ownPiece = piece && piece.color === analysisState.retryGame.turn();
+
+    if (!analysisState.retrySelection) {
+        if (!ownPiece) {
+            playErrorSound();
+            return;
+        }
+        analysisState.retrySelection = square;
+        analysisState.retryLegalTargets = analysisState.retryGame.moves({ square, verbose: true }).map((move) => move.to);
+        renderAnalysisRetryBoard();
+        return;
+    }
+
+    if (square === analysisState.retrySelection) {
+        analysisState.retrySelection = null;
+        analysisState.retryLegalTargets = [];
+        renderAnalysisRetryBoard();
+        return;
+    }
+
+    const legalMoves = analysisState.retryGame.moves({ square: analysisState.retrySelection, verbose: true });
+    const intendedMove = legalMoves.find((move) => move.to === square);
+
+    if (!intendedMove) {
+        if (ownPiece) {
+            analysisState.retrySelection = square;
+            analysisState.retryLegalTargets = analysisState.retryGame.moves({ square, verbose: true }).map((move) => move.to);
+            renderAnalysisRetryBoard();
+            return;
+        }
+        playErrorSound();
+        analysisState.retrySelection = null;
+        analysisState.retryLegalTargets = [];
+        renderAnalysisRetryBoard();
+        return;
+    }
+
+    const move = analysisState.retryGame.move({
+        from: intendedMove.from,
+        to: intendedMove.to,
+        promotion: intendedMove.promotion || "q"
+    });
+
+    if (!move) {
+        playErrorSound();
+        return;
+    }
+
+    analysisState.retrySelection = null;
+    analysisState.retryLegalTargets = [];
+    analysisState.retrySolved = true;
+    renderAnalysisRetryBoard();
+
+    const playedUci = `${move.from}${move.to}${move.promotion || ""}`;
+    const solved = playedUci === analysisState.retryExpectedMoveUci;
+    if (el.analysisRetryStatus) {
+        if (solved) {
+            el.analysisRetryStatus.textContent = `Correcto: ${move.san}. Recuperaste la mejor linea.`;
+        } else {
+            const expectedSan = analysisState.retryExpectedMoveUci
+                ? uciToSanFromFen(analysisState.retryStartFen || analysisState.retryGame.fen(), analysisState.retryExpectedMoveUci)
+                : "";
+            el.analysisRetryStatus.textContent = expectedSan
+                ? `Tu jugada fue ${move.san}. La mejor era ${expectedSan}.`
+                : `Tu jugada fue ${move.san}. Revisa la linea sugerida.`;
+        }
+    }
+}
+
+function onRetryBoardDrop(from, to) {
+    if (!analysisState.retryGame || analysisState.retrySolved) {
+        return;
+    }
+    const legalMoves = analysisState.retryGame.moves({ square: from, verbose: true });
+    const intendedMove = legalMoves.find((move) => move.to === to);
+    if (!intendedMove) {
+        playErrorSound();
+        return;
+    }
+    analysisState.retrySelection = from;
+    analysisState.retryLegalTargets = legalMoves.map((move) => move.to);
+    onRetryBoardSquareClick(to);
 }
 
 function buildHistoryLineFromPositions(positions, maxIndex) {
@@ -2655,6 +3489,23 @@ function renderAnalysisMoveList() {
             const label = CLASSIFICATION_LABEL[position.classification] || position.classification;
             badge.textContent = symbol ? `${symbol} ${label}` : label;
             item.appendChild(badge);
+
+            if (isAnalysisErrorClassification(position.classification)) {
+                const retryBtn = document.createElement("button");
+                retryBtn.type = "button";
+                retryBtn.className = "ghost-btn";
+                retryBtn.style.width = "auto";
+                retryBtn.style.padding = "3px 8px";
+                retryBtn.style.fontSize = "0.72rem";
+                retryBtn.textContent = "Reintentar";
+                retryBtn.addEventListener("click", (event) => {
+                    event.stopPropagation();
+                    analysisState.currentIndex = i;
+                    renderAnalysisPosition();
+                    loadRetryFromAnalysisIndex(i);
+                });
+                item.appendChild(retryBtn);
+            }
         }
 
         if (position.opening) {
@@ -2762,6 +3613,12 @@ function renderAnalysisPosition() {
 
     renderAnalysisLines(position.topLines || [], position.fen);
     renderAnalysisMoveList();
+    renderAnalysisEvalGraph();
+    renderAnalysisMoveExplanation();
+
+    if (el.analysisRetryBtn) {
+        el.analysisRetryBtn.disabled = !isAnalysisErrorClassification(position.classification);
+    }
 }
 
 async function runAnalysis() {
@@ -2858,6 +3715,9 @@ async function runAnalysis() {
         analysisState.report = reportPayload.results;
         analysisState.currentIndex = 0;
 
+        if (el.analysisOverallAccuracy) {
+            el.analysisOverallAccuracy.textContent = `${computeOverallAccuracyFromReport(analysisState.report).toFixed(1)}%`;
+        }
         el.analysisWhiteAccuracy.textContent = `${analysisState.report.accuracies.white.toFixed(1)}%`;
         el.analysisBlackAccuracy.textContent = `${analysisState.report.accuracies.black.toFixed(1)}%`;
 
@@ -2889,6 +3749,7 @@ async function runAnalysis() {
                 blackAccuracy: analysisState.report.accuracies.black
             });
             renderProgressDashboard(summary);
+            scheduleProfileStoreSync();
         }
 
         setAnalysisStatus("Analisis completado.");
@@ -2905,6 +3766,186 @@ async function runAnalysis() {
 const studyUiState = {
     focusBoard: null
 };
+
+const LESSON_CATALOG = {
+    opening_principles: {
+        title: "Principios de apertura",
+        description: "Objetivo: desarrollar piezas, controlar el centro y enrocar rapido.",
+        steps: [
+            "Saca caballos y alfiles antes de mover muchas veces la dama.",
+            "Controla e4, d4, e5 y d5 con peones y piezas.",
+            "Enroca temprano para proteger al rey y conectar torres."
+        ],
+        exercise: {
+            fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+            prompt: "Elige una jugada sana de apertura para blancas.",
+            options: [
+                { uci: "e2e4", label: "Peon a e4 (e4)" },
+                { uci: "d2d4", label: "Peon a d4 (d4)" },
+                { uci: "a2a4", label: "Peon a4 (a4)" }
+            ],
+            correctUci: ["e2e4", "d2d4"],
+            feedback: "Buena eleccion: peon central y desarrollo natural."
+        }
+    },
+    king_pawn_endgames: {
+        title: "Finales de rey y peon",
+        description: "Objetivo: usar oposicion para empujar un peon pasado.",
+        steps: [
+            "Acerca tu rey antes de empujar sin necesidad.",
+            "Busca la oposicion: obligar al rival a ceder casillas.",
+            "Empuja el peon cuando el rey rival no pueda bloquear."
+        ],
+        exercise: {
+            fen: "8/8/8/8/4k3/8/4P3/4K3 w - - 0 1",
+            prompt: "Juegan blancas: cual es el plan correcto para progresar?",
+            options: [
+                { uci: "e1d2", label: "Rey a d2 (Kd2)" },
+                { uci: "e2e4", label: "Peon a e4 (e4)" },
+                { uci: "e1f2", label: "Rey a f2 (Kf2)" }
+            ],
+            correctUci: ["e1d2", "e1f2"],
+            feedback: "Correcto: primero activas el rey y luego empujas el peon con mejor soporte."
+        }
+    },
+    basic_tactics: {
+        title: "Tacticas esenciales",
+        description: "Objetivo: detectar mates directos y amenazas forzadas.",
+        steps: [
+            "Revisa jaques, capturas y amenazas en cada turno.",
+            "Calcula 2-3 jugadas forzadas antes de decidir.",
+            "Prioriza variantes con seguridad del rey rival comprometida."
+        ],
+        exercise: {
+            fen: "6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1",
+            prompt: "Encuentra el remate directo para blancas.",
+            options: [
+                { uci: "e1e8", label: "Torre a e8 (Re8#)" },
+                { uci: "g2g3", label: "Peon a g3 (g3)" },
+                { uci: "h2h3", label: "Peon a h3 (h3)" }
+            ],
+            correctUci: ["e1e8"],
+            feedback: "Exacto: Re8 es mate inmediato."
+        }
+    }
+};
+
+function getLessonById(lessonId) {
+    const key = String(lessonId || "").trim();
+    return LESSON_CATALOG[key] || null;
+}
+
+function ensureLessonBoard() {
+    if (!el.lessonPracticeBoard) {
+        return null;
+    }
+    if (!lessonState.board) {
+        lessonState.board = new BoardView(el.lessonPracticeBoard, {
+            orientation: "white",
+            interactive: false,
+            showCoordinates: false
+        });
+    }
+    return lessonState.board;
+}
+
+function persistLessonProgress() {
+    writeStored("session.lessonProgress", lessonState.progressByLesson);
+    scheduleProfileStoreSync();
+}
+
+function renderLessonSelection(lessonId) {
+    const lesson = getLessonById(lessonId);
+    if (!lesson) {
+        return;
+    }
+
+    lessonState.selectedLessonId = lessonId;
+    lessonState.selectedExerciseIndex = 0;
+    el.lessonCards.forEach((card) => {
+        card.classList.toggle("is-active", card.dataset.lessonId === lessonId);
+    });
+
+    if (el.lessonTitle) {
+        const progress = lessonState.progressByLesson[lessonId];
+        const suffix = progress && progress.completed ? " (completada)" : "";
+        el.lessonTitle.textContent = `${lesson.title}${suffix}`;
+    }
+    if (el.lessonDescription) {
+        el.lessonDescription.textContent = lesson.description;
+    }
+
+    if (el.lessonSteps) {
+        el.lessonSteps.innerHTML = "";
+        lesson.steps.forEach((step, index) => {
+            const item = document.createElement("div");
+            item.className = "lesson-step";
+            item.textContent = `${index + 1}. ${step}`;
+            el.lessonSteps.appendChild(item);
+        });
+    }
+
+    const board = ensureLessonBoard();
+    if (board) {
+        board.setFen(lesson.exercise.fen);
+        board.setOrientation(lesson.exercise.fen.includes(" b ") ? "black" : "white");
+    }
+
+    if (el.lessonPrompt) {
+        el.lessonPrompt.textContent = lesson.exercise.prompt;
+    }
+
+    if (el.lessonFeedback) {
+        el.lessonFeedback.textContent = "";
+    }
+
+    if (el.lessonOptions) {
+        el.lessonOptions.innerHTML = "";
+        lesson.exercise.options.forEach((option) => {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "ghost-btn";
+            button.textContent = option.label;
+            button.addEventListener("click", () => {
+                const correctList = Array.isArray(lesson.exercise.correctUci)
+                    ? lesson.exercise.correctUci
+                    : [];
+                const solved = correctList.includes(option.uci);
+                if (solved) {
+                    lessonState.progressByLesson[lessonId] = {
+                        completed: true,
+                        at: new Date().toISOString()
+                    };
+                    persistLessonProgress();
+                    registerStudyActivity({ source: "lesson_complete", lessonId });
+                } else {
+                    playErrorSound();
+                    registerStudyActivity({ source: "lesson_attempt", lessonId, solved: false });
+                }
+
+                if (el.lessonFeedback) {
+                    el.lessonFeedback.textContent = solved
+                        ? lesson.exercise.feedback
+                        : "No es la mejor opcion. Revisa el plan y vuelve a intentar.";
+                }
+            });
+            el.lessonOptions.appendChild(button);
+        });
+    }
+}
+
+function bindLessonsUi() {
+    el.lessonCards.forEach((card) => {
+        card.addEventListener("click", () => {
+            const lessonId = card.dataset.lessonId;
+            if (!lessonId) {
+                return;
+            }
+            renderLessonSelection(lessonId);
+            registerStudyActivity({ source: "lesson_open", lessonId });
+        });
+    });
+}
 
 function ensureFullFen(fen) {
     const placement = normalizeFenPlacement(fen);
@@ -3146,6 +4187,326 @@ function getPlayerResultLabel(winnerLabel) {
     return playerWon ? "win" : "loss";
 }
 
+function mergeListByKey(localItems, remoteItems, keyBuilder, maxItems) {
+    const map = new Map();
+
+    const appendAll = (items) => {
+        (Array.isArray(items) ? items : []).forEach((item) => {
+            if (!item || typeof item !== "object") {
+                return;
+            }
+            const key = keyBuilder(item);
+            if (!key) {
+                return;
+            }
+            if (!map.has(key)) {
+                map.set(key, item);
+            }
+        });
+    };
+
+    appendAll(remoteItems);
+    appendAll(localItems);
+
+    const merged = Array.from(map.values())
+        .sort((a, b) => String(a.at || "").localeCompare(String(b.at || "")));
+
+    if (maxItems && merged.length > maxItems) {
+        return merged.slice(merged.length - maxItems);
+    }
+    return merged;
+}
+
+function mergeProgressWithRemote(localProgress, remoteProgress) {
+    const local = localProgress && typeof localProgress === "object" ? localProgress : { games: [], activities: [] };
+    const remote = remoteProgress && typeof remoteProgress === "object" ? remoteProgress : { games: [], activities: [] };
+
+    const mergedGames = mergeListByKey(
+        local.games,
+        remote.games,
+        (item) => `${item.at || ""}|${item.opening || ""}|${item.result || ""}|${item.botElo || ""}|${item.color || ""}|${Number(item.accuracy || 0).toFixed(2)}`,
+        400
+    );
+
+    const mergedActivities = mergeListByKey(
+        local.activities,
+        remote.activities,
+        (item) => `${item.at || ""}|${item.type || ""}|${JSON.stringify(item.payload || null)}`,
+        1200
+    );
+
+    return {
+        games: mergedGames,
+        activities: mergedActivities
+    };
+}
+
+async function hydrateProfileStoreFromDatabase() {
+    if (!analysisModule || !analysisModule.loadProgress || !analysisModule.saveProgress) {
+        return;
+    }
+    if (progressState.remoteHydrated) {
+        return;
+    }
+
+    try {
+        const response = await fetch("/api/profile-store");
+        if (!response.ok) {
+            throw new Error("Remote store unavailable");
+        }
+
+        const payload = await response.json();
+        const remoteData = payload && payload.data && typeof payload.data === "object"
+            ? payload.data
+            : {};
+        const localProgress = analysisModule.loadProgress();
+        const mergedProgress = mergeProgressWithRemote(localProgress, remoteData.progress);
+        analysisModule.saveProgress(mergedProgress);
+
+        const lessonProgress = remoteData.lessons && typeof remoteData.lessons === "object"
+            ? remoteData.lessons.progressByLesson
+            : null;
+        if (lessonProgress && typeof lessonProgress === "object") {
+            lessonState.progressByLesson = { ...lessonState.progressByLesson, ...lessonProgress };
+        }
+
+        progressState.remoteHydrated = true;
+        renderProgressDashboard();
+    } catch {
+        // keep local-only mode when remote DB is unavailable
+    }
+}
+
+async function syncProfileStoreToDatabaseNow() {
+    if (!analysisModule || !analysisModule.loadProgress) {
+        return;
+    }
+    if (progressState.remoteSyncInFlight) {
+        return;
+    }
+
+    progressState.remoteSyncInFlight = true;
+    try {
+        const progress = analysisModule.loadProgress();
+        const response = await fetch("/api/profile-store/sync", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                progress,
+                lessons: {
+                    progressByLesson: lessonState.progressByLesson
+                },
+                profile: {
+                    syncedAt: new Date().toISOString()
+                }
+            })
+        });
+        if (!response.ok) {
+            throw new Error(`Remote profile sync failed (${response.status}).`);
+        }
+    } catch {
+        // ignore sync failures; local data remains authoritative
+    } finally {
+        progressState.remoteSyncInFlight = false;
+    }
+}
+
+function scheduleProfileStoreSync(delayMs = 700) {
+    if (progressState.remoteSyncTimer) {
+        clearTimeout(progressState.remoteSyncTimer);
+    }
+    progressState.remoteSyncTimer = setTimeout(() => {
+        progressState.remoteSyncTimer = null;
+        syncProfileStoreToDatabaseNow();
+    }, delayMs);
+}
+
+function computeEloTimeline(games, initialRating = 1200) {
+    const timeline = [];
+    let rating = initialRating;
+
+    (Array.isArray(games) ? games : []).forEach((game, index) => {
+        const result = String(game && game.result ? game.result : "manual");
+        const botElo = Number(game && game.botElo);
+        if (!(result === "win" || result === "loss" || result === "draw") || !Number.isFinite(botElo)) {
+            timeline.push({
+                index,
+                at: game && game.at ? game.at : null,
+                rating
+            });
+            return;
+        }
+
+        const score = result === "win" ? 1 : (result === "draw" ? 0.5 : 0);
+        const expected = 1 / (1 + Math.pow(10, (botElo - rating) / 400));
+        const k = 24;
+        rating += k * (score - expected);
+        rating = clamp(rating, 400, 3200);
+
+        timeline.push({
+            index,
+            at: game && game.at ? game.at : null,
+            rating
+        });
+    });
+
+    return timeline;
+}
+
+function drawProfileEloGraph(timeline) {
+    const canvas = el.profileEloGraph;
+    if (!canvas) {
+        return;
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+        return;
+    }
+
+    const ratio = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    const cssWidth = Math.max(220, canvas.clientWidth || 720);
+    const cssHeight = Math.max(120, canvas.clientHeight || 180);
+    canvas.width = Math.round(cssWidth * ratio);
+    canvas.height = Math.round(cssHeight * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+    ctx.fillStyle = "rgba(0,0,0,0.14)";
+    ctx.fillRect(0, 0, cssWidth, cssHeight);
+
+    if (!Array.isArray(timeline) || timeline.length < 2) {
+        ctx.fillStyle = "rgba(255,255,255,0.62)";
+        ctx.font = "12px Instrument Sans, sans-serif";
+        ctx.fillText("Necesitas mas partidas para ver tendencia.", 14, cssHeight / 2);
+        return;
+    }
+
+    const ratings = timeline.map((point) => Number(point.rating || 1200));
+    const minRating = Math.min(...ratings);
+    const maxRating = Math.max(...ratings);
+    const span = Math.max(120, maxRating - minRating);
+    const padX = 12;
+    const padY = 12;
+    const chartWidth = cssWidth - padX * 2;
+    const chartHeight = cssHeight - padY * 2;
+
+    const toX = (index) => padX + (index / (timeline.length - 1)) * chartWidth;
+    const toY = (rating) => padY + ((maxRating - rating) / span) * chartHeight;
+
+    ctx.beginPath();
+    for (let i = 0; i < timeline.length; i += 1) {
+        const x = toX(i);
+        const y = toY(ratings[i]);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = "#7eb2da";
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+
+    const lastX = toX(timeline.length - 1);
+    const lastY = toY(ratings[ratings.length - 1]);
+    ctx.fillStyle = "#96bc4b";
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 4.2, 0, Math.PI * 2);
+    ctx.fill();
+}
+
+function renderProfileDashboard() {
+    if (!analysisModule || !analysisModule.loadProgress) {
+        return;
+    }
+
+    const progress = analysisModule.loadProgress();
+    const games = Array.isArray(progress.games) ? progress.games.slice() : [];
+    profileState.games = games;
+    profileState.eloTimeline = computeEloTimeline(games, 1200);
+
+    const completedGames = games.filter((game) => {
+        const result = String(game && game.result ? game.result : "manual");
+        return result === "win" || result === "loss" || result === "draw";
+    });
+    const wins = completedGames.filter((game) => game.result === "win").length;
+    const avgAccuracy = games.length > 0
+        ? games.reduce((acc, game) => acc + Number(game.accuracy || 0), 0) / games.length
+        : 0;
+    const winrate = completedGames.length > 0 ? (wins / completedGames.length) * 100 : 0;
+    const currentElo = profileState.eloTimeline.length > 0
+        ? profileState.eloTimeline[profileState.eloTimeline.length - 1].rating
+        : 1200;
+
+    if (el.profileGamesTotal) el.profileGamesTotal.textContent = String(games.length);
+    if (el.profileWinrate) el.profileWinrate.textContent = `${winrate.toFixed(1)}%`;
+    if (el.profileAvgAccuracy) el.profileAvgAccuracy.textContent = `${avgAccuracy.toFixed(1)}%`;
+    if (el.profileEstimatedElo) el.profileEstimatedElo.textContent = String(Math.round(currentElo));
+
+    drawProfileEloGraph(profileState.eloTimeline);
+    if (el.profileEloMeta) {
+        const startElo = profileState.eloTimeline.length > 0 ? profileState.eloTimeline[0].rating : 1200;
+        const delta = currentElo - startElo;
+        const sign = delta >= 0 ? "+" : "-";
+        el.profileEloMeta.textContent = `Tendencia: ${sign}${Math.abs(delta).toFixed(1)} desde tus primeras partidas guardadas.`;
+    }
+
+    if (el.profileTopOpenings) {
+        el.profileTopOpenings.innerHTML = "";
+        const openingMap = new Map();
+        games.forEach((game) => {
+            const opening = String(game && game.opening ? game.opening : "Sin apertura detectada");
+            openingMap.set(opening, (openingMap.get(opening) || 0) + 1);
+        });
+
+        const top = Array.from(openingMap.entries())
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 7);
+        if (top.length === 0) {
+            const li = document.createElement("li");
+            li.textContent = "Aun no hay partidas guardadas.";
+            el.profileTopOpenings.appendChild(li);
+        } else {
+            top.forEach(([name, count]) => {
+                const li = document.createElement("li");
+                li.textContent = `${name} (${count})`;
+                el.profileTopOpenings.appendChild(li);
+            });
+        }
+    }
+
+    if (el.profileHistoryBody) {
+        el.profileHistoryBody.innerHTML = "";
+        const timelineByIndex = new Map(profileState.eloTimeline.map((point) => [point.index, point.rating]));
+        games
+            .slice()
+            .reverse()
+            .forEach((game, reverseIndex) => {
+                const originalIndex = games.length - 1 - reverseIndex;
+                const row = document.createElement("tr");
+                const at = game && game.at ? new Date(game.at) : null;
+                const dateText = at && Number.isFinite(at.getTime()) ? at.toLocaleDateString("es-ES") : "--";
+                const botElo = Number.isFinite(Number(game && game.botElo)) ? String(game.botElo) : "--";
+                const color = game && game.color ? String(game.color) : "--";
+                const result = game && game.result ? String(game.result) : "--";
+                const accuracy = Number.isFinite(Number(game && game.accuracy))
+                    ? `${Number(game.accuracy).toFixed(1)}%`
+                    : "--";
+                const opening = game && game.opening ? String(game.opening) : "Sin apertura detectada";
+                const rating = timelineByIndex.has(originalIndex)
+                    ? Math.round(Number(timelineByIndex.get(originalIndex)))
+                    : "--";
+
+                [dateText, botElo, color, result, accuracy, opening, String(rating)].forEach((value) => {
+                    const td = document.createElement("td");
+                    td.textContent = value;
+                    row.appendChild(td);
+                });
+
+                el.profileHistoryBody.appendChild(row);
+            });
+    }
+}
+
 function renderProgressDashboard(summary = null) {
     if (!analysisModule || !analysisModule.summarize) {
         return;
@@ -3223,6 +4584,8 @@ function renderProgressDashboard(summary = null) {
             el.progressCommonErrors.appendChild(li);
         });
     }
+
+    renderProfileDashboard();
 }
 
 function persistFinishedGame(openingName, winnerLabel) {
@@ -3241,6 +4604,7 @@ function persistFinishedGame(openingName, winnerLabel) {
         opening: openingName || "Sin apertura detectada",
         result: getPlayerResultLabel(winnerLabel),
         color: playState.playerColor,
+        botElo: playState.botElo,
         accuracy,
         errors: computeErrorBucketsForPlayer()
     });
@@ -3248,6 +4612,7 @@ function persistFinishedGame(openingName, winnerLabel) {
     progressState.persistedGameSession = playState.sessionId;
     renderProgressDashboard(summary);
     scheduleSessionSnapshotSave();
+    scheduleProfileStoreSync();
 }
 
 function registerStudyActivity(payload) {
@@ -3257,6 +4622,7 @@ function registerStudyActivity(payload) {
     const summary = analysisModule.registerActivity("study", payload || null);
     renderProgressDashboard(summary);
     scheduleSessionSnapshotSave();
+    scheduleProfileStoreSync();
 }
 
 async function ensureExplorerNodeChildren(parentNode) {
@@ -3742,8 +5108,9 @@ function bindGlobalShortcuts() {
         },
         a: () => activateMainTab("analysis-section"),
         s: () => activateMainTab("study-section"),
+        p: () => activateMainTab("profile-section"),
         "?": () => {
-            window.alert("Atajos:\\nH pista\\nU deshacer\\nN nueva partida\\nF girar\\nA analisis\\nS estudio");
+            window.alert("Atajos:\\nH pista\\nU deshacer\\nN nueva partida\\nF girar\\nA analisis\\nS estudio\\nP perfil");
         }
     });
 }
@@ -3805,11 +5172,22 @@ function bindTabs() {
 function applySettingsToBoard() {
     const s = getPlaySettings();
     playState.board.setCoordinatesVisible(s.showCoordinates);
+    applyUiTheme(s.uiTheme, true);
     if (playModule && playModule.applyBoardAndPieceTheme) {
         playModule.applyBoardAndPieceTheme(s.boardTheme, s.pieceTheme);
     } else if (uiModule) {
         uiModule.applyBoardTheme(s.boardTheme);
         uiModule.applyPieceTheme(s.pieceTheme);
+    }
+
+    if (!s.premoveEnabled && playState.premove) {
+        clearPremove(false);
+    }
+
+    if (uiModule && uiModule.savePreference) {
+        uiModule.savePreference("error_sound", Boolean(s.errorSound));
+        uiModule.savePreference("piece_animation", Boolean(s.pieceAnimation));
+        uiModule.savePreference("premove_enabled", Boolean(s.premoveEnabled));
     }
 
     /* Eval bar visibility in analysis */
@@ -3886,6 +5264,15 @@ function bindEvents() {
     });
     el.playHintBtn.addEventListener("click", () => requestCoachHint(false));
     el.playUndoBtn.addEventListener("click", undoPlayMove);
+    if (el.playCancelPremoveBtn) {
+        el.playCancelPremoveBtn.addEventListener("click", () => {
+            if (!playState.premove) {
+                playErrorSound();
+                return;
+            }
+            clearPremove(true);
+        });
+    }
 
     el.playFlipBtn.addEventListener("click", async () => {
         if (playState.thinking) {
@@ -3904,6 +5291,7 @@ function bindEvents() {
         }
 
         playState.hintMove = null;
+        playState.premove = null;
         playState.computerTopLines = [];
         clearPlaySelection();
         playState.board.setOrientation(playState.playerColor);
@@ -3974,7 +5362,9 @@ function bindEvents() {
         el.setThreatArrows, el.setSuggestionArrows,
         el.setMoveComments, el.setComputer, el.setTakebacks,
         el.setLegal, el.setLastMove, el.setCoordinates,
-        el.setSound, el.setAutoPromo, el.setBoardTheme, el.setPieceTheme
+        el.setSound, el.setErrorSound, el.setAutoPromo,
+        el.setBoardTheme, el.setPieceTheme, el.setUiTheme,
+        el.setPieceAnim, el.setPremove
     ];
     allSettings.forEach((toggle) => {
         if (toggle) {
@@ -4031,6 +5421,65 @@ function bindEvents() {
         analysisState.currentIndex = analysisState.report.positions.length - 1;
         renderAnalysisPosition();
     });
+
+    if (el.analysisRetryBtn) {
+        el.analysisRetryBtn.addEventListener("click", () => {
+            if (!analysisState.report) return;
+            if (isAnalysisErrorClassification(analysisState.report.positions[analysisState.currentIndex]?.classification)) {
+                loadRetryFromAnalysisIndex(analysisState.currentIndex);
+                return;
+            }
+            const firstErrorIndex = analysisState.report.positions.findIndex((position, index) =>
+                index > 0 && isAnalysisErrorClassification(position.classification)
+            );
+            if (firstErrorIndex > 0) {
+                analysisState.currentIndex = firstErrorIndex;
+                renderAnalysisPosition();
+                loadRetryFromAnalysisIndex(firstErrorIndex);
+            } else if (el.analysisRetryStatus) {
+                el.analysisRetryStatus.textContent = "No se encontraron errores para reintentar en esta partida.";
+            }
+        });
+    }
+
+    if (el.analysisRetryStartBtn) {
+        el.analysisRetryStartBtn.addEventListener("click", () => {
+            if (!analysisState.report) return;
+            loadRetryFromAnalysisIndex(analysisState.currentIndex);
+        });
+    }
+
+    if (el.analysisRetrySolutionBtn) {
+        el.analysisRetrySolutionBtn.addEventListener("click", () => {
+            showRetrySolutionLine();
+        });
+    }
+
+    if (el.analysisExplainAiBtn) {
+        el.analysisExplainAiBtn.addEventListener("click", () => {
+            explainCurrentAnalysisMoveWithAI();
+        });
+    }
+
+    if (el.analysisEvalGraph) {
+        el.analysisEvalGraph.addEventListener("click", (event) => {
+            if (!analysisState.report || !analysisState.report.positions || analysisState.report.positions.length === 0) {
+                return;
+            }
+            const rect = el.analysisEvalGraph.getBoundingClientRect();
+            const relative = clamp(event.clientX - rect.left, 0, rect.width || 1);
+            const ratio = rect.width > 0 ? relative / rect.width : 0;
+            const targetIndex = Math.round(ratio * (analysisState.report.positions.length - 1));
+            analysisState.currentIndex = clamp(targetIndex, 0, analysisState.report.positions.length - 1);
+            renderAnalysisPosition();
+        });
+    }
+
+    if (analysisState.retryBoard) {
+        analysisState.retryBoard.onSquareClick = onRetryBoardSquareClick;
+        analysisState.retryBoard.onDrop = onRetryBoardDrop;
+        analysisState.retryBoard.canDragFrom = canRetryDragFrom;
+    }
 
     // Promotion modal
     el.promoPieces.forEach((btn) => {
@@ -4128,6 +5577,18 @@ function bindEvents() {
         btn.addEventListener("click", () => {
             showStudyLanding();
         });
+    });
+
+    if (el.profileRefreshBtn) {
+        el.profileRefreshBtn.addEventListener("click", async () => {
+            await hydrateProfileStoreFromDatabase();
+            renderProgressDashboard();
+        });
+    }
+
+    window.addEventListener("resize", () => {
+        renderAnalysisEvalGraph();
+        drawProfileEloGraph(profileState.eloTimeline);
     });
 }
 
@@ -4896,6 +6357,8 @@ function restorePlayFromSnapshot(snapshot) {
     playState.game = restoredGame;
     playState.lastMove = null;
     playState.hintMove = null;
+    playState.premove = null;
+    playState.lastAnimatedMoveKey = "";
     clearPlaySelection();
 
     playState.playerColor = play.playerColor === "black" ? "black" : "white";
@@ -4976,12 +6439,33 @@ function bindSessionPersistence() {
     });
 
     window.setInterval(() => {
+        if (typeof document !== "undefined" && document.hidden) {
+            return;
+        }
         scheduleSessionSnapshotSave(0);
     }, 5000);
 
     window.setInterval(() => {
+        if (typeof document !== "undefined" && document.hidden) {
+            return;
+        }
         refreshSessionMemoryMetric();
     }, 12000);
+
+    window.setInterval(() => {
+        if (typeof document !== "undefined" && document.hidden) {
+            return;
+        }
+        scheduleProfileStoreSync(0);
+    }, 25000);
+
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+            scheduleSessionSnapshotSave(0);
+            refreshSessionMemoryMetric();
+            scheduleProfileStoreSync(300);
+        }
+    });
 
     window.addEventListener("beforeunload", persistSessionSnapshotNow);
 }
@@ -5036,6 +6520,7 @@ async function init() {
     }
 
     restoreSessionPrefilters();
+    lessonState.progressByLesson = readStored("session.lessonProgress", {});
 
     if (uiModule && uiModule.applyStoredThemes) {
         uiModule.applyStoredThemes();
@@ -5045,12 +6530,35 @@ async function init() {
         if (el.setPieceTheme && uiModule.loadPreference) {
             el.setPieceTheme.value = uiModule.loadPreference("piece_theme", el.setPieceTheme.value || "default");
         }
+        if (el.setUiTheme && uiModule.loadPreference) {
+            el.setUiTheme.value = uiModule.loadPreference("ui_theme", el.setUiTheme.value || "dark");
+        }
+        if (el.setErrorSound && uiModule.loadPreference) {
+            el.setErrorSound.checked = Boolean(uiModule.loadPreference("error_sound", true));
+        }
+        if (el.setPieceAnim && uiModule.loadPreference) {
+            el.setPieceAnim.checked = Boolean(uiModule.loadPreference("piece_animation", true));
+        }
+        if (el.setPremove && uiModule.loadPreference) {
+            el.setPremove.checked = Boolean(uiModule.loadPreference("premove_enabled", true));
+        }
     }
 
     bindTabs();
     bindEvents();
+    bindLessonsUi();
     bindAiChat();
     loadOpeningCatalog();
+    if (typeof window !== "undefined" && window.matchMedia) {
+        const media = window.matchMedia("(prefers-color-scheme: light)");
+        if (media && media.addEventListener) {
+            media.addEventListener("change", () => {
+                if (el.setUiTheme && el.setUiTheme.value === "auto") {
+                    applyUiTheme("auto", false);
+                }
+            });
+        }
+    }
     renderStudyDiagrams();
     setTodayLabel();
     updatePerformanceMetricsView();
@@ -5068,8 +6576,10 @@ async function init() {
     updatePlayEvalBar({ type: "cp", value: 0 });
     applySettingsToBoard();
     await initOpeningExplorer();
+    await hydrateProfileStoreFromDatabase();
     renderProgressDashboard();
     bindGlobalShortcuts();
+    renderLessonSelection("opening_principles");
 
     if (hasExplicitDeepLink()) {
         applyStudyDeepLinkFromUrl();
@@ -5081,4 +6591,3 @@ async function init() {
 }
 
 void init();
-

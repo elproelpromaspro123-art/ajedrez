@@ -1,6 +1,16 @@
 import { writeFileSync, mkdirSync, existsSync, rmSync } from "fs";
 import analyse from "../lib/analysis";
 import { parseStructuredAIResponse } from "../lib/aiActions";
+import {
+    buildExplorerCacheKey,
+    getFreshTimedCacheValue,
+    parseExplorerMoves,
+    sanitizeExplorerFen,
+    sanitizeExplorerRatings,
+    sanitizeExplorerSpeeds,
+    setTimedCacheValue,
+    TimedCacheEntry
+} from "../lib/openingExplorer";
 import { detectOpeningBestPrefix, detectOpeningFromBook, OpeningBookEntry } from "../lib/openingDetection";
 import { EvaluatedPosition } from "../lib/types/Position";
 import Report from "../lib/types/Report";
@@ -67,7 +77,7 @@ function assert(condition: boolean, message: string) {
 }
 
 function runFrontendLogicUnitTests() {
-    console.log("Running opening detection + AI action parsing unit tests...");
+    console.log("Running opening detection + AI action parsing + explorer sanitization unit tests...");
 
     const book: OpeningBookEntry[] = [
         { name: "Apertura Italiana", moves: ["e4", "e5", "Nf3", "Nc6", "Bc4"] },
@@ -95,7 +105,55 @@ function runFrontendLogicUnitTests() {
     assert(parsed.actions[0].type === "hint", "First action should be hint.");
     assert(parsed.actions[1].type === "study", "Second action should be study.");
 
-    console.log("Opening detection + AI action parsing unit tests passed.");
+    assert(sanitizeExplorerFen(undefined) === "startpos", "Explorer FEN should default to startpos.");
+    assert(sanitizeExplorerFen("invalid-fen") === null, "Invalid FEN must be rejected.");
+    assert(sanitizeExplorerFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1") !== null, "Valid FEN must be accepted.");
+
+    assert(parseExplorerMoves("16") === 16, "Explorer moves should parse valid values.");
+    assert(parseExplorerMoves("0") === null, "Explorer moves should reject out of range values.");
+    assert(parseExplorerMoves(undefined) === 16, "Explorer moves should fallback to default.");
+
+    const safeSpeeds = sanitizeExplorerSpeeds("rapid,blitz,invalid,speed");
+    assert(Array.isArray(safeSpeeds) && safeSpeeds.join(",") === "rapid,blitz", "Explorer speeds should keep only allowlisted values.");
+    const fallbackSpeeds = sanitizeExplorerSpeeds("invalid");
+    assert(Array.isArray(fallbackSpeeds) && fallbackSpeeds.join(",") === "rapid,blitz,classical", "Explorer speeds should fallback when none are valid.");
+
+    const safeRatings = sanitizeExplorerRatings("1600,2000,9000");
+    assert(Array.isArray(safeRatings) && safeRatings.join(",") === "1600,2000", "Explorer ratings should keep only allowlisted values.");
+    const fallbackRatings = sanitizeExplorerRatings("9999");
+    assert(Array.isArray(fallbackRatings) && fallbackRatings.join(",") === "1600,1800,2000", "Explorer ratings should fallback when none are valid.");
+
+    const cache = new Map<string, TimedCacheEntry<{ score: number }>>();
+    const cacheKey = buildExplorerCacheKey(
+        "startpos",
+        16,
+        ["rapid", "blitz"],
+        ["1600", "1800"]
+    );
+    setTimedCacheValue(cache, cacheKey, { score: 1 }, {
+        ttlMs: 1000,
+        maxEntries: 2,
+        now: 10
+    });
+    const fresh = getFreshTimedCacheValue(cache, cacheKey, 1000, 20);
+    assert(Boolean(fresh && fresh.score === 1), "Explorer cache should return fresh values.");
+
+    setTimedCacheValue(cache, "k2", { score: 2 }, {
+        ttlMs: 1000,
+        maxEntries: 2,
+        now: 30
+    });
+    setTimedCacheValue(cache, "k3", { score: 3 }, {
+        ttlMs: 1000,
+        maxEntries: 2,
+        now: 40
+    });
+    assert(!cache.has(cacheKey), "Explorer cache should evict the oldest key when over capacity.");
+
+    const expired = getFreshTimedCacheValue(cache, "k2", 5, 100);
+    assert(expired === null, "Explorer cache should drop expired entries.");
+
+    console.log("Opening detection + AI action parsing + explorer sanitization unit tests passed.");
 }
 
 main();

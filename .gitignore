@@ -6,3 +6,4 @@ src/test/reports
 /.vs
 playwright-report
 test-results
+data/*.json

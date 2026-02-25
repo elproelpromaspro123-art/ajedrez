@@ -39,6 +39,7 @@
         <button class="tab-btn is-active" data-tab-target="play-section" role="tab" aria-selected="true" aria-controls="play-section" id="tab-play">&#9823; Jugar</button>
         <button class="tab-btn" data-tab-target="analysis-section" role="tab" aria-selected="false" aria-controls="analysis-section" id="tab-analysis">&#128269; Analizar</button>
         <button class="tab-btn" data-tab-target="study-section" role="tab" aria-selected="false" aria-controls="study-section" id="tab-study">&#128218; Estudio</button>
+        <button class="tab-btn" data-tab-target="profile-section" role="tab" aria-selected="false" aria-controls="profile-section" id="tab-profile">&#128202; Perfil</button>
     </nav>
 
     <main class="content">
@@ -107,9 +108,20 @@
                             <button id="play-flip-btn" class="ghost-btn" type="button">&#8645; Girar</button>
                             <button id="play-hint-btn" class="ghost-btn" type="button">&#128161; Pista</button>
                             <button id="play-undo-btn" class="ghost-btn" type="button">&#8617; Deshacer</button>
+                            <button id="play-cancel-premove-btn" class="ghost-btn" type="button">&#10006; Pre-move</button>
                         </div>
 
                         <p id="play-status" class="status-line">Partida en curso</p>
+                        <div class="play-live-metrics">
+                            <div class="summary-card compact-summary-card">
+                                <span>Accuracy</span>
+                                <strong id="play-accuracy-score">--</strong>
+                            </div>
+                            <div class="summary-card compact-summary-card">
+                                <span>Pre-move</span>
+                                <strong id="play-premove-state">No armado</strong>
+                            </div>
+                        </div>
                         <div id="play-move-badge" class="move-badge" style="display:none;"></div>
 
                         <!-- Move Confirmation Bar -->
@@ -186,6 +198,10 @@
                     <p id="analysis-status" class="status-line">Esperando PGN.</p>
 
                     <div class="summary-grid">
+                        <div class="summary-card highlight-summary-card">
+                            <span>Accuracy total</span>
+                            <strong id="analysis-overall-accuracy">--</strong>
+                        </div>
                         <div class="summary-card">
                             <span>Precision blancas</span>
                             <strong id="analysis-white-accuracy">--</strong>
@@ -249,6 +265,7 @@
                             <button id="analysis-prev-btn" class="ghost-btn" type="button">&lt;</button>
                             <button id="analysis-next-btn" class="ghost-btn" type="button">&gt;</button>
                             <button id="analysis-end-btn" class="ghost-btn" type="button">&gt;|</button>
+                            <button id="analysis-retry-btn" class="ghost-btn" type="button">Reintentar error</button>
                         </div>
                     </div>
                     <div class="analysis-review-layout">
@@ -264,7 +281,31 @@
                         </div>
                         <div class="analysis-review-side">
                             <p id="analysis-move-meta" class="status-line">No hay analisis cargado.</p>
+                            <div class="analysis-eval-graph-box">
+                                <div class="analysis-eval-graph-head">
+                                    <p class="muted">Grafico de evaluacion</p>
+                                    <span id="analysis-graph-legend" class="muted">Stockfish (blancas)</span>
+                                </div>
+                                <canvas id="analysis-eval-graph" width="640" height="180"
+                                    aria-label="Grafico de evaluacion de la partida"></canvas>
+                            </div>
                             <ol id="analysis-move-list" class="move-list" aria-label="Lista de jugadas analizadas"></ol>
+                            <div class="coach-box">
+                                <h4>Explicacion de jugada</h4>
+                                <p id="analysis-move-explanation" class="status-line">Selecciona una jugada para ver su explicacion.</p>
+                                <button id="analysis-explain-ai-btn" class="ghost-btn" type="button">Explicar con IA</button>
+                            </div>
+                            <div class="coach-box analysis-retry-box">
+                                <h4>Reintentar errores</h4>
+                                <p id="analysis-retry-status" class="status-line">Carga una jugada marcada como inexactitud/error/blunder para practicar.</p>
+                                <div class="board-wrap analysis-retry-board-wrap">
+                                    <div id="analysis-retry-board" class="chessboard" aria-label="Tablero para reintentar jugadas"></div>
+                                </div>
+                                <div class="analysis-retry-actions">
+                                    <button id="analysis-retry-start-btn" class="ghost-btn" type="button">Cargar posicion</button>
+                                    <button id="analysis-retry-solution-btn" class="ghost-btn" type="button">Ver linea correcta</button>
+                                </div>
+                            </div>
                             <div class="coach-box">
                                 <h4>Mejores lineas del motor</h4>
                                 <ul id="analysis-top-lines" class="line-list"></ul>
@@ -309,6 +350,11 @@
                         <span class="study-cat-desc">Rey y pe&oacute;n, oposici&oacute;n, torres y t&eacute;cnicas
                             esenciales</span>
                     </button>
+                    <button class="study-cat-card" data-study-target="study-lessons">
+                        <span class="study-cat-icon">&#127891;</span>
+                        <span class="study-cat-title">Lecciones</span>
+                        <span class="study-cat-desc">Cursos estructurados e interactivos con mini ejercicios</span>
+                    </button>
                 </div>
                 <div class="resource-links study-links">
                     <a href="https://www.fide.com/FIDE/handbook/LawsOfChess.pdf" target="_blank"
@@ -322,6 +368,42 @@
                     <a href="https://lichess.org/practice" target="_blank"
                         rel="noopener noreferrer">&#9823; Pr&aacute;ctica en Lichess</a>
                 </div>
+            </div>
+
+            <!-- INTERACTIVE LESSONS SECTION -->
+            <div id="study-lessons" class="study-detail" style="display:none;">
+                <button class="study-back-btn" data-study-back>&larr; Volver al Centro de Estudio</button>
+                <h2>&#127891; Lecciones Interactivas</h2>
+                <p class="study-intro">Cursos guiados para practicar conceptos clave con decisiones inmediatas y feedback corto.</p>
+
+                <div class="lesson-course-grid">
+                    <button class="lesson-course-card" data-lesson-id="opening_principles">
+                        <strong>Principios de apertura</strong>
+                        <span>Desarrollo, control central y seguridad del rey.</span>
+                    </button>
+                    <button class="lesson-course-card" data-lesson-id="king_pawn_endgames">
+                        <strong>Finales de rey y peon</strong>
+                        <span>Oposicion, triangulacion y peon pasado.</span>
+                    </button>
+                    <button class="lesson-course-card" data-lesson-id="basic_tactics">
+                        <strong>Tacticas esenciales</strong>
+                        <span>Clavadas, horquillas y remates de corto calculo.</span>
+                    </button>
+                </div>
+
+                <article class="card lesson-practice-card">
+                    <h3 id="lesson-title">Selecciona una leccion</h3>
+                    <p id="lesson-description" class="study-note">Elige un curso para cargar pasos y un mini ejercicio.</p>
+                    <div id="lesson-steps" class="lesson-steps"></div>
+                    <div class="lesson-practice-panel">
+                        <div class="board-wrap lesson-board-wrap">
+                            <div id="lesson-practice-board" class="chessboard" aria-label="Tablero de leccion interactiva"></div>
+                        </div>
+                        <p id="lesson-prompt" class="status-line">Aun no hay ejercicio cargado.</p>
+                        <div id="lesson-options" class="lesson-options"></div>
+                        <p id="lesson-feedback" class="status-line"></p>
+                    </div>
+                </article>
             </div>
 
             <!-- OPENINGS SECTION -->
@@ -722,6 +804,66 @@
             </div>
 
         </section>
+
+        <section id="profile-section" class="panel" role="tabpanel" aria-labelledby="tab-profile">
+            <div class="panel-grid profile-grid">
+                <article class="card control-card">
+                    <h3>&#128100; Perfil y estadisticas</h3>
+                    <p class="muted">Datos de partidas contra bots guardados localmente y sincronizados en DATA_BASE.</p>
+
+                    <div class="summary-grid profile-summary-grid">
+                        <div class="summary-card">
+                            <span>Partidas</span>
+                            <strong id="profile-games-total">0</strong>
+                        </div>
+                        <div class="summary-card">
+                            <span>Win rate</span>
+                            <strong id="profile-winrate">0%</strong>
+                        </div>
+                        <div class="summary-card">
+                            <span>Accuracy promedio</span>
+                            <strong id="profile-avg-accuracy">0%</strong>
+                        </div>
+                        <div class="summary-card">
+                            <span>ELO estimado</span>
+                            <strong id="profile-estimated-elo">1200</strong>
+                        </div>
+                    </div>
+
+                    <div class="coach-box">
+                        <h4>Grafico de ELO</h4>
+                        <canvas id="profile-elo-graph" width="720" height="200" aria-label="Grafico de ELO estimado"></canvas>
+                        <p id="profile-elo-meta" class="muted">Sin suficientes partidas para estimar tendencia.</p>
+                    </div>
+
+                    <div class="coach-box">
+                        <h4>Aperturas mas jugadas</h4>
+                        <ul id="profile-top-openings" class="compact-list"></ul>
+                    </div>
+                </article>
+
+                <article class="card board-card">
+                    <div class="card-header">
+                        <h2>Historial de partidas</h2>
+                        <button id="profile-refresh-btn" class="ghost-btn" type="button">Refrescar</button>
+                    </div>
+                    <table class="classification-table profile-history-table">
+                        <thead>
+                            <tr>
+                                <th>Fecha</th>
+                                <th>Bot ELO</th>
+                                <th>Color</th>
+                                <th>Resultado</th>
+                                <th>Accuracy</th>
+                                <th>Apertura</th>
+                                <th>ELO</th>
+                            </tr>
+                        </thead>
+                        <tbody id="profile-history-body"></tbody>
+                    </table>
+                </article>
+            </div>
+        </section>
     </main>
 
     <div id="settings-modal" class="settings-modal" role="dialog" aria-modal="true" aria-label="Ajustes de partida">
@@ -798,6 +940,26 @@
             <div class="settings-row has-border">
                 <label>Sonidos de piezas</label>
                 <input type="checkbox" class="chess-toggle" id="set-sound" checked>
+            </div>
+            <div class="settings-row has-border">
+                <label>Sonido de error</label>
+                <input type="checkbox" class="chess-toggle" id="set-error-sound" checked>
+            </div>
+            <div class="settings-row has-border">
+                <label>Tema de interfaz</label>
+                <select class="chess-select" id="set-ui-theme">
+                    <option value="dark" selected>Oscuro</option>
+                    <option value="light">Claro</option>
+                    <option value="auto">Auto</option>
+                </select>
+            </div>
+            <div class="settings-row has-border">
+                <label>Animacion de piezas</label>
+                <input type="checkbox" class="chess-toggle" id="set-piece-anim" checked>
+            </div>
+            <div class="settings-row has-border">
+                <label>Permitir pre-moves</label>
+                <input type="checkbox" class="chess-toggle" id="set-premove" checked>
             </div>
             <div class="settings-row has-border">
                 <label>Auto promoci&oacute;n a dama</label>
