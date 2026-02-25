@@ -1282,6 +1282,7 @@ function refreshPlayModeUiState() {
     const rankedSelected = getSelectedPlayMode() === PLAY_MODES.RANKED;
     const rankedLive = isRankedActiveGame();
     const lockControls = rankedSelected || rankedLive;
+    const lockColorSelector = rankedSelected || rankedLive;
 
     if (lockControls) {
         enforceRankedSettings();
@@ -1293,9 +1294,16 @@ function refreshPlayModeUiState() {
         }
     });
 
+    if (el.playerColor) {
+        if (rankedSelected) {
+            el.playerColor.value = "random";
+        }
+        el.playerColor.disabled = lockColorSelector;
+    }
+
     if (el.playModeNote) {
         el.playModeNote.textContent = rankedSelected || rankedLive
-            ? "Clasificatoria: sin ayudas (pistas, deshacer, comentarios, eval bar ni jugadas legales). Solo este modo suma perfil."
+            ? "Clasificatoria: color aleatorio (blancas/negras) y sin ayudas. Solo este modo suma perfil."
             : "Clasica: usa tus ajustes libremente. No suma estadisticas del perfil.";
     }
 
@@ -2254,7 +2262,9 @@ function renderPlayBoard() {
         el.playEvalBar.style.display = settings.showEvalBar ? "" : "none";
     }
     if (el.playFlipBtn) {
-        el.playFlipBtn.disabled = playState.thinking || playState.game.history().length > 0;
+        el.playFlipBtn.disabled = playState.thinking
+            || playState.game.history().length > 0
+            || (normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED && Boolean(playState.startTime));
     }
     if (el.playCancelPremoveBtn) {
         el.playCancelPremoveBtn.disabled = !playState.premove;
@@ -2944,15 +2954,20 @@ function startNewGame() {
     playState.sessionId += 1;
     playState.game = new Chess();
     playState.gameMode = getSelectedPlayMode();
+    const rankedMode = normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED;
 
-    if (normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED) {
+    if (rankedMode) {
         enforceRankedSettings();
     }
 
-    const chosenColor = el.playerColor.value === "random"
+    const chosenColor = rankedMode
         ? (Math.random() < 0.5 ? "white" : "black")
-        : el.playerColor.value;
-    if (el.playerColor.value === "random") {
+        : (el.playerColor.value === "random"
+            ? (Math.random() < 0.5 ? "white" : "black")
+            : el.playerColor.value);
+    if (rankedMode && el.playerColor) {
+        el.playerColor.value = "random";
+    } else if (el.playerColor.value === "random") {
         el.playerColor.value = chosenColor;
     }
 
@@ -3000,8 +3015,8 @@ function startNewGame() {
         el.playEvalBar.style.display = getPlaySettings().showEvalBar ? "" : "none";
     }
 
-    const eloMsg = normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED
-        ? `Clasificatoria iniciada contra bot ${playState.botElo} ELO. Sin ayudas: esta partida si cuenta para tu perfil.`
+    const eloMsg = rankedMode
+        ? `Clasificatoria iniciada contra bot ${playState.botElo} ELO. Color asignado al azar: juegas con ${chosenColor === "white" ? "blancas" : "negras"}.`
         : (getPlaySettings().computerEnabled
             ? `Partida clasica iniciada. Bot configurado en ${playState.botElo} ELO (no suma perfil).`
             : "Partida clasica iniciada con motor desactivado (no suma perfil).");
@@ -5451,6 +5466,12 @@ function bindEvents() {
 
     el.playFlipBtn.addEventListener("click", async () => {
         if (playState.thinking) {
+            return;
+        }
+
+        if (normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED && Boolean(playState.startTime)) {
+            playErrorSound();
+            setCoachMessage(coachNotice("warn", "En Clasificatoria el color es aleatorio y no se puede cambiar."));
             return;
         }
 
