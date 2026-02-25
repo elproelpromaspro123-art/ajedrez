@@ -1200,7 +1200,8 @@ const openingExplorerState = {
     detailBoard: null,
     loading: false,
     focusedIndex: 0,
-    collapsedIds: new Set()
+    collapsedIds: new Set(),
+    filterRunId: 0
 };
 
 const profileState = {
@@ -4833,6 +4834,9 @@ async function handleExplorerTreeKeydown(event) {
 }
 
 async function applyExplorerFilters() {
+    openingExplorerState.filterRunId += 1;
+    const currentRunId = openingExplorerState.filterRunId;
+
     const rows = openingExplorerState.rows.filter((row) => row.parentId !== null);
     const rootGames = rows
         .filter((row) => row.depth === 1)
@@ -4854,15 +4858,22 @@ async function applyExplorerFilters() {
         query: el.ecoSearch ? el.ecoSearch.value : ""
     };
 
+    let filteredRows = enrichedRows;
     if (openingsModule && openingsModule.filterTreeRows) {
         try {
-            openingExplorerState.filteredRows = await openingsModule.filterTreeRows(enrichedRows, filters);
+            filteredRows = await openingsModule.filterTreeRows(enrichedRows, filters);
         } catch {
-            openingExplorerState.filteredRows = enrichedRows;
+            filteredRows = enrichedRows;
         }
-    } else {
-        openingExplorerState.filteredRows = enrichedRows;
     }
+
+    if (currentRunId !== openingExplorerState.filterRunId) {
+        return;
+    }
+
+    openingExplorerState.filteredRows = Array.isArray(filteredRows)
+        ? filteredRows
+        : enrichedRows;
 
     const rowMap = buildExplorerRowMap();
     openingExplorerState.visibleRows = openingExplorerState.filteredRows.filter((row) => {
@@ -4880,6 +4891,10 @@ async function applyExplorerFilters() {
         openingExplorerState.focusedIndex = selectedIndex >= 0
             ? selectedIndex
             : clamp(openingExplorerState.focusedIndex || 0, 0, openingExplorerState.visibleRows.length - 1);
+    }
+
+    if (currentRunId !== openingExplorerState.filterRunId) {
+        return;
     }
 
     renderExplorerTree();

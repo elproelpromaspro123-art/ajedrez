@@ -34,7 +34,10 @@ No requiere login.
 - `npm run build`: compila TypeScript.
 - `npm start`: ejecuta backend compilado en `dist/index.js`.
 - `npm run dev`: compila y arranca servidor con nodemon.
-- `npm test`: genera reportes de prueba para validar clasificaciones.
+- `npm test`: genera reportes de prueba y ejecuta smoke tests de API.
+
+## Healthcheck
+- `GET /healthz`: estado basico del servidor (ok, uptime y timestamp).
 
 ## Deploy en Vercel
 Este repo incluye `vercel.json` para enrutar todo al servidor Express.

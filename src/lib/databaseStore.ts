@@ -3,6 +3,8 @@ import path from "path";
 
 const NAMESPACE = "freechess_lab_v1";
 const DEFAULT_DB_FILE = path.resolve("data", "database.json");
+const MAX_MERGE_DEPTH = 20;
+const UNSAFE_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 
 interface DatabasePaths {
     source: string;
@@ -121,22 +123,57 @@ function writeRootObject(root: Record<string, unknown>): void {
     fs.renameSync(tempPath, paths.activePath);
 }
 
-function asObject(value: unknown): Record<string, unknown> {
-    if (value && typeof value === "object" && !Array.isArray(value)) {
-        return value as Record<string, unknown>;
-    }
-    return {};
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function deepMerge(base: Record<string, unknown>, patch: Record<string, unknown>): Record<string, unknown> {
-    const output: Record<string, unknown> = { ...base };
-    Object.entries(patch).forEach(([key, value]) => {
-        if (value && typeof value === "object" && !Array.isArray(value)) {
-            output[key] = deepMerge(asObject(output[key]), asObject(value));
-        } else {
-            output[key] = value;
+function sanitizeObject(value: unknown, depth = 0): Record<string, unknown> {
+    if (!isPlainObject(value) || depth > MAX_MERGE_DEPTH) {
+        return {};
+    }
+
+    const output: Record<string, unknown> = {};
+    for (const [key, nested] of Object.entries(value)) {
+        if (UNSAFE_KEYS.has(key)) {
+            continue;
         }
+
+        if (isPlainObject(nested)) {
+            output[key] = sanitizeObject(nested, depth + 1);
+        } else {
+            output[key] = nested;
+        }
+    }
+
+    return output;
+}
+
+function asObject(value: unknown): Record<string, unknown> {
+    return sanitizeObject(value);
+}
+
+function deepMerge(
+    base: Record<string, unknown>,
+    patch: Record<string, unknown>,
+    depth = 0
+): Record<string, unknown> {
+    if (depth > MAX_MERGE_DEPTH) {
+        return sanitizeObject(base);
+    }
+
+    const safeBase = sanitizeObject(base, depth);
+    const safePatch = sanitizeObject(patch, depth);
+    const output: Record<string, unknown> = { ...safeBase };
+
+    Object.entries(safePatch).forEach(([key, value]) => {
+        if (isPlainObject(value)) {
+            output[key] = deepMerge(asObject(output[key]), value, depth + 1);
+            return;
+        }
+
+        output[key] = value;
     });
+
     return output;
 }
 
@@ -170,4 +207,3 @@ export function getDatabaseMeta() {
         activePath: paths.activePath
     };
 }
-

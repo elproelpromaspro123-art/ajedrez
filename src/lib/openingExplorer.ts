@@ -64,7 +64,13 @@ function sanitizeCsvAllowList(
 
     for (const part of text.split(",")) {
         const token = normalizeCsvToken(part);
-        if (!token || seen.has(token) || !allowed.has(token)) {
+        if (!token) {
+            continue;
+        }
+        if (!allowed.has(token)) {
+            return null;
+        }
+        if (seen.has(token)) {
             continue;
         }
         unique.push(token);
@@ -75,7 +81,7 @@ function sanitizeCsvAllowList(
     }
 
     if (unique.length === 0) {
-        return Array.from(fallback);
+        return null;
     }
 
     return unique;

@@ -53,6 +53,10 @@ const explorerCache = new Map<string, TimedCacheEntry<unknown>>();
 const AI_PROVIDER_TIMEOUT_MS = 9000;
 const AI_RATE_WINDOW_MS = 10000;
 const AI_RATE_MAX_REQUESTS = 1;
+const PROFILE_SYNC_MAX_BYTES = 850_000;
+const PROFILE_PROGRESS_GAMES_MAX = 400;
+const PROFILE_PROGRESS_ACTIVITIES_MAX = 1200;
+const PROFILE_LESSON_KEYS_MAX = 250;
 const aiRateLimiter = new Map<string, number[]>();
 
 // Prune stale rate-limiter entries every 60 seconds
@@ -79,6 +83,74 @@ function clampText(value: string, maxLength: number): string {
     }
 
     return value.slice(0, maxLength);
+}
+
+function asObject(value: unknown): Record<string, unknown> | null {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return null;
+    }
+    return value as Record<string, unknown>;
+}
+
+function normalizeProgressPatch(value: unknown): Record<string, unknown> | null {
+    const source = asObject(value);
+    if (!source) {
+        return null;
+    }
+
+    const normalized: Record<string, unknown> = { ...source };
+
+    if (Array.isArray(source.games)) {
+        normalized.games = source.games.slice(-PROFILE_PROGRESS_GAMES_MAX);
+    }
+    if (Array.isArray(source.activities)) {
+        normalized.activities = source.activities.slice(-PROFILE_PROGRESS_ACTIVITIES_MAX);
+    }
+
+    return normalized;
+}
+
+function normalizeLessonsPatch(value: unknown): Record<string, unknown> | null {
+    const source = asObject(value);
+    if (!source) {
+        return null;
+    }
+
+    const normalized: Record<string, unknown> = { ...source };
+    const progressByLesson = asObject(source.progressByLesson);
+
+    if (progressByLesson) {
+        const compact = Object.fromEntries(
+            Object.entries(progressByLesson)
+                .slice(0, PROFILE_LESSON_KEYS_MAX)
+                .map(([key, lessonProgress]) => [clampText(String(key), 80), lessonProgress])
+        );
+        normalized.progressByLesson = compact;
+    }
+
+    return normalized;
+}
+
+function normalizeProfilePatch(value: unknown): Record<string, unknown> | null {
+    const source = asObject(value);
+    if (!source) {
+        return null;
+    }
+
+    const normalized: Record<string, unknown> = { ...source };
+    if (isNonEmptyString(source.syncedAt)) {
+        normalized.syncedAt = clampText(source.syncedAt, 40);
+    }
+
+    return normalized;
+}
+
+function isJsonPayloadSizeSafe(value: unknown, maxBytes: number): boolean {
+    try {
+        return Buffer.byteLength(JSON.stringify(value), "utf8") <= maxBytes;
+    } catch {
+        return false;
+    }
 }
 
 function getClientIdentifier(req: Request): string {
@@ -199,18 +271,25 @@ router.post("/profile-store/sync", (req, res) => {
     const payload: ProfileStoreSyncBody = req.body || {};
     const patch: Record<string, unknown> = {};
 
-    if (payload.progress && typeof payload.progress === "object" && !Array.isArray(payload.progress)) {
-        patch.progress = payload.progress;
+    const progress = normalizeProgressPatch(payload.progress);
+    const lessons = normalizeLessonsPatch(payload.lessons);
+    const profile = normalizeProfilePatch(payload.profile);
+
+    if (progress) {
+        patch.progress = progress;
     }
-    if (payload.lessons && typeof payload.lessons === "object" && !Array.isArray(payload.lessons)) {
-        patch.lessons = payload.lessons;
+    if (lessons) {
+        patch.lessons = lessons;
     }
-    if (payload.profile && typeof payload.profile === "object" && !Array.isArray(payload.profile)) {
-        patch.profile = payload.profile;
+    if (profile) {
+        patch.profile = profile;
     }
 
     if (Object.keys(patch).length === 0) {
         return res.status(400).json({ message: "Invalid sync payload." });
+    }
+    if (!isJsonPayloadSizeSafe(patch, PROFILE_SYNC_MAX_BYTES)) {
+        return res.status(413).json({ message: "Sync payload too large." });
     }
 
     try {

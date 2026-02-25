@@ -50,6 +50,14 @@ app.get("/", async (req, res) => {
     res.sendFile(path.resolve("src/public/pages/report/index.html"));
 });
 
+app.get("/healthz", (_req, res) => {
+    res.json({
+        ok: true,
+        uptimeSeconds: Math.floor(process.uptime()),
+        now: new Date().toISOString()
+    });
+});
+
 const jsonErrorHandler: ErrorRequestHandler = (err, _req, res, next) => {
     if (err instanceof SyntaxError && "body" in err) {
         return res.status(400).json({ message: "Invalid JSON body." });
