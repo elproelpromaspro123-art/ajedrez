@@ -291,6 +291,8 @@ const el = {
     profileTopOpenings: document.querySelector("#profile-top-openings"),
     profileHistoryBody: document.querySelector("#profile-history-body"),
     profileRefreshBtn: document.querySelector("#profile-refresh-btn"),
+    profileWdlBar: document.querySelector("#profile-wdl-bar"),
+    profileWdlLegend: document.querySelector("#profile-wdl-legend"),
 
     fxMove: document.querySelector("#fx-move"),
     fxCapture: document.querySelector("#fx-capture"),
@@ -3719,6 +3721,27 @@ function renderAnalysisEvalGraph() {
     const toX = (index) => padX + ((values.length === 1 ? 0 : index / (values.length - 1)) * chartWidth);
     const toY = (cp) => centerY - (cp / range) * (chartHeight / 2);
 
+    /* Grid lines */
+    ctx.strokeStyle = "rgba(255,255,255,0.07)";
+    ctx.lineWidth = 0.5;
+    const gridSteps = [range * 0.5, range * -0.5];
+    gridSteps.forEach((cp) => {
+        const gy = toY(cp);
+        ctx.beginPath();
+        ctx.moveTo(padX, gy);
+        ctx.lineTo(padX + chartWidth, gy);
+        ctx.stroke();
+    });
+    const moveStep = Math.max(1, Math.floor(values.length / 6));
+    for (let i = moveStep; i < values.length; i += moveStep) {
+        const gx = toX(i);
+        ctx.beginPath();
+        ctx.moveTo(gx, padY);
+        ctx.lineTo(gx, padY + chartHeight);
+        ctx.stroke();
+    }
+
+    /* Center line */
     ctx.strokeStyle = "rgba(255,255,255,0.2)";
     ctx.lineWidth = 1;
     ctx.beginPath();
@@ -3726,6 +3749,39 @@ function renderAnalysisEvalGraph() {
     ctx.lineTo(padX + chartWidth, centerY);
     ctx.stroke();
 
+    /* Gradient fills */
+    const gradWhite = ctx.createLinearGradient(0, padY, 0, centerY);
+    gradWhite.addColorStop(0, "rgba(129,182,76,0.35)");
+    gradWhite.addColorStop(1, "rgba(129,182,76,0.02)");
+    const gradBlack = ctx.createLinearGradient(0, centerY, 0, padY + chartHeight);
+    gradBlack.addColorStop(0, "rgba(202,52,49,0.02)");
+    gradBlack.addColorStop(1, "rgba(202,52,49,0.25)");
+
+    ctx.beginPath();
+    ctx.moveTo(toX(0), centerY);
+    for (let i = 0; i < values.length; i += 1) {
+        const x = toX(i);
+        const y = Math.min(centerY, toY(values[i]));
+        ctx.lineTo(x, y);
+    }
+    ctx.lineTo(toX(values.length - 1), centerY);
+    ctx.closePath();
+    ctx.fillStyle = gradWhite;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(toX(0), centerY);
+    for (let i = 0; i < values.length; i += 1) {
+        const x = toX(i);
+        const y = Math.max(centerY, toY(values[i]));
+        ctx.lineTo(x, y);
+    }
+    ctx.lineTo(toX(values.length - 1), centerY);
+    ctx.closePath();
+    ctx.fillStyle = gradBlack;
+    ctx.fill();
+
+    /* Eval line */
     ctx.beginPath();
     for (let i = 0; i < values.length; i += 1) {
         const x = toX(i);
@@ -3736,6 +3792,17 @@ function renderAnalysisEvalGraph() {
     ctx.strokeStyle = "#96bc4b";
     ctx.lineWidth = 2;
     ctx.stroke();
+
+    /* Axis labels */
+    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    ctx.font = "9px Instrument Sans, sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("+", padX + 1, padY + 9);
+    ctx.fillText("\u2013", padX + 1, padY + chartHeight - 2);
+    ctx.textAlign = "center";
+    for (let i = moveStep; i < values.length; i += moveStep) {
+        ctx.fillText(String(i), toX(i), padY + chartHeight + 9);
+    }
 
     for (let i = 1; i < positions.length; i += 1) {
         if (!isAnalysisErrorClassification(positions[i].classification)) continue;
@@ -4465,6 +4532,86 @@ const LESSON_CATALOG = {
             correctUci: ["e1e8"],
             feedback: "Exacto: Re8 es mate inmediato."
         }
+    },
+    piece_activity: {
+        title: "Actividad de piezas",
+        description: "Objetivo: centralizar piezas, coordinarlas y distinguir piezas activas de pasivas.",
+        steps: [
+            "Coloca caballos en casillas centrales protegidas (avanzadas/outposts).",
+            "Coordina tus piezas para que apunten a los mismos puntos debiles.",
+            "Evita piezas pasivas: busca mejorar la peor pieza de tu posicion."
+        ],
+        exercise: {
+            fen: "r1bq1rk1/pp2ppbp/2np1np1/8/3NP3/2N1BP2/PPPQ2PP/R3KB1R w KQ - 0 9",
+            prompt: "Blancas juegan: como mejorar la actividad de las piezas?",
+            options: [
+                { uci: "d4c6", label: "Caballo a c6 (Nc6)" },
+                { uci: "a2a3", label: "Peon a a3 (a3)" },
+                { uci: "h2h3", label: "Peon a h3 (h3)" }
+            ],
+            correctUci: ["d4c6"],
+            feedback: "Correcto: Nc6 centraliza el caballo en una casilla dominante atacando puntos clave."
+        }
+    },
+    pawn_structures: {
+        title: "Estructuras de peones",
+        description: "Objetivo: entender peones doblados, aislados, cadenas y debilidades estructurales.",
+        steps: [
+            "Identifica peones debiles: aislados, doblados o retrasados.",
+            "Usa rupturas de peon para abrir lineas o deshacer la cadena rival.",
+            "Apoya tu estructura con piezas y evita crear debilidades innecesarias."
+        ],
+        exercise: {
+            fen: "r1bqkb1r/pp3ppp/2n1pn2/2pp4/3P4/2N1PN2/PPP2PPP/R1BQKB1R w KQkq - 0 5",
+            prompt: "Blancas juegan: cual es la mejor ruptura central?",
+            options: [
+                { uci: "d4c5", label: "Peon captura c5 (dxc5)" },
+                { uci: "e3e4", label: "Peon a e4 (e4)" },
+                { uci: "f1d3", label: "Alfil a d3 (Bd3)" }
+            ],
+            correctUci: ["e3e4"],
+            feedback: "Correcto: e4 desafia la cadena de peones negra y abre el centro con ventaja."
+        }
+    },
+    calculation: {
+        title: "Calculo tactico",
+        description: "Objetivo: visualizar lineas forzadas y calcular secuencias concretas.",
+        steps: [
+            "Identifica jugadas candidatas: jaques, capturas y amenazas.",
+            "Calcula cada linea hasta una posicion estable antes de elegir.",
+            "Prioriza jugadas forzadas que limiten las respuestas del rival."
+        ],
+        exercise: {
+            fen: "r2qr1k1/ppp2ppp/2n5/3N4/2BP4/8/PPP2PPP/R2Q1RK1 w - - 0 12",
+            prompt: "Blancas juegan: encuentra la secuencia tactica ganadora.",
+            options: [
+                { uci: "d5c7", label: "Caballo a c7 (Nc7)" },
+                { uci: "c4b5", label: "Alfil a b5 (Bb5)" },
+                { uci: "d4d5", label: "Peon a d5 (d5)" }
+            ],
+            correctUci: ["d5c7"],
+            feedback: "Correcto: Nc7 es horquilla de caballo que gana la calidad atacando torre y dama."
+        }
+    },
+    endgame_rook: {
+        title: "Finales de torre",
+        description: "Objetivo: dominar la posicion de Lucena, Philidor, torres activas y tecnica de corte.",
+        steps: [
+            "Activa tu torre: colocala detras de los peones pasados.",
+            "Usa la tecnica del puente (Lucena) para promover con torre y peon.",
+            "Corta al rey rival con tu torre para impedir su avance."
+        ],
+        exercise: {
+            fen: "1K6/1P1k4/8/8/8/8/r7/5R2 w - - 0 1",
+            prompt: "Blancas juegan: como progresar en esta posicion de Lucena?",
+            options: [
+                { uci: "f1f4", label: "Torre a f4 (Rf4)" },
+                { uci: "b8a7", label: "Rey a a7 (Ka7)" },
+                { uci: "f1d1", label: "Torre a d1 (Rd1+)" }
+            ],
+            correctUci: ["f1f4"],
+            feedback: "Correcto: Rf4 inicia la tecnica del puente para promover el peon con proteccion de la torre."
+        }
     }
 };
 
@@ -5033,10 +5180,15 @@ function computeProfileHeadlineMetrics(games) {
         ? Number(eloTimeline[eloTimeline.length - 1].rating || 1200)
         : 1200;
 
+    const draws = completedGames.filter((game) => game.result === "draw").length;
+    const losses = completedGames.filter((game) => game.result === "loss").length;
+
     return {
         gamesCount: source.length,
         completedGamesCount: completedGames.length,
         wins,
+        draws,
+        losses,
         avgAccuracy,
         winrate,
         currentElo,
@@ -5084,6 +5236,41 @@ function drawProfileEloGraph(timeline) {
     const toX = (index) => padX + (index / (timeline.length - 1)) * chartWidth;
     const toY = (rating) => padY + ((maxRating - rating) / span) * chartHeight;
 
+    /* Grid lines */
+    ctx.strokeStyle = "rgba(255,255,255,0.07)";
+    ctx.lineWidth = 0.5;
+    const gridCount = 4;
+    for (let g = 1; g < gridCount; g += 1) {
+        const gy = padY + (g / gridCount) * chartHeight;
+        ctx.beginPath();
+        ctx.moveTo(padX, gy);
+        ctx.lineTo(padX + chartWidth, gy);
+        ctx.stroke();
+    }
+    const xStep = Math.max(1, Math.floor(timeline.length / 5));
+    for (let i = xStep; i < timeline.length; i += xStep) {
+        const gx = toX(i);
+        ctx.beginPath();
+        ctx.moveTo(gx, padY);
+        ctx.lineTo(gx, padY + chartHeight);
+        ctx.stroke();
+    }
+
+    /* Gradient fill below line */
+    const grad = ctx.createLinearGradient(0, padY, 0, padY + chartHeight);
+    grad.addColorStop(0, "rgba(126,178,218,0.32)");
+    grad.addColorStop(1, "rgba(126,178,218,0.02)");
+    ctx.beginPath();
+    ctx.moveTo(toX(0), padY + chartHeight);
+    for (let i = 0; i < timeline.length; i += 1) {
+        ctx.lineTo(toX(i), toY(ratings[i]));
+    }
+    ctx.lineTo(toX(timeline.length - 1), padY + chartHeight);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    /* Line */
     ctx.beginPath();
     for (let i = 0; i < timeline.length; i += 1) {
         const x = toX(i);
@@ -5094,6 +5281,17 @@ function drawProfileEloGraph(timeline) {
     ctx.strokeStyle = "#7eb2da";
     ctx.lineWidth = 2.2;
     ctx.stroke();
+
+    /* Axis labels */
+    ctx.fillStyle = "rgba(255,255,255,0.35)";
+    ctx.font = "9px Instrument Sans, sans-serif";
+    ctx.textAlign = "right";
+    ctx.fillText(String(Math.round(maxRating)), padX - 3, padY + 9);
+    ctx.fillText(String(Math.round(minRating)), padX - 3, padY + chartHeight);
+    ctx.textAlign = "center";
+    for (let i = xStep; i < timeline.length; i += xStep) {
+        ctx.fillText(String(i + 1), toX(i), padY + chartHeight + 10);
+    }
 
     const lastX = toX(timeline.length - 1);
     const lastY = toY(ratings[ratings.length - 1]);
@@ -5118,6 +5316,40 @@ function renderProfileDashboard() {
     if (el.profileWinrate) el.profileWinrate.textContent = `${metrics.winrate.toFixed(1)}%`;
     if (el.profileAvgAccuracy) el.profileAvgAccuracy.textContent = `${metrics.avgAccuracy.toFixed(1)}%`;
     if (el.profileEstimatedElo) el.profileEstimatedElo.textContent = String(Math.round(metrics.currentElo));
+
+    /* WDL bar */
+    if (el.profileWdlBar) {
+        el.profileWdlBar.innerHTML = "";
+        const total = metrics.completedGamesCount;
+        if (total > 0) {
+            const wPct = ((metrics.wins / total) * 100).toFixed(1);
+            const dPct = ((metrics.draws / total) * 100).toFixed(1);
+            const lPct = ((metrics.losses / total) * 100).toFixed(1);
+            const wSpan = document.createElement("span");
+            wSpan.className = "wdl-win";
+            wSpan.style.width = wPct + "%";
+            wSpan.textContent = metrics.wins > 0 ? String(metrics.wins) : "";
+            const dSpan = document.createElement("span");
+            dSpan.className = "wdl-draw";
+            dSpan.style.width = dPct + "%";
+            dSpan.textContent = metrics.draws > 0 ? String(metrics.draws) : "";
+            const lSpan = document.createElement("span");
+            lSpan.className = "wdl-loss";
+            lSpan.style.width = lPct + "%";
+            lSpan.textContent = metrics.losses > 0 ? String(metrics.losses) : "";
+            el.profileWdlBar.appendChild(wSpan);
+            el.profileWdlBar.appendChild(dSpan);
+            el.profileWdlBar.appendChild(lSpan);
+        }
+    }
+    if (el.profileWdlLegend) {
+        const total = metrics.completedGamesCount;
+        if (total > 0) {
+            el.profileWdlLegend.textContent = `V ${metrics.wins}  T ${metrics.draws}  D ${metrics.losses}`;
+        } else {
+            el.profileWdlLegend.textContent = "";
+        }
+    }
 
     drawProfileEloGraph(profileState.eloTimeline);
     if (el.profileEloMeta) {

@@ -13,7 +13,7 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
         rel="stylesheet" />
-    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260225_polish6" />
+    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260225_ux1" />
     <link rel="shortcut icon" href="/static/media/favicon-freechess.ico" type="image/x-icon" />
 </head>
 
@@ -417,6 +417,22 @@
                     <button class="lesson-course-card" data-lesson-id="basic_tactics">
                         <strong>Tacticas esenciales</strong>
                         <span>Clavadas, horquillas y remates de corto calculo.</span>
+                    </button>
+                    <button class="lesson-course-card" data-lesson-id="piece_activity">
+                        <strong>Actividad de piezas</strong>
+                        <span>Centralizacion, coordinacion y piezas activas vs pasivas.</span>
+                    </button>
+                    <button class="lesson-course-card" data-lesson-id="pawn_structures">
+                        <strong>Estructuras de peones</strong>
+                        <span>Peones doblados, aislados, cadenas y debilidades.</span>
+                    </button>
+                    <button class="lesson-course-card" data-lesson-id="calculation">
+                        <strong>Calculo tactico</strong>
+                        <span>Visualizacion, lineas forzadas y calculo concreto.</span>
+                    </button>
+                    <button class="lesson-course-card" data-lesson-id="endgame_rook">
+                        <strong>Finales de torre</strong>
+                        <span>Lucena, Philidor, torres activas y tecnica de corte.</span>
                     </button>
                 </div>
 
@@ -859,6 +875,12 @@
                         </div>
                     </div>
 
+                    <div class="profile-wdl-bar-wrap" id="profile-wdl-wrap">
+                        <h4>Victorias / Tablas / Derrotas</h4>
+                        <div class="profile-wdl-bar" id="profile-wdl-bar"></div>
+                        <div class="profile-wdl-legend" id="profile-wdl-legend"></div>
+                    </div>
+
                     <div class="coach-box">
                         <h4>Grafico de ELO</h4>
                         <canvas id="profile-elo-graph" width="720" height="200" aria-label="Grafico de ELO estimado"></canvas>
@@ -946,6 +968,9 @@
                     <option value="classic" selected>Classic</option>
                     <option value="wood">Wood</option>
                     <option value="midnight">Midnight</option>
+                    <option value="tournament">Tournament</option>
+                    <option value="ocean">Ocean</option>
+                    <option value="rose">Rose</option>
                 </select>
             </div>
             <div class="settings-row has-border">
@@ -954,6 +979,8 @@
                     <option value="default" selected>Default</option>
                     <option value="neo">Neo</option>
                     <option value="mono">Mono</option>
+                    <option value="glass">Glass</option>
+                    <option value="wood">Wood</option>
                 </select>
             </div>
             <div class="settings-row has-border">
