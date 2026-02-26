@@ -332,17 +332,35 @@ function getAuthCookieToken(req: Request): string | null {
     return isNonEmptyString(token) ? token : null;
 }
 
-function setAuthCookie(res: ExpressResponse, token: string, expiresAtMs: number) {
-    const maxAgeSec = Math.max(1, Math.floor((expiresAtMs - Date.now()) / 1000));
-    const secureFlag = process.env.NODE_ENV === "production" ? "; Secure" : "";
+function shouldUseSecureCookie(req: Request): boolean {
+    const forwardedProto = req.headers["x-forwarded-proto"];
+    const proto = typeof forwardedProto === "string"
+        ? forwardedProto.split(",")[0]?.trim().toLowerCase()
+        : (Array.isArray(forwardedProto) && forwardedProto[0]
+            ? String(forwardedProto[0]).trim().toLowerCase()
+            : "");
+
+    if (proto === "https") {
+        return true;
+    }
+
+    return Boolean(req.secure);
+}
+
+function setAuthCookie(req: Request, res: ExpressResponse, token: string, expiresAtMs: number) {
+    const safeExpiresAtMs = Number.isFinite(expiresAtMs)
+        ? expiresAtMs
+        : Date.now() + AUTH_SESSION_TTL_MS;
+    const maxAgeSec = Math.max(1, Math.floor((safeExpiresAtMs - Date.now()) / 1000));
+    const secureFlag = shouldUseSecureCookie(req) ? "; Secure" : "";
     res.setHeader(
         "Set-Cookie",
         `${AUTH_COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSec}${secureFlag}`
     );
 }
 
-function clearAuthCookie(res: ExpressResponse) {
-    const secureFlag = process.env.NODE_ENV === "production" ? "; Secure" : "";
+function clearAuthCookie(req: Request, res: ExpressResponse) {
+    const secureFlag = shouldUseSecureCookie(req) ? "; Secure" : "";
     res.setHeader(
         "Set-Cookie",
         `${AUTH_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureFlag}`
@@ -650,7 +668,7 @@ router.post("/auth/register", (req, res) => {
         pruneSessions(auth);
 
         persistAuthState(scopedData, auth);
-        setAuthCookie(res, token, Date.parse(session.expiresAt));
+        setAuthCookie(req, res, token, Date.parse(session.expiresAt));
 
         return res.status(201).json({
             ok: true,
@@ -687,7 +705,7 @@ router.post("/auth/login", (req, res) => {
         auth.sessions[token] = session;
         pruneSessions(auth);
         persistAuthState(scopedData, auth);
-        setAuthCookie(res, token, Date.parse(session.expiresAt));
+        setAuthCookie(req, res, token, Date.parse(session.expiresAt));
 
         return res.json({
             ok: true,
@@ -718,7 +736,7 @@ router.post("/auth/logout", (req, res) => {
         console.error("Auth logout failed:", err);
     }
 
-    clearAuthCookie(res);
+    clearAuthCookie(req, res);
     return res.json({
         ok: true,
         authenticated: false
@@ -753,7 +771,7 @@ router.get("/profile-store", (req, res) => {
     try {
         const ctx = resolveAuthContext(req);
         if (!ctx) {
-            clearAuthCookie(res);
+            clearAuthCookie(req, res);
             return unauthorized(res);
         }
 
@@ -800,7 +818,7 @@ router.post("/profile-store/sync", (req, res) => {
     try {
         const ctx = resolveAuthContext(req);
         if (!ctx) {
-            clearAuthCookie(res);
+            clearAuthCookie(req, res);
             return unauthorized(res);
         }
 

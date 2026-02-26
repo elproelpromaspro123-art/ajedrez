@@ -27,6 +27,23 @@
         "2200",
         "2500"
     ]);
+    const EXPLORER_QUERY_ALIASES = {
+        siciliana: "sicilian",
+        francesa: "french",
+        italiana: "italian",
+        espanola: "ruy lopez",
+        escocesa: "scotch",
+        escandinava: "scandinavian",
+        inglesa: "english",
+        dama: "queen",
+        rey: "king",
+        india: "indian",
+        defensa: "defense",
+        gambito: "gambit",
+        peon: "pawn",
+        caballo: "knight",
+        alfil: "bishop"
+    };
     const storage = global.ReportModules && global.ReportModules.storage
         ? global.ReportModules.storage
         : null;
@@ -65,6 +82,32 @@
             .toLowerCase()
             .replace(/\s+/g, " ")
             .trim();
+    }
+
+    function normalizeSearchText(value) {
+        return String(value || "")
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .toLowerCase()
+            .replace(/[^a-z0-9\s]/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+
+    function buildQueryNeedles(rawQuery) {
+        const normalized = normalizeSearchText(rawQuery);
+        if (!normalized) return [];
+
+        const needles = new Set([normalized]);
+        Object.entries(EXPLORER_QUERY_ALIASES).forEach(([from, to]) => {
+            const fromNorm = normalizeSearchText(from);
+            if (!fromNorm || !normalized.includes(fromNorm)) {
+                return;
+            }
+            needles.add(normalizeSearchText(normalized.replace(fromNorm, to)));
+        });
+
+        return Array.from(needles);
     }
 
     function normalizeCsvToken(token) {
@@ -313,17 +356,17 @@
         const safeFilters = filters && typeof filters === "object" ? filters : {};
         const minPopularity = Number(safeFilters.minPopularity || 0);
         const minSuccess = Number(safeFilters.minSuccess || 0);
-        const query = String(safeFilters.query || "").toLowerCase().trim();
+        const queryNeedles = buildQueryNeedles(safeFilters.query || "");
 
         return sourceRows
             .filter((row) => {
                 if (!row) return false;
                 if (Number(row.popularity || 0) < minPopularity) return false;
                 if (Number(row.success || 0) < minSuccess) return false;
-                if (!query) return true;
+                if (queryNeedles.length === 0) return true;
 
-                const haystack = `${row.eco || ""} ${row.name || ""} ${row.line || ""}`.toLowerCase();
-                return haystack.includes(query);
+                const haystack = normalizeSearchText(`${row.eco || ""} ${row.name || ""} ${row.line || ""}`);
+                return queryNeedles.some((needle) => haystack.includes(needle));
             })
             .sort((a, b) => {
                 if (Number(b.popularity || 0) !== Number(a.popularity || 0)) {

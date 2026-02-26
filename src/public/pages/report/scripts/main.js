@@ -335,6 +335,8 @@ function canPersistLocalData() {
     return Boolean(authState && authState.authenticated);
 }
 
+const LOCAL_AUTH_MARKER_PATH = "session.localAuth";
+
 function readStored(path, fallbackValue) {
     if (!storageModule || !storageModule.read) {
         return fallbackValue;
@@ -360,6 +362,47 @@ function mutateStored(mutator) {
         return null;
     }
     return storageModule.mutate(mutator);
+}
+
+function withAuthFetchOptions(init) {
+    return Object.assign(
+        {
+            credentials: "same-origin",
+            cache: "no-store"
+        },
+        init || {}
+    );
+}
+
+function readLocalAuthMarker() {
+    const marker = readStored(LOCAL_AUTH_MARKER_PATH, null);
+    if (!marker || typeof marker !== "object") {
+        return null;
+    }
+
+    const username = marker.username ? String(marker.username).trim() : "";
+    if (!username) {
+        return null;
+    }
+
+    return { username };
+}
+
+function persistLocalAuthMarker(username) {
+    if (!storageModule || !storageModule.write) {
+        return;
+    }
+
+    const safeUsername = username ? String(username).trim() : "";
+    if (!safeUsername) {
+        storageModule.write(LOCAL_AUTH_MARKER_PATH, null);
+        return;
+    }
+
+    storageModule.write(LOCAL_AUTH_MARKER_PATH, {
+        username: safeUsername,
+        savedAt: new Date().toISOString()
+    });
 }
 
 async function readJsonResponseSafe(response) {
@@ -470,23 +513,39 @@ function clearAuthPasswordInput() {
 
 async function refreshAuthSessionStatus() {
     try {
-        const response = await fetch("/api/auth/session");
+        const response = await fetch("/api/auth/session", withAuthFetchOptions());
+        if (!response.ok) {
+            throw new Error(`Session request failed (${response.status}).`);
+        }
         const payload = await readJsonResponseSafe(response);
         const authenticated = Boolean(payload && payload.authenticated);
         if (authenticated) {
             const username = payload && payload.user && payload.user.username ? String(payload.user.username) : "";
             setAuthState(true, username);
+            persistLocalAuthMarker(username);
             setAuthStatus(`Sesion iniciada como ${username}. Tus datos se guardan en base de datos.`);
             return true;
         }
 
+        persistLocalAuthMarker("");
         setAuthState(false, "");
         clearGuestPersistedData();
         setAuthStatus("No has iniciado sesion. Inicia para guardar todo en base de datos.");
         return false;
     } catch {
+        if (authState.authenticated && authState.username) {
+            setAuthStatus(`No se pudo validar la sesion con el servidor. Se mantiene la sesion local de ${authState.username}.`);
+            return true;
+        }
+
+        const marker = readLocalAuthMarker();
+        if (marker) {
+            setAuthState(true, marker.username);
+            setAuthStatus(`No se pudo validar el servidor. Se mantiene la sesion local de ${marker.username}.`);
+            return true;
+        }
+
         setAuthState(false, "");
-        clearGuestPersistedData();
         setAuthStatus("No se pudo validar la sesion con el servidor. Inicia sesion para continuar.");
         return false;
     }
@@ -516,13 +575,13 @@ async function registerWithCredentials() {
 
     setAuthBusy(true);
     try {
-        const response = await fetch("/api/auth/register", {
+        const response = await fetch("/api/auth/register", withAuthFetchOptions({
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify(credentials)
-        });
+        }));
         const payload = await readJsonResponseSafe(response);
         if (!response.ok) {
             const message = payload && payload.message ? String(payload.message) : "No se pudo crear la cuenta.";
@@ -532,6 +591,7 @@ async function registerWithCredentials() {
 
         const username = payload && payload.user && payload.user.username ? String(payload.user.username) : credentials.username;
         setAuthState(true, username);
+        persistLocalAuthMarker(username);
         const warning = payload && payload.warning ? ` ${String(payload.warning)}` : "";
         setAuthStatus(`Cuenta creada e iniciada como ${username}.${warning}`);
         clearAuthPasswordInput();
@@ -552,13 +612,13 @@ async function loginWithCredentials() {
 
     setAuthBusy(true);
     try {
-        const response = await fetch("/api/auth/login", {
+        const response = await fetch("/api/auth/login", withAuthFetchOptions({
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
             body: JSON.stringify(credentials)
-        });
+        }));
         const payload = await readJsonResponseSafe(response);
         if (!response.ok) {
             const message = payload && payload.message ? String(payload.message) : "No se pudo iniciar sesion.";
@@ -568,6 +628,7 @@ async function loginWithCredentials() {
 
         const username = payload && payload.user && payload.user.username ? String(payload.user.username) : credentials.username;
         setAuthState(true, username);
+        persistLocalAuthMarker(username);
         setAuthStatus(`Sesion iniciada como ${username}.`);
         clearAuthPasswordInput();
         await onAuthenticatedSessionChanged();
@@ -581,12 +642,13 @@ async function loginWithCredentials() {
 async function logoutCurrentSession() {
     setAuthBusy(true);
     try {
-        await fetch("/api/auth/logout", {
+        await fetch("/api/auth/logout", withAuthFetchOptions({
             method: "POST"
-        });
+        }));
     } catch {
         // ignore network errors; we still clear local auth state
     } finally {
+        persistLocalAuthMarker("");
         setAuthState(false, "");
         setAuthStatus("Sesion cerrada. El guardado remoto queda desactivado hasta iniciar sesion.");
         clearAuthPasswordInput();
@@ -5073,9 +5135,10 @@ async function hydrateProfileStoreFromDatabase() {
     }
 
     try {
-        const response = await fetch("/api/profile-store");
+        const response = await fetch("/api/profile-store", withAuthFetchOptions());
         if (response.status === 401) {
             const payload = await readJsonResponseSafe(response);
+            persistLocalAuthMarker("");
             setAuthState(false, "");
             progressState.remoteHydrated = false;
             setAuthStatus(payload && payload.message
@@ -5123,7 +5186,7 @@ async function syncProfileStoreToDatabaseNow() {
     progressState.remoteSyncInFlight = true;
     try {
         const progress = analysisModule.loadProgress();
-        const response = await fetch("/api/profile-store/sync", {
+        const response = await fetch("/api/profile-store/sync", withAuthFetchOptions({
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
@@ -5137,9 +5200,10 @@ async function syncProfileStoreToDatabaseNow() {
                     syncedAt: new Date().toISOString()
                 }
             })
-        });
+        }));
         if (response.status === 401) {
             const payload = await readJsonResponseSafe(response);
+            persistLocalAuthMarker("");
             setAuthState(false, "");
             progressState.remoteHydrated = false;
             setAuthStatus(payload && payload.message
@@ -5931,7 +5995,13 @@ function renderExplorerTree() {
 
     const rows = openingExplorerState.visibleRows.slice(0, 220);
     if (rows.length === 0) {
-        el.ecoTree.textContent = "Sin lineas para los filtros actuales.";
+        const hasQuery = Boolean(el.ecoSearch && String(el.ecoSearch.value || "").trim());
+        const minPopularity = el.ecoFilterPopularity ? Number(el.ecoFilterPopularity.value || 0) : 0;
+        const minSuccess = el.ecoFilterSuccess ? Number(el.ecoFilterSuccess.value || 0) : 0;
+        const emptyMessage = hasQuery
+            ? "No hay coincidencias con esa busqueda. Prueba con otro termino o codigo ECO."
+            : `Sin lineas con los filtros actuales (Popularidad ${minPopularity}% / Exito ${minSuccess}%).`;
+        el.ecoTree.innerHTML = `<p class="eco-empty-note">${emptyMessage}</p>`;
         el.ecoTree.removeAttribute("aria-activedescendant");
         return;
     }
@@ -6164,6 +6234,14 @@ function bindTabs() {
 
             if (target === "study-section") {
                 registerStudyActivity({ source: "tab_switch" });
+            }
+            if (target === "analysis-section") {
+                const landing = document.getElementById("analysis-landing");
+                const hasVisibleDetail = Array.from(document.querySelectorAll(".analysis-detail"))
+                    .some((panel) => panel && panel.style && panel.style.display === "block");
+                if (landing && landing.style.display !== "none" && !hasVisibleDetail) {
+                    showAnalysisDetail("analysis-input");
+                }
             }
 
             scheduleSessionSnapshotSave();
@@ -7665,8 +7743,14 @@ async function init() {
 
     bindTabs();
     bindEvents();
-    setAuthState(false, "");
-    setAuthStatus("Validando sesion...");
+    const localAuth = readLocalAuthMarker();
+    if (localAuth) {
+        setAuthState(true, localAuth.username);
+        setAuthStatus(`Restaurando sesion local de ${localAuth.username}...`);
+    } else {
+        setAuthState(false, "");
+        setAuthStatus("Validando sesion...");
+    }
     bindLessonsUi();
     bindAiChat();
     loadOpeningCatalog();
