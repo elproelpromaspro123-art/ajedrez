@@ -6251,6 +6251,7 @@ function bindEvents() {
         el.endgameHomeBtn.addEventListener("click", () => {
             closeEndgameModal();
             goToPlaySetup(coachNotice("info", "Volviste al inicio. Ajusta color y nivel para una nueva partida."));
+            activateMainTab("play-section");
         });
     }
 
