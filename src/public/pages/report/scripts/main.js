@@ -4458,6 +4458,7 @@ async function runAnalysis() {
         }
 
         setAnalysisStatus("Analisis completado.");
+        showAnalysisDetail("analysis-review");
     } catch (error) {
         setAnalysisStatus(error instanceof Error ? error.message : "Error inesperado en el an\u00e1lisis.");
     } finally {
@@ -4751,6 +4752,40 @@ function activateMainTab(targetId) {
         tabButton.click();
         scheduleSessionSnapshotSave();
     }
+}
+
+function showAnalysisDetail(targetId) {
+    const landing = document.getElementById("analysis-landing");
+    const detail = document.getElementById(targetId);
+
+    if (!detail) {
+        return;
+    }
+
+    if (landing) {
+        landing.style.display = "none";
+    }
+
+    document.querySelectorAll(".analysis-detail").forEach((panel) => {
+        panel.style.display = panel.id === targetId ? "block" : "none";
+    });
+
+    detail.style.animation = "reveal 0.25s ease";
+    scheduleSessionSnapshotSave();
+}
+
+function showAnalysisLanding() {
+    const landing = document.getElementById("analysis-landing");
+    document.querySelectorAll(".analysis-detail").forEach((panel) => {
+        panel.style.display = "none";
+    });
+
+    if (landing) {
+        landing.style.display = "";
+        landing.style.animation = "reveal 0.25s ease";
+    }
+
+    scheduleSessionSnapshotSave();
 }
 
 function showStudyDetail(targetId) {
@@ -6242,6 +6277,7 @@ function bindEvents() {
             const tabBtn = document.querySelector('[data-tab-target="analysis-section"]');
             if (tabBtn) tabBtn.click();
 
+            showAnalysisDetail("analysis-input");
             // Trigger analysis loading
             if (el.analysisRunBtn) el.analysisRunBtn.click();
         });
@@ -6587,6 +6623,21 @@ function bindEvents() {
         }, { passive: true });
     }
 
+    // Analysis section navigation
+    document.querySelectorAll("[data-analysis-target]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            const target = btn.getAttribute("data-analysis-target");
+            if (!target) return;
+            showAnalysisDetail(target);
+        });
+    });
+
+    document.querySelectorAll("[data-analysis-back]").forEach(btn => {
+        btn.addEventListener("click", () => {
+            showAnalysisLanding();
+        });
+    });
+
     // Study section navigation
     document.querySelectorAll("[data-study-target]").forEach(btn => {
         btn.addEventListener("click", () => {
@@ -6749,6 +6800,7 @@ function runAiAction(actionId, argument) {
                 el.analysisPgn.value = playState.game.pgn();
             }
             activateMainTab("analysis-section");
+            showAnalysisDetail("analysis-input");
             if (el.analysisRunBtn) {
                 el.analysisRunBtn.click();
             }
@@ -7214,6 +7266,11 @@ function getCurrentActiveTabId() {
     return current && current.dataset ? current.dataset.tabTarget || "play-section" : "play-section";
 }
 
+function getVisibleAnalysisSectionId() {
+    const detail = document.querySelector(".analysis-detail[style*='display: block']");
+    return detail && detail.id ? detail.id : null;
+}
+
 function getVisibleStudySectionId() {
     const detail = document.querySelector(".study-detail[style*='display: block']");
     return detail && detail.id ? detail.id : null;
@@ -7270,6 +7327,7 @@ function buildSessionSnapshot() {
     return {
         savedAt: new Date().toISOString(),
         activeTab: getCurrentActiveTabId(),
+        analysisSection: getVisibleAnalysisSectionId(),
         studySection: getVisibleStudySectionId(),
         play: {
             fen: playState.game.fen(),
@@ -7464,6 +7522,10 @@ function restoreSessionAfterInit() {
         if (latest && el.coachMessage) {
             el.coachMessage.textContent = latest.textContent || "";
         }
+    }
+
+    if (snapshot.analysisSection) {
+        showAnalysisDetail(snapshot.analysisSection);
     }
 
     if (snapshot.studySection) {

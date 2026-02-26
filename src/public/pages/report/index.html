@@ -211,9 +211,42 @@
         </section>
 
         <section id="analysis-section" class="panel" role="tabpanel" aria-labelledby="tab-analysis">
-            <div class="panel-grid analysis-grid">
+            <!-- Analysis Landing: Category Icons -->
+            <div id="analysis-landing" class="study-landing">
+                <header class="study-header">
+                    <h2>&#128269; Centro de An&aacute;lisis</h2>
+                    <p>Selecciona una herramienta para analizar tus partidas.</p>
+                </header>
+                <div class="study-categories">
+                    <button class="study-cat-card" data-analysis-target="analysis-input">
+                        <span class="study-cat-icon">&#9654;</span>
+                        <span class="study-cat-title">Analizar Partida</span>
+                        <span class="study-cat-desc">Pega tu PGN y obt&eacute;n precisi&oacute;n, apertura y clasificaciones</span>
+                    </button>
+                    <button class="study-cat-card" data-analysis-target="analysis-review">
+                        <span class="study-cat-icon">&#128270;</span>
+                        <span class="study-cat-title">Revisi&oacute;n de Jugadas</span>
+                        <span class="study-cat-desc">Tablero interactivo, gr&aacute;fico de evaluaci&oacute;n y l&iacute;neas del motor</span>
+                    </button>
+                    <button class="study-cat-card" data-analysis-target="analysis-dashboard">
+                        <span class="study-cat-icon">&#128200;</span>
+                        <span class="study-cat-title">Dashboard de Progreso</span>
+                        <span class="study-cat-desc">Racha de estudio, precisi&oacute;n semanal y errores comunes</span>
+                    </button>
+                    <button class="study-cat-card" data-analysis-target="analysis-classifications">
+                        <span class="study-cat-icon">&#128202;</span>
+                        <span class="study-cat-title">Clasificaciones</span>
+                        <span class="study-cat-desc">Tabla detallada de tipos de jugada por color</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Sub-section: Analizar Partida -->
+            <div id="analysis-input" class="analysis-detail" style="display:none;">
+                <button class="study-back-btn" data-analysis-back>&larr; Volver al Centro de An&aacute;lisis</button>
+                <h2>&#9654; Analizar Partida</h2>
+                <p class="study-intro">Pega tu PGN, ajusta la profundidad y obt&eacute;n un an&aacute;lisis completo de tu partida.</p>
                 <article class="card control-card">
-                    <h3>&#128269; Analisis de partida</h3>
                     <label for="analysis-pgn">PGN</label>
                     <textarea id="analysis-pgn" rows="8" spellcheck="false"
                         placeholder="Pega aqui tu PGN..."></textarea>
@@ -244,51 +277,16 @@
                             <strong id="analysis-opening">--</strong>
                         </div>
                     </div>
-
-                    <div class="coach-box progress-dashboard-box">
-                        <h4>Dashboard local de progreso</h4>
-                        <div class="progress-metrics-grid">
-                            <div class="summary-card">
-                                <span>Racha de estudio</span>
-                                <strong id="progress-study-streak">0 d&iacute;as</strong>
-                            </div>
-                            <div class="summary-card">
-                                <span>Partidas guardadas</span>
-                                <strong id="progress-games-count">0</strong>
-                            </div>
-                        </div>
-                        <div>
-                            <p class="muted">Precisi&oacute;n promedio por semana</p>
-                            <div id="progress-weekly-chart" class="progress-weekly-chart"></div>
-                        </div>
-                        <div class="progress-lists-grid">
-                            <div>
-                                <p class="muted">Aperturas m&aacute;s jugadas</p>
-                                <ul id="progress-top-openings" class="compact-list"></ul>
-                            </div>
-                            <div>
-                                <p class="muted">Errores t&iacute;picos</p>
-                                <ul id="progress-common-errors" class="compact-list"></ul>
-                            </div>
-                        </div>
-                    </div>
-
-                    <h4>Clasificaciones</h4>
-                    <table class="classification-table">
-                        <thead>
-                            <tr>
-                                <th>Tipo</th>
-                                <th>Blancas</th>
-                                <th>Negras</th>
-                            </tr>
-                        </thead>
-                        <tbody id="classification-table-body"></tbody>
-                    </table>
                 </article>
+            </div>
 
+            <!-- Sub-section: Revision de Jugadas -->
+            <div id="analysis-review" class="analysis-detail" style="display:none;">
+                <button class="study-back-btn" data-analysis-back>&larr; Volver al Centro de An&aacute;lisis</button>
+                <h2>&#128270; Revisi&oacute;n jugada a jugada</h2>
+                <p class="study-intro">Navega por cada jugada, revisa la evaluaci&oacute;n del motor y practica las jugadas con errores.</p>
                 <article class="card board-card">
                     <div class="card-header">
-                        <h2>Revision jugada a jugada</h2>
                         <div class="inline-actions">
                             <button id="analysis-start-btn" class="ghost-btn" type="button">|&lt;</button>
                             <button id="analysis-prev-btn" class="ghost-btn" type="button">&lt;</button>
@@ -341,6 +339,58 @@
                             </div>
                         </div>
                     </div>
+                </article>
+            </div>
+
+            <!-- Sub-section: Dashboard de Progreso -->
+            <div id="analysis-dashboard" class="analysis-detail" style="display:none;">
+                <button class="study-back-btn" data-analysis-back>&larr; Volver al Centro de An&aacute;lisis</button>
+                <h2>&#128200; Dashboard de Progreso</h2>
+                <p class="study-intro">Revisa tu racha de estudio, precisi&oacute;n semanal, aperturas frecuentes y errores comunes.</p>
+                <article class="card control-card">
+                    <div class="progress-metrics-grid">
+                        <div class="summary-card">
+                            <span>Racha de estudio</span>
+                            <strong id="progress-study-streak">0 d&iacute;as</strong>
+                        </div>
+                        <div class="summary-card">
+                            <span>Partidas guardadas</span>
+                            <strong id="progress-games-count">0</strong>
+                        </div>
+                    </div>
+                    <div>
+                        <p class="muted">Precisi&oacute;n promedio por semana</p>
+                        <div id="progress-weekly-chart" class="progress-weekly-chart"></div>
+                    </div>
+                    <div class="progress-lists-grid">
+                        <div>
+                            <p class="muted">Aperturas m&aacute;s jugadas</p>
+                            <ul id="progress-top-openings" class="compact-list"></ul>
+                        </div>
+                        <div>
+                            <p class="muted">Errores t&iacute;picos</p>
+                            <ul id="progress-common-errors" class="compact-list"></ul>
+                        </div>
+                    </div>
+                </article>
+            </div>
+
+            <!-- Sub-section: Clasificaciones -->
+            <div id="analysis-classifications" class="analysis-detail" style="display:none;">
+                <button class="study-back-btn" data-analysis-back>&larr; Volver al Centro de An&aacute;lisis</button>
+                <h2>&#128202; Clasificaciones</h2>
+                <p class="study-intro">Tabla detallada de clasificaciones de jugada para blancas y negras.</p>
+                <article class="card control-card">
+                    <table class="classification-table">
+                        <thead>
+                            <tr>
+                                <th>Tipo</th>
+                                <th>Blancas</th>
+                                <th>Negras</th>
+                            </tr>
+                        </thead>
+                        <tbody id="classification-table-body"></tbody>
+                    </table>
                 </article>
             </div>
         </section>

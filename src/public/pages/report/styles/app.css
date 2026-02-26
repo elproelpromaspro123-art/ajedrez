@@ -1560,16 +1560,18 @@ button:disabled {
 }
 
 .auth-lock-overlay {
+    display: none !important;
     position: fixed;
     inset: 0;
-    display: none;
-    background: rgba(8, 10, 18, 0.82);
-    backdrop-filter: blur(6px);
+    background: transparent;
+    backdrop-filter: none;
     z-index: 2600;
+    pointer-events: none;
+    opacity: 0;
 }
 
 body.auth-locked .auth-lock-overlay {
-    display: block;
+    display: none !important;
 }
 
 body.auth-locked #auth-guest-panel {
@@ -2287,6 +2289,16 @@ body.auth-locked .modal-overlay.endgame-modal {
     margin: 0;
     font-size: 0.86rem;
     color: var(--accent);
+}
+
+/* ===== Analysis Section - Category Landing ===== */
+.analysis-detail {
+    padding: 0 8px;
+}
+
+.analysis-detail h2 {
+    font-size: 1.4rem;
+    margin-bottom: 6px;
 }
 
 /* ===== Study Section - Category Landing ===== */
