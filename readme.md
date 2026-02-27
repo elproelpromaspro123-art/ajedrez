@@ -18,9 +18,10 @@ No requiere login.
 - `PORT` (opcional): puerto del servidor (default `3000`).
 - `GROQ_API_KEY` (opcional): habilita el chat IA desde backend.
 - `GROQ_MODEL` (opcional): modelo Groq para `/api/ai-chat` (default `groq/compound`).
-- `DATA_BASE` (opcional): ruta de almacenamiento JSON compartido.  
+- `DATA_BASE2` (opcional, prioridad alta) o `DATA_BASE` (compatibilidad): backend de datos compartido.
+  - Si es ruta local o `file://`, usa almacenamiento JSON en archivo.
+  - Si es `postgres://` o `postgresql://`, usa PostgreSQL directamente (tabla `freechess_store`).
   - La app guarda sus datos bajo namespace aislado `freechess_lab_v1` para no interferir con otros sitios.
-  - Si el valor no es un JSON seguro (por ejemplo DB no JSON), crea un sidecar `*.freechess.json`.
 
 ## Ejecutar local
 1. Instala dependencias:

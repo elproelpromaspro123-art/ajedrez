@@ -367,8 +367,8 @@ function clearAuthCookie(req: Request, res: ExpressResponse) {
     );
 }
 
-function readAuthState(): { scopedData: Record<string, unknown>; auth: AuthRootState } {
-    const scopedData = readScopedData();
+async function readAuthState(): Promise<{ scopedData: Record<string, unknown>; auth: AuthRootState }> {
+    const scopedData = await readScopedData();
     const accounts = asObject(scopedData.accounts) || {};
     const usersRaw = asObject(accounts.users) || {};
     const sessionsRaw = asObject(accounts.sessions) || {};
@@ -422,7 +422,7 @@ function readAuthState(): { scopedData: Record<string, unknown>; auth: AuthRootS
     };
 }
 
-function persistAuthState(scopedData: Record<string, unknown>, auth: AuthRootState) {
+async function persistAuthState(scopedData: Record<string, unknown>, auth: AuthRootState) {
     const currentAccounts = asObject(scopedData.accounts) || {};
     const nextAccounts = {
         ...currentAccounts,
@@ -523,30 +523,30 @@ function unauthorized(res: ExpressResponse, message = "Debes iniciar sesion para
 
 function resolveDataBaseErrorMessage(err: unknown, fallback: string): string {
     const message = err instanceof Error ? err.message : "";
-    if (/DATA_BASE|database/i.test(message)) {
-        return "No se pudo acceder a DATA_BASE. Verifica la variable y permisos de escritura.";
+    if (/DATA_BASE2|DATA_BASE|database|postgres/i.test(message)) {
+        return "No se pudo acceder a DATA_BASE2/DATA_BASE. Verifica la variable y permisos de escritura.";
     }
     return fallback;
 }
 
 function isDataBaseError(err: unknown): boolean {
     const message = err instanceof Error ? err.message : "";
-    return /DATA_BASE|database/i.test(message);
+    return /DATA_BASE2|DATA_BASE|database|postgres/i.test(message);
 }
 
-function resolveAuthContext(req: Request): {
+async function resolveAuthContext(req: Request): Promise<{
     scopedData: Record<string, unknown>;
     auth: AuthRootState;
     token: string;
     userKey: string;
     user: UserRecord;
-} | null {
+} | null> {
     const token = getAuthCookieToken(req);
     if (!token) {
         return null;
     }
 
-    const { scopedData, auth } = readAuthState();
+    const { scopedData, auth } = await readAuthState();
     pruneSessions(auth);
     const session = auth.sessions[token];
     if (!session) {
@@ -556,14 +556,14 @@ function resolveAuthContext(req: Request): {
     const user = auth.users[session.userKey];
     if (!user) {
         delete auth.sessions[token];
-        persistAuthState(scopedData, auth);
+        await persistAuthState(scopedData, auth);
         return null;
     }
 
     const expiresAtMs = Date.parse(session.expiresAt);
     if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
         delete auth.sessions[token];
-        persistAuthState(scopedData, auth);
+        await persistAuthState(scopedData, auth);
         return null;
     }
 
@@ -573,7 +573,7 @@ function resolveAuthContext(req: Request): {
             ...session,
             updatedAt: new Date().toISOString()
         };
-        persistAuthState(scopedData, auth);
+        await persistAuthState(scopedData, auth);
     }
 
     return {
@@ -647,7 +647,7 @@ async function requestGroqChatCompletion(systemPrompt: string, question: string)
     return content.trim();
 }
 
-router.post("/auth/register", (req, res) => {
+router.post("/auth/register", async (req, res) => {
     const credentials = parseAuthCredentials(req.body);
     if (!credentials) {
         return res.status(400).json({
@@ -656,7 +656,7 @@ router.post("/auth/register", (req, res) => {
     }
 
     try {
-        const { scopedData, auth } = readAuthState();
+        const { scopedData, auth } = await readAuthState();
         pruneSessions(auth);
 
         const userKey = usernameToKey(credentials.username);
@@ -680,7 +680,7 @@ router.post("/auth/register", (req, res) => {
         auth.sessions[token] = session;
         pruneSessions(auth);
 
-        persistAuthState(scopedData, auth);
+        await persistAuthState(scopedData, auth);
         setAuthCookie(req, res, token, Date.parse(session.expiresAt));
 
         return res.status(201).json({
@@ -699,14 +699,14 @@ router.post("/auth/register", (req, res) => {
     }
 });
 
-router.post("/auth/login", (req, res) => {
+router.post("/auth/login", async (req, res) => {
     const credentials = parseAuthCredentials(req.body);
     if (!credentials) {
         return res.status(400).json({ message: "Credenciales invalidas." });
     }
 
     try {
-        const { scopedData, auth } = readAuthState();
+        const { scopedData, auth } = await readAuthState();
         pruneSessions(auth);
 
         const userKey = usernameToKey(credentials.username);
@@ -719,7 +719,7 @@ router.post("/auth/login", (req, res) => {
         const session = buildSessionRecord(req, userKey);
         auth.sessions[token] = session;
         pruneSessions(auth);
-        persistAuthState(scopedData, auth);
+        await persistAuthState(scopedData, auth);
         setAuthCookie(req, res, token, Date.parse(session.expiresAt));
 
         return res.json({
@@ -737,16 +737,16 @@ router.post("/auth/login", (req, res) => {
     }
 });
 
-router.post("/auth/logout", (req, res) => {
+router.post("/auth/logout", async (req, res) => {
     const token = getAuthCookieToken(req);
 
     try {
         if (token) {
-            const { scopedData, auth } = readAuthState();
+            const { scopedData, auth } = await readAuthState();
             if (auth.sessions[token]) {
                 delete auth.sessions[token];
                 pruneSessions(auth);
-                persistAuthState(scopedData, auth);
+                await persistAuthState(scopedData, auth);
             }
         }
     } catch (err) {
@@ -760,9 +760,9 @@ router.post("/auth/logout", (req, res) => {
     });
 });
 
-router.get("/auth/session", (req, res) => {
+router.get("/auth/session", async (req, res) => {
     try {
-        const ctx = resolveAuthContext(req);
+        const ctx = await resolveAuthContext(req);
         if (!ctx) {
             return res.json({
                 authenticated: false
@@ -791,9 +791,9 @@ router.get("/auth/session", (req, res) => {
     }
 });
 
-router.get("/profile-store", (req, res) => {
+router.get("/profile-store", async (req, res) => {
     try {
-        const ctx = resolveAuthContext(req);
+        const ctx = await resolveAuthContext(req);
         if (!ctx) {
             clearAuthCookie(req, res);
             return unauthorized(res);
@@ -814,7 +814,7 @@ router.get("/profile-store", (req, res) => {
     }
 });
 
-router.post("/profile-store/sync", (req, res) => {
+router.post("/profile-store/sync", async (req, res) => {
     const payload: ProfileStoreSyncBody = req.body || {};
     const patch: Record<string, unknown> = {};
 
@@ -840,7 +840,7 @@ router.post("/profile-store/sync", (req, res) => {
     }
 
     try {
-        const ctx = resolveAuthContext(req);
+        const ctx = await resolveAuthContext(req);
         if (!ctx) {
             clearAuthCookie(req, res);
             return unauthorized(res);
@@ -855,7 +855,7 @@ router.post("/profile-store/sync", (req, res) => {
         };
         ctx.auth.users[ctx.userKey] = updatedUser;
         pruneSessions(ctx.auth);
-        persistAuthState(ctx.scopedData, ctx.auth);
+        await persistAuthState(ctx.scopedData, ctx.auth);
 
         return res.json({
             ok: true,
