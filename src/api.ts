@@ -529,6 +529,11 @@ function resolveDataBaseErrorMessage(err: unknown, fallback: string): string {
     return fallback;
 }
 
+function isDataBaseError(err: unknown): boolean {
+    const message = err instanceof Error ? err.message : "";
+    return /DATA_BASE|database/i.test(message);
+}
+
 function resolveAuthContext(req: Request): {
     scopedData: Record<string, unknown>;
     auth: AuthRootState;
@@ -772,6 +777,13 @@ router.get("/auth/session", (req, res) => {
         });
     } catch (err) {
         console.error("Auth session check failed:", err);
+        if (isDataBaseError(err)) {
+            clearAuthCookie(req, res);
+            return res.json({
+                authenticated: false,
+                message: resolveDataBaseErrorMessage(err, "No se pudo validar la sesion.")
+            });
+        }
         return res.status(500).json({
             authenticated: false,
             message: resolveDataBaseErrorMessage(err, "No se pudo validar la sesion.")

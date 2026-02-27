@@ -44,7 +44,7 @@ function parseDatabaseCandidatePath(): { source: string; candidatePath: string }
             };
         } catch {
             return {
-                source: "invalid_env_file_url",
+                source: "invalid_env_file_url_fallback",
                 candidatePath: DEFAULT_DB_FILE
             };
         }
@@ -52,8 +52,8 @@ function parseDatabaseCandidatePath(): { source: string; candidatePath: string }
 
     if (/^[a-zA-Z]+:\/\//.test(raw)) {
         return {
-            source: "unsupported_remote_url",
-            candidatePath: raw
+            source: "unsupported_remote_url_fallback",
+            candidatePath: path.resolve("data", "database.remote-fallback.json")
         };
     }
 
@@ -64,7 +64,7 @@ function parseDatabaseCandidatePath(): { source: string; candidatePath: string }
         };
     } catch {
         return {
-            source: "invalid_env_path",
+            source: "invalid_env_path_fallback",
             candidatePath: DEFAULT_DB_FILE
         };
     }
@@ -101,12 +101,6 @@ function getPaths(): DatabasePaths {
     }
 
     const base = parseDatabaseCandidatePath();
-    if (base.source === "unsupported_remote_url") {
-        throw new Error("DATA_BASE must be a local file path or file:// URL. Remote URLs are not supported.");
-    }
-    if (base.source === "invalid_env_file_url" || base.source === "invalid_env_path") {
-        throw new Error("DATA_BASE has an invalid value. Use a valid local file path or file:// URL.");
-    }
     cachedPaths = {
         source: base.source,
         candidatePath: base.candidatePath,
