@@ -38,7 +38,7 @@ let postgresPool: Pool | null = null;
 let postgresReadyPromise: Promise<void> | null = null;
 
 function resolveDatabaseEnvConfig(): DatabaseEnvConfig {
-    const dataBase2 = String(process.env.DATA_BASE2 || "").trim();
+    const dataBase2 = normalizeEnvValue(process.env.DATA_BASE2);
     if (dataBase2) {
         return {
             envName: "DATA_BASE2",
@@ -46,7 +46,7 @@ function resolveDatabaseEnvConfig(): DatabaseEnvConfig {
         };
     }
 
-    const dataBase = String(process.env.DATA_BASE || "").trim();
+    const dataBase = normalizeEnvValue(process.env.DATA_BASE);
     if (dataBase) {
         return {
             envName: "DATA_BASE",
@@ -58,6 +58,21 @@ function resolveDatabaseEnvConfig(): DatabaseEnvConfig {
         envName: "default",
         rawValue: ""
     };
+}
+
+function normalizeEnvValue(value: unknown): string {
+    const raw = String(value || "").trim();
+    if (!raw) {
+        return "";
+    }
+
+    const unquoted = (raw.startsWith("\"") && raw.endsWith("\""))
+        || (raw.startsWith("'") && raw.endsWith("'"))
+        ? raw.slice(1, -1).trim()
+        : raw;
+
+    // Some deployment panels preserve accidental line breaks.
+    return unquoted.replace(/[\r\n]+/g, "").trim();
 }
 
 function ensureJsonSafePath(candidatePath: string): string {
