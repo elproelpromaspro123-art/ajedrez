@@ -86,7 +86,8 @@ function runFrontendLogicUnitTests() {
     const book: OpeningBookEntry[] = [
         { name: "Apertura Italiana", moves: ["e4", "e5", "Nf3", "Nc6", "Bc4"] },
         { name: "Defensa Siciliana", moves: ["e4", "c5"] },
-        { name: "Ruy Lopez", moves: ["e4", "e5", "Nf3", "Nc6", "Bb5"] }
+        { name: "Ruy Lopez", moves: ["e4", "e5", "Nf3", "Nc6", "Bb5"] },
+        { name: "Apertura Saragossa", moves: ["c3"] }
     ];
 
     const exact = detectOpeningFromBook(book, ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"]);
@@ -94,6 +95,12 @@ function runFrontendLogicUnitTests() {
 
     const prefix = detectOpeningBestPrefix(book, ["e4", "c5", "Nf3", "d6"]);
     assert(prefix === "Defensa Siciliana", "detectOpeningBestPrefix should match the best available prefix.");
+
+    const annotationAware = detectOpeningFromBook(book, ["e4", "e5", "Nf3", "Nc6", "Bb5+", "a6"]);
+    assert(annotationAware === "Ruy Lopez", "detectOpeningFromBook should normalize SAN checks/annotations.");
+
+    const fallbackOneMove = detectOpeningFromBook(book, ["c3", "e5", "d4"]);
+    assert(fallbackOneMove === "Apertura Saragossa", "detectOpeningFromBook should allow single-move fallback openings.");
 
     const parsed = parseStructuredAIResponse(JSON.stringify({
         text: "Juega activo en el centro.",

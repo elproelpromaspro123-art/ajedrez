@@ -3,17 +3,33 @@ export interface OpeningBookEntry {
     moves: string[];
 }
 
+function normalizeSanForBookMove(move: string): string {
+    return String(move || "")
+        .trim()
+        .replace(/[!?]+/g, "")
+        .replace(/[+#]+$/g, "")
+        .replace(/\s+/g, "");
+}
+
+function normalizeMoveLine(moves: string[]): string[] {
+    return Array.isArray(moves)
+        ? moves.map((move) => normalizeSanForBookMove(move))
+        : [];
+}
+
 export function detectOpeningFromBook(book: OpeningBookEntry[], history: string[]): string | null {
     const sorted = book.slice().sort((a, b) => b.moves.length - a.moves.length);
+    const normalizedHistory = normalizeMoveLine(history);
 
     for (const opening of sorted) {
-        if (opening.moves.length > history.length) {
+        const normalizedMoves = normalizeMoveLine(opening.moves);
+        if (normalizedMoves.length > normalizedHistory.length) {
             continue;
         }
 
         let match = true;
-        for (let i = 0; i < opening.moves.length; i += 1) {
-            if (opening.moves[i] !== history[i]) {
+        for (let i = 0; i < normalizedMoves.length; i += 1) {
+            if (normalizedMoves[i] !== normalizedHistory[i]) {
                 match = false;
                 break;
             }
@@ -28,13 +44,15 @@ export function detectOpeningFromBook(book: OpeningBookEntry[], history: string[
 }
 
 export function detectOpeningBestPrefix(book: OpeningBookEntry[], history: string[]): string | null {
+    const normalizedHistory = normalizeMoveLine(history);
     let best: { name: string; len: number } | null = null;
 
     for (const opening of book) {
-        const max = Math.min(opening.moves.length, history.length);
+        const normalizedMoves = normalizeMoveLine(opening.moves);
+        const max = Math.min(normalizedMoves.length, normalizedHistory.length);
         let matched = 0;
 
-        while (matched < max && opening.moves[matched] === history[matched]) {
+        while (matched < max && normalizedMoves[matched] === normalizedHistory[matched]) {
             matched += 1;
         }
 

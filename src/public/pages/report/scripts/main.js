@@ -1783,14 +1783,26 @@ const MOVE_CLASSES = [
     { key: "blunder", label: "\u00a1Desastre!", icon: "\ud83d\udca5", maxLoss: Infinity }
 ];
 
-function classifyMove(cpLoss, isBookMove) {
+function getDynamicCpThresholds(previousEvalCp) {
+    const prev = Math.abs(Number(previousEvalCp || 0));
+    return {
+        best: Math.max(8, (0.0001 * prev * prev) + (0.0236 * prev) - 3.7143),
+        good: Math.max(30, (0.0002 * prev * prev) + (0.2643 * prev) + 60.5455),
+        inaccuracy: Math.max(100, (0.0002 * prev * prev) + (0.3624 * prev) + 108.0909),
+        mistake: Math.max(240, (0.0003 * prev * prev) + (0.4027 * prev) + 225.8182)
+    };
+}
+
+function classifyMove(cpLoss, isBookMove, previousEvalCp = 0) {
     if (isBookMove) return MOVE_CLASSES.find(c => c.key === "book");
-    if (cpLoss <= -30) return MOVE_CLASSES.find(c => c.key === "brilliant");
-    if (cpLoss <= 0) return MOVE_CLASSES.find(c => c.key === "great");
-    if (cpLoss <= 10) return MOVE_CLASSES.find(c => c.key === "best");
-    if (cpLoss <= 30) return MOVE_CLASSES.find(c => c.key === "good");
-    if (cpLoss <= 100) return MOVE_CLASSES.find(c => c.key === "inaccuracy");
-    if (cpLoss <= 250) return MOVE_CLASSES.find(c => c.key === "mistake");
+    if (cpLoss <= -35) return MOVE_CLASSES.find(c => c.key === "brilliant");
+    if (cpLoss <= -10) return MOVE_CLASSES.find(c => c.key === "great");
+
+    const thresholds = getDynamicCpThresholds(previousEvalCp);
+    if (cpLoss <= thresholds.best) return MOVE_CLASSES.find(c => c.key === "best");
+    if (cpLoss <= thresholds.good) return MOVE_CLASSES.find(c => c.key === "good");
+    if (cpLoss <= thresholds.inaccuracy) return MOVE_CLASSES.find(c => c.key === "inaccuracy");
+    if (cpLoss <= thresholds.mistake) return MOVE_CLASSES.find(c => c.key === "mistake");
     return MOVE_CLASSES.find(c => c.key === "blunder");
 }
 
@@ -1982,70 +1994,127 @@ function buildCoachComment(classification, move, evalAfter, openingName) {
 
 /* ===== Opening book with names (chess.com style) ===== */
 const OPENING_BOOK = [
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Ba4", "Nf6", "O-O", "Be7"], name: "Ruy Lopez Cerrada" },
+    { moves: ["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "a6"], name: "Siciliana - Variante Najdorf" },
+    { moves: ["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "g6"], name: "Siciliana - Variante Dragon" },
+    { moves: ["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "e6"], name: "Siciliana - Scheveningen" },
+    { moves: ["e4", "c5", "Nf3", "Nc6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3", "e5"], name: "Siciliana - Sveshnikov" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6", "Bxc6"], name: "Ruy Lopez - Variante del Cambio" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "c3"], name: "Italiana - Giuoco Pianissimo" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5", "b4"], name: "Gambito Evans" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6", "Ng5"], name: "Ataque Fegatello (Fried Liver)" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "d4", "exd4", "Nxd4"], name: "Escocesa - Linea Principal" },
+    { moves: ["e4", "e5", "Nc3", "Nf6", "f4"], name: "Gambito de Viena" },
+    { moves: ["e4", "c5", "Nf3", "Nc6", "d4", "cxd4", "Nxd4", "g6"], name: "Siciliana - Dragon Acelerado" },
+    { moves: ["e4", "c5", "Nf3", "Nc6", "Bb5"], name: "Siciliana - Variante Rossolimo" },
+    { moves: ["e4", "c5", "Nf3", "d6", "Bb5+"], name: "Siciliana - Variante Moscu" },
+    { moves: ["e4", "c5", "Nc3", "Nc6", "f4"], name: "Siciliana - Ataque Grand Prix" },
+    { moves: ["e4", "d6", "d4", "Nf6", "Nc3", "g6", "f4"], name: "Defensa Pirc - Ataque Austriaco" },
+    { moves: ["d4", "d5", "c4", "e6", "Nc3", "Nf6", "Nf3", "c6"], name: "Defensa Semi-Eslava" },
+    { moves: ["e4", "e6", "d4", "d5", "Nc3", "Bb4"], name: "Francesa - Variante Winawer" },
+    { moves: ["e4", "e6", "d4", "d5", "Nc3", "Nf6"], name: "Francesa - Variante Clasica" },
+    { moves: ["e4", "c6", "d4", "d5", "Nc3", "dxe4", "Nxe4", "Bf5"], name: "Caro-Kann - Clasica Bf5" },
+    { moves: ["d4", "Nf6", "c4", "g6", "Nc3", "d5"], name: "Defensa Grunfeld" },
     { moves: ["e4", "e5", "Nf3", "Nc6", "Bb5"], name: "Apertura Espanola (Ruy Lopez)" },
     { moves: ["e4", "e5", "Nf3", "Nc6", "Bb5", "a6"], name: "Ruy Lopez - Variante Morphy" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Bb5", "Nf6"], name: "Defensa Berlin" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Bb5", "f5"], name: "Gambito Schliemann" },
     { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4"], name: "Apertura Italiana" },
     { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Bc5"], name: "Giuoco Piano" },
     { moves: ["e4", "e5", "Nf3", "Nc6", "Bc4", "Nf6"], name: "Defensa Dos Caballos" },
-    { moves: ["e4", "e5", "Nf3", "Nc6", "d4"], name: "Apertura Escocesa" },
     { moves: ["e4", "e5", "Nf3", "Nf6"], name: "Defensa Petrov" },
     { moves: ["e4", "e5", "Nf3", "d6"], name: "Defensa Philidor" },
-    { moves: ["e4", "e5", "f4"], name: "Gambito de Rey" },
-    { moves: ["e4", "e5", "d4"], name: "Gambito del Centro" },
+    { moves: ["e4", "e5", "Nf3", "f5"], name: "Gambito Leton" },
     { moves: ["e4", "e5", "Nc3"], name: "Apertura Viena" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Nc3"], name: "Apertura de los Cuatro Caballos" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "Nc3", "Nf6"], name: "Cuatro Caballos - Simetrica" },
+    { moves: ["e4", "e5", "Nf3", "Nc6", "c3"], name: "Apertura Ponziani" },
+    { moves: ["e4", "e5", "f4"], name: "Gambito de Rey" },
+    { moves: ["e4", "e5", "f4", "exf4"], name: "Gambito de Rey Aceptado" },
+    { moves: ["e4", "e5", "f4", "d5"], name: "Gambito Falkbeer" },
+    { moves: ["e4", "e5", "d4"], name: "Gambito del Centro" },
+    { moves: ["e4", "e5", "d4", "exd4", "Qxd4"], name: "Apertura del Centro" },
+    { moves: ["e4", "e5", "Bc4"], name: "Apertura del Alfil" },
+    { moves: ["e4", "e5", "Qh5"], name: "Apertura Parham" },
     { moves: ["e4", "c5"], name: "Defensa Siciliana" },
-    { moves: ["e4", "c5", "Nf3", "d6", "d4", "cxd4", "Nxd4", "Nf6", "Nc3"], name: "Siciliana - Variante Najdorf" },
+    { moves: ["e4", "c5", "Nf3"], name: "Siciliana Abierta" },
+    { moves: ["e4", "c5", "Nf3", "d6"], name: "Siciliana - Estructura Najdorf/Dragon" },
     { moves: ["e4", "c5", "Nf3", "Nc6"], name: "Siciliana - Variante Clasica" },
     { moves: ["e4", "c5", "Nf3", "e6"], name: "Siciliana - Variante Paulsen" },
     { moves: ["e4", "c5", "c3"], name: "Siciliana - Variante Alapin" },
+    { moves: ["e4", "c5", "Nc3"], name: "Siciliana Cerrada" },
+    { moves: ["e4", "c5", "d4", "cxd4", "c3"], name: "Gambito Smith-Morra" },
+    { moves: ["e4", "c5", "b4"], name: "Gambito Wing" },
     { moves: ["e4", "e6"], name: "Defensa Francesa" },
-    { moves: ["e4", "e6", "d4", "d5"], name: "Defensa Francesa - Clasica" },
-    { moves: ["e4", "e6", "d4", "d5", "Nc3"], name: "Francesa - Variante Winawer" },
+    { moves: ["e4", "e6", "d4", "d5"], name: "Defensa Francesa - Linea Principal" },
+    { moves: ["e4", "e6", "d4", "d5", "e5"], name: "Francesa - Variante del Avance" },
+    { moves: ["e4", "e6", "d4", "d5", "exd5"], name: "Francesa - Variante del Cambio" },
+    { moves: ["e4", "e6", "d4", "d5", "Nd2"], name: "Francesa - Variante Tarrasch" },
     { moves: ["e4", "c6"], name: "Defensa Caro-Kann" },
     { moves: ["e4", "c6", "d4", "d5"], name: "Caro-Kann - Linea Principal" },
+    { moves: ["e4", "c6", "d4", "d5", "e5"], name: "Caro-Kann - Variante Avance" },
+    { moves: ["e4", "c6", "d4", "d5", "exd5", "cxd5"], name: "Caro-Kann - Variante Cambio" },
+    { moves: ["e4", "c6", "d4", "d5", "Nc3", "dxe4", "Nxe4"], name: "Caro-Kann - Variante Clasica" },
+    { moves: ["e4", "c6", "d4", "d5", "Nd2"], name: "Caro-Kann - Ataque Karpov" },
     { moves: ["e4", "d5"], name: "Defensa Escandinava" },
+    { moves: ["e4", "d5", "exd5", "Qxd5"], name: "Escandinava - Variante Principal" },
+    { moves: ["e4", "d5", "exd5", "Nf6"], name: "Escandinava - Variante Moderna" },
     { moves: ["e4", "d6"], name: "Defensa Pirc" },
+    { moves: ["e4", "d6", "d4", "Nf6", "Nc3", "g6"], name: "Defensa Pirc - Linea Principal" },
     { moves: ["e4", "g6"], name: "Defensa Moderna" },
     { moves: ["e4", "Nf6"], name: "Defensa Alekhine" },
+    { moves: ["e4", "Nf6", "e5", "Nd5"], name: "Alekhine - Variante Moderna" },
     { moves: ["d4", "d5", "c4"], name: "Gambito de Dama" },
     { moves: ["d4", "d5", "c4", "e6"], name: "Gambito de Dama Rehusado" },
     { moves: ["d4", "d5", "c4", "dxc4"], name: "Gambito de Dama Aceptado" },
     { moves: ["d4", "d5", "c4", "c6"], name: "Defensa Eslava" },
+    { moves: ["d4", "d5", "c4", "e6", "Nc3", "c5"], name: "Defensa Tarrasch" },
     { moves: ["d4", "Nf6", "c4", "g6", "Nc3", "Bg7"], name: "Defensa India de Rey" },
     { moves: ["d4", "Nf6", "c4", "g6"], name: "Sistema Indio de Rey" },
     { moves: ["d4", "Nf6", "c4", "e6", "Nc3", "Bb4"], name: "Defensa Nimzo-India" },
     { moves: ["d4", "Nf6", "c4", "e6", "Nf3", "b6"], name: "Defensa India de Dama" },
+    { moves: ["d4", "Nf6", "c4", "e6", "Nf3", "Bb4+"], name: "Defensa Bogo-India" },
     { moves: ["d4", "Nf6", "c4", "c5"], name: "Defensa Benoni" },
-    { moves: ["d4", "Nf6", "Nf3", "g6", "c4", "Bg7"], name: "India de Rey - Sistema Clasico" },
+    { moves: ["d4", "Nf6", "c4", "c5", "d5", "b5"], name: "Gambito Benko" },
     { moves: ["d4", "Nf6", "Bg5"], name: "Ataque Trompowsky" },
     { moves: ["d4", "d5", "Nf3", "Nf6", "c4"], name: "Gambito de Dama Tardio" },
     { moves: ["d4", "d5", "Bf4"], name: "Sistema Londres" },
     { moves: ["d4", "d5", "Nf3", "Nf6", "Bf4"], name: "Sistema Londres" },
     { moves: ["d4", "f5"], name: "Defensa Holandesa" },
+    { moves: ["d4", "f5", "g3"], name: "Holandesa - Variante Leningrado" },
     { moves: ["c4"], name: "Apertura Inglesa" },
     { moves: ["c4", "e5"], name: "Inglesa - Siciliana Invertida" },
     { moves: ["c4", "c5"], name: "Inglesa - Simetrica" },
+    { moves: ["c4", "Nf6"], name: "Inglesa - Linea India" },
     { moves: ["Nf3", "d5", "g3"], name: "Apertura Reti" },
     { moves: ["Nf3", "Nf6", "g3", "g6", "Bg2", "Bg7"], name: "Apertura Reti - Doble Fianchetto" },
+    { moves: ["d4", "Nf6", "c4", "e6", "g3"], name: "Apertura Catalana" },
+    { moves: ["d4", "Nf6", "Nf3", "e6", "g3"], name: "Catalana por transposicion" },
     { moves: ["g3"], name: "Sistema Barcza" },
     { moves: ["b3"], name: "Apertura Larsen" },
     { moves: ["f4"], name: "Apertura Bird" },
+    { moves: ["f4", "e5"], name: "Gambito From" },
+    { moves: ["Nc3"], name: "Apertura Dunst" },
+    { moves: ["b4"], name: "Apertura Sokolsky (Polaca)" },
+    { moves: ["c3"], name: "Apertura Saragossa" },
+    { moves: ["a3"], name: "Apertura Anderssen" },
+    { moves: ["h3"], name: "Apertura Clemenz" },
+    { moves: ["d3"], name: "Apertura Mieses" },
+    { moves: ["e3"], name: "Apertura Van't Kruijs" },
+    { moves: ["Nh3"], name: "Apertura Amar" },
     { moves: ["e4", "e5", "Nf3", "Nc6"], name: "Apertura Abierta - Juego Abierto" },
     { moves: ["e4", "e5", "Nf3"], name: "Juego Abierto" },
     { moves: ["d4", "d5"], name: "Juego Cerrado" },
     { moves: ["e4"], name: "Apertura del Peon de Rey" },
-    { moves: ["d4"], name: "Apertura del Peon de Dama" }
+    { moves: ["d4"], name: "Apertura del Peon de Dama" },
+    { moves: ["Nf3"], name: "Apertura Reti" }
 ];
 
 // Sort by longest first for best match
 OPENING_BOOK.sort((a, b) => b.moves.length - a.moves.length);
-
-const BOOK_MOVES_BASIC = new Set([
-    "e4", "d4", "Nf3", "c4", "g3", "b3", "f4", "Nc3", "e3", "d3", "b4", "c3",
-    "e5", "d5", "Nf6", "c5", "g6", "e6", "c6", "d6", "b6", "Nc6", "f5",
-    "Bb5", "Bc4", "Be2", "Bd3", "Bg2", "Bb2", "Bf4", "Bg5", "Be7", "Bb4", "Bc5", "Bb7",
-    "O-O", "O-O-O", "a3", "a6", "h3", "h6", "Re1", "Qe2", "Qd2", "Qb3"
-]);
+OPENING_BOOK.forEach((opening) => {
+    opening.normalizedMoves = opening.moves.map((move) => normalizeSanForBookMove(move));
+});
 
 const openingCatalogState = {
     loaded: false,
@@ -2063,6 +2132,14 @@ function normalizeOpeningName(name) {
         .toLowerCase()
         .replace(/\s+/g, " ")
         .trim();
+}
+
+function normalizeSanForBookMove(move) {
+    return String(move || "")
+        .trim()
+        .replace(/[!?]+/g, "")
+        .replace(/[+#]+$/g, "")
+        .replace(/\s+/g, "");
 }
 
 function normalizeFenPlacement(fen) {
@@ -2110,9 +2187,32 @@ function refreshOpeningNameIndex() {
         .sort((a, b) => b.len - a.len);
 }
 
+function deriveFenFromManualLine(moves) {
+    if (typeof Chess !== "function" || !Array.isArray(moves) || moves.length === 0) {
+        return null;
+    }
+
+    try {
+        const board = new Chess();
+        for (const move of moves) {
+            const san = normalizeSanForBookMove(move);
+            if (!san || !board.move(san)) {
+                return null;
+            }
+        }
+        return board.fen();
+    } catch {
+        return null;
+    }
+}
+
 function seedManualOpeningCatalog() {
     OPENING_BOOK.forEach((opening) => {
         indexOpeningEntry(opening.name, null);
+        const derivedFen = deriveFenFromManualLine(opening.moves);
+        if (derivedFen) {
+            indexOpeningEntry(opening.name, derivedFen);
+        }
     });
     refreshOpeningNameIndex();
 }
@@ -2152,11 +2252,16 @@ async function loadOpeningCatalog() {
 }
 
 function detectOpeningByManualHistory(history) {
+    const normalizedHistory = Array.isArray(history)
+        ? history.map((move) => normalizeSanForBookMove(move))
+        : [];
+
     for (const opening of OPENING_BOOK) {
-        if (opening.moves.length > history.length) continue;
+        const openingMoves = Array.isArray(opening.normalizedMoves) ? opening.normalizedMoves : opening.moves;
+        if (openingMoves.length > normalizedHistory.length) continue;
         let match = true;
-        for (let i = 0; i < opening.moves.length; i++) {
-            if (history[i] !== opening.moves[i]) {
+        for (let i = 0; i < openingMoves.length; i++) {
+            if (normalizedHistory[i] !== openingMoves[i]) {
                 match = false;
                 break;
             }
@@ -2167,13 +2272,17 @@ function detectOpeningByManualHistory(history) {
 }
 
 function detectOpeningByBestPrefix(history) {
+    const normalizedHistory = Array.isArray(history)
+        ? history.map((move) => normalizeSanForBookMove(move))
+        : [];
     let bestName = null;
     let bestLen = 0;
 
     for (const opening of OPENING_BOOK) {
-        const max = Math.min(opening.moves.length, history.length);
+        const openingMoves = Array.isArray(opening.normalizedMoves) ? opening.normalizedMoves : opening.moves;
+        const max = Math.min(openingMoves.length, normalizedHistory.length);
         let len = 0;
-        while (len < max && opening.moves[len] === history[len]) {
+        while (len < max && openingMoves[len] === normalizedHistory[len]) {
             len += 1;
         }
 
@@ -2222,11 +2331,10 @@ function historyToDisplayLine(history, maxPly = 20) {
     return chunks.join(" ");
 }
 
-function isLikelyBookMove(history, san, fenAfter) {
+function isLikelyBookMove(history, _san, fenAfter) {
     const openingName = detectOpening(history, fenAfter);
-    const withinOpeningWindow = history.length <= 30;
-    const sanLooksTheoretical = BOOK_MOVES_BASIC.has(san);
-    const isBook = withinOpeningWindow && (sanLooksTheoretical || Boolean(openingName));
+    const withinOpeningWindow = Array.isArray(history) && history.length <= 24;
+    const isBook = withinOpeningWindow && Boolean(openingName);
 
     return {
         isBook,
@@ -2277,9 +2385,9 @@ async function getPositionEval(fen, localSession) {
     try {
         const result = await evaluateWithStockfish({
             fen,
-            depth: 12,
+            depth: 14,
             multipv: 1,
-            movetime: 800
+            movetime: 1200
         });
         if (localSession !== playState.sessionId) return null;
         return result.lines[0] ? result.lines[0].evaluation : null;
@@ -2330,10 +2438,10 @@ async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveInd
 
         // Check book move with a snapshot of move history at evaluation time
         const bookResult = isLikelyBookMove(historyAtMove, move.san, fenAfter);
-        const bookMove = bookResult.isBook && cpLoss < 30;
+        const bookMove = bookResult.isBook && cpLoss < 50;
 
         // Classify and save to the exact move index
-        const cls = classifyMove(cpLoss, bookMove);
+        const cls = classifyMove(cpLoss, bookMove, cpBefore);
         playState.moveClassifications[moveIndex] = cls.key;
 
         if (cls.key === "book" && bookResult.name) {
