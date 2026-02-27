@@ -335,8 +335,6 @@ function canPersistLocalData() {
     return Boolean(authState && authState.authenticated);
 }
 
-const LOCAL_AUTH_MARKER_PATH = "session.localAuth";
-
 function readStored(path, fallbackValue) {
     if (!storageModule || !storageModule.read) {
         return fallbackValue;
@@ -372,37 +370,6 @@ function withAuthFetchOptions(init) {
         },
         init || {}
     );
-}
-
-function readLocalAuthMarker() {
-    const marker = readStored(LOCAL_AUTH_MARKER_PATH, null);
-    if (!marker || typeof marker !== "object") {
-        return null;
-    }
-
-    const username = marker.username ? String(marker.username).trim() : "";
-    if (!username) {
-        return null;
-    }
-
-    return { username };
-}
-
-function persistLocalAuthMarker(username) {
-    if (!storageModule || !storageModule.write) {
-        return;
-    }
-
-    const safeUsername = username ? String(username).trim() : "";
-    if (!safeUsername) {
-        storageModule.write(LOCAL_AUTH_MARKER_PATH, null);
-        return;
-    }
-
-    storageModule.write(LOCAL_AUTH_MARKER_PATH, {
-        username: safeUsername,
-        savedAt: new Date().toISOString()
-    });
 }
 
 async function readJsonResponseSafe(response) {
@@ -522,31 +489,22 @@ async function refreshAuthSessionStatus() {
         if (authenticated) {
             const username = payload && payload.user && payload.user.username ? String(payload.user.username) : "";
             setAuthState(true, username);
-            persistLocalAuthMarker(username);
             setAuthStatus(`Sesion iniciada como ${username}. Tus datos se guardan en base de datos.`);
             return true;
         }
 
-        persistLocalAuthMarker("");
         setAuthState(false, "");
         clearGuestPersistedData();
         setAuthStatus("No has iniciado sesion. Inicia para guardar todo en base de datos.");
         return false;
     } catch {
         if (authState.authenticated && authState.username) {
-            setAuthStatus(`No se pudo validar la sesion con el servidor. Se mantiene la sesion local de ${authState.username}.`);
-            return true;
-        }
-
-        const marker = readLocalAuthMarker();
-        if (marker) {
-            setAuthState(true, marker.username);
-            setAuthStatus(`No se pudo validar el servidor. Se mantiene la sesion local de ${marker.username}.`);
+            setAuthStatus(`No se pudo validar la sesion con el servidor para ${authState.username}. Reintentando...`);
             return true;
         }
 
         setAuthState(false, "");
-        setAuthStatus("No se pudo validar la sesion con el servidor. Inicia sesion para continuar.");
+        setAuthStatus("No se pudo validar la sesion con el servidor. Verifica la conexion e inicia sesion de nuevo.");
         return false;
     }
 }
@@ -591,7 +549,6 @@ async function registerWithCredentials() {
 
         const username = payload && payload.user && payload.user.username ? String(payload.user.username) : credentials.username;
         setAuthState(true, username);
-        persistLocalAuthMarker(username);
         const warning = payload && payload.warning ? ` ${String(payload.warning)}` : "";
         setAuthStatus(`Cuenta creada e iniciada como ${username}.${warning}`);
         clearAuthPasswordInput();
@@ -628,7 +585,6 @@ async function loginWithCredentials() {
 
         const username = payload && payload.user && payload.user.username ? String(payload.user.username) : credentials.username;
         setAuthState(true, username);
-        persistLocalAuthMarker(username);
         setAuthStatus(`Sesion iniciada como ${username}.`);
         clearAuthPasswordInput();
         await onAuthenticatedSessionChanged();
@@ -648,7 +604,6 @@ async function logoutCurrentSession() {
     } catch {
         // ignore network errors; we still clear local auth state
     } finally {
-        persistLocalAuthMarker("");
         setAuthState(false, "");
         setAuthStatus("Sesion cerrada. El guardado remoto queda desactivado hasta iniciar sesion.");
         clearAuthPasswordInput();
@@ -5138,7 +5093,6 @@ async function hydrateProfileStoreFromDatabase() {
         const response = await fetch("/api/profile-store", withAuthFetchOptions());
         if (response.status === 401) {
             const payload = await readJsonResponseSafe(response);
-            persistLocalAuthMarker("");
             setAuthState(false, "");
             progressState.remoteHydrated = false;
             setAuthStatus(payload && payload.message
@@ -5203,7 +5157,6 @@ async function syncProfileStoreToDatabaseNow() {
         }));
         if (response.status === 401) {
             const payload = await readJsonResponseSafe(response);
-            persistLocalAuthMarker("");
             setAuthState(false, "");
             progressState.remoteHydrated = false;
             setAuthStatus(payload && payload.message
@@ -7743,14 +7696,8 @@ async function init() {
 
     bindTabs();
     bindEvents();
-    const localAuth = readLocalAuthMarker();
-    if (localAuth) {
-        setAuthState(true, localAuth.username);
-        setAuthStatus(`Restaurando sesion local de ${localAuth.username}...`);
-    } else {
-        setAuthState(false, "");
-        setAuthStatus("Validando sesion...");
-    }
+    setAuthState(false, "");
+    setAuthStatus("Validando sesion...");
     bindLessonsUi();
     bindAiChat();
     loadOpeningCatalog();

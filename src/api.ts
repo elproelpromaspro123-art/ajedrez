@@ -521,6 +521,14 @@ function unauthorized(res: ExpressResponse, message = "Debes iniciar sesion para
     });
 }
 
+function resolveDataBaseErrorMessage(err: unknown, fallback: string): string {
+    const message = err instanceof Error ? err.message : "";
+    if (/DATA_BASE|database/i.test(message)) {
+        return "No se pudo acceder a DATA_BASE. Verifica la variable y permisos de escritura.";
+    }
+    return fallback;
+}
+
 function resolveAuthContext(req: Request): {
     scopedData: Record<string, unknown>;
     auth: AuthRootState;
@@ -680,7 +688,9 @@ router.post("/auth/register", (req, res) => {
         });
     } catch (err) {
         console.error("Auth register failed:", err);
-        return res.status(500).json({ message: "No se pudo crear la cuenta." });
+        return res.status(500).json({
+            message: resolveDataBaseErrorMessage(err, "No se pudo crear la cuenta.")
+        });
     }
 });
 
@@ -716,7 +726,9 @@ router.post("/auth/login", (req, res) => {
         });
     } catch (err) {
         console.error("Auth login failed:", err);
-        return res.status(500).json({ message: "No se pudo iniciar sesion." });
+        return res.status(500).json({
+            message: resolveDataBaseErrorMessage(err, "No se pudo iniciar sesion.")
+        });
     }
 });
 
@@ -762,7 +774,7 @@ router.get("/auth/session", (req, res) => {
         console.error("Auth session check failed:", err);
         return res.status(500).json({
             authenticated: false,
-            message: "No se pudo validar la sesion."
+            message: resolveDataBaseErrorMessage(err, "No se pudo validar la sesion.")
         });
     }
 });

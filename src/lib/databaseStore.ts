@@ -16,6 +16,14 @@ let cachedPaths: DatabasePaths | null = null;
 let memoryFallbackRoot: Record<string, unknown> = {};
 let storageMode: "file" | "memory_fallback" = "file";
 
+function hasConfiguredDataBaseEnv(): boolean {
+    return Boolean(String(process.env.DATA_BASE || "").trim());
+}
+
+function shouldAllowMemoryFallback(): boolean {
+    return !hasConfiguredDataBaseEnv();
+}
+
 function parseDatabaseCandidatePath(): { source: string; candidatePath: string } {
     const raw = String(process.env.DATA_BASE || "").trim();
     if (!raw) {
@@ -36,7 +44,7 @@ function parseDatabaseCandidatePath(): { source: string; candidatePath: string }
             };
         } catch {
             return {
-                source: "env_file_url_fallback",
+                source: "invalid_env_file_url",
                 candidatePath: DEFAULT_DB_FILE
             };
         }
@@ -45,7 +53,7 @@ function parseDatabaseCandidatePath(): { source: string; candidatePath: string }
     if (/^[a-zA-Z]+:\/\//.test(raw)) {
         return {
             source: "unsupported_remote_url",
-            candidatePath: path.resolve("data", "database.remote-fallback.json")
+            candidatePath: raw
         };
     }
 
@@ -56,7 +64,7 @@ function parseDatabaseCandidatePath(): { source: string; candidatePath: string }
         };
     } catch {
         return {
-            source: "env_path_fallback",
+            source: "invalid_env_path",
             candidatePath: DEFAULT_DB_FILE
         };
     }
@@ -93,6 +101,12 @@ function getPaths(): DatabasePaths {
     }
 
     const base = parseDatabaseCandidatePath();
+    if (base.source === "unsupported_remote_url") {
+        throw new Error("DATA_BASE must be a local file path or file:// URL. Remote URLs are not supported.");
+    }
+    if (base.source === "invalid_env_file_url" || base.source === "invalid_env_path") {
+        throw new Error("DATA_BASE has an invalid value. Use a valid local file path or file:// URL.");
+    }
     cachedPaths = {
         source: base.source,
         candidatePath: base.candidatePath,
@@ -117,6 +131,9 @@ function cloneRoot(root: Record<string, unknown>): Record<string, unknown> {
 function readRootObject(): Record<string, unknown> {
     const paths = getPaths();
     if (storageMode === "memory_fallback") {
+        if (!shouldAllowMemoryFallback()) {
+            throw new Error(`Database storage is in memory fallback mode, but DATA_BASE requires persistent writes (${paths.activePath}).`);
+        }
         return cloneRoot(memoryFallbackRoot);
     }
 
@@ -136,6 +153,9 @@ function readRootObject(): Record<string, unknown> {
         }
         return {};
     } catch {
+        if (!shouldAllowMemoryFallback()) {
+            throw new Error(`Failed to read DATA_BASE JSON at ${paths.activePath}.`);
+        }
         if (Object.keys(memoryFallbackRoot).length > 0) {
             return cloneRoot(memoryFallbackRoot);
         }
@@ -148,6 +168,10 @@ function writeRootObject(root: Record<string, unknown>): void {
     memoryFallbackRoot = safeRoot;
 
     if (storageMode === "memory_fallback") {
+        if (!shouldAllowMemoryFallback()) {
+            const paths = getPaths();
+            throw new Error(`Cannot write DATA_BASE in memory fallback mode (${paths.activePath}).`);
+        }
         return;
     }
 
@@ -159,7 +183,6 @@ function writeRootObject(root: Record<string, unknown>): void {
         fs.writeFileSync(tempPath, JSON.stringify(safeRoot, null, 2), "utf8");
         fs.renameSync(tempPath, paths.activePath);
     } catch {
-        storageMode = "memory_fallback";
         try {
             if (fs.existsSync(tempPath)) {
                 fs.rmSync(tempPath, { force: true });
@@ -167,6 +190,12 @@ function writeRootObject(root: Record<string, unknown>): void {
         } catch {
             // ignore temp cleanup failures
         }
+
+        if (!shouldAllowMemoryFallback()) {
+            throw new Error(`Failed to persist DATA_BASE file at ${paths.activePath}.`);
+        }
+
+        storageMode = "memory_fallback";
     }
 }
 
