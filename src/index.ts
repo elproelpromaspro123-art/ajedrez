@@ -1,7 +1,9 @@
 import express, { ErrorRequestHandler } from "express";
 import fs from "fs";
+import { randomUUID } from "crypto";
 import path from "path";
 import compression from "compression";
+import helmet from "helmet";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -11,8 +13,32 @@ const app = express();
 app.disable("x-powered-by");
 app.set("trust proxy", 1);
 
+app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false
+}));
 app.use(express.json({ limit: "1mb" }));
 app.use(compression());
+
+app.use((req, res, next) => {
+    const requestId = randomUUID();
+    const startedAt = Date.now();
+    (req as express.Request & { requestId?: string }).requestId = requestId;
+    res.setHeader("X-Request-Id", requestId);
+
+    res.on("finish", () => {
+        const durationMs = Date.now() - startedAt;
+        console.log(JSON.stringify({
+            level: "info",
+            requestId,
+            method: req.method,
+            path: req.originalUrl || req.url,
+            status: res.statusCode,
+            durationMs
+        }));
+    });
+    next();
+});
 
 const distPublicDir = path.resolve("dist/public");
 const srcPublicDir = path.resolve("src/public");

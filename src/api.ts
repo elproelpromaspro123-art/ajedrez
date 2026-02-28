@@ -6,7 +6,7 @@ import { promisify } from "util";
 
 import analyse from "./lib/analysis";
 import { parseStructuredAIResponse } from "./lib/aiActions";
-import { getDatabaseMeta, readScopedData, replaceScopedData } from "./lib/databaseStore";
+import { checkAndUpdateRateLimitBucket, getDatabaseMeta, readScopedData, replaceScopedData } from "./lib/databaseStore";
 import {
     buildExplorerCacheKey,
     getFreshTimedCacheValue,
@@ -17,8 +17,9 @@ import {
     setTimedCacheValue,
     TimedCacheEntry
 } from "./lib/openingExplorer";
+import { registerAuthProfileRoutes } from "./api/routes/authProfileRoutes";
+import { registerGameRoutes } from "./api/routes/gameRoutes";
 import { Position } from "./lib/types/Position";
-import { AIChatRequestBody, ParseRequestBody, ReportRequestBody } from "./lib/types/RequestBody";
 import openings from "./resources/openings.json";
 
 const router = Router();
@@ -39,12 +40,6 @@ interface GroqChatCompletionResponse {
 interface OpeningCatalogEntry {
     name?: string;
     fen?: string;
-}
-
-interface ProfileStoreSyncBody {
-    progress?: unknown;
-    lessons?: unknown;
-    profile?: unknown;
 }
 
 interface AuthBody {
@@ -291,6 +286,46 @@ function getClientIdentifier(req: Request): string {
     return String(req.ip || "unknown");
 }
 
+function hasTrustedRequestOrigin(req: Request): boolean {
+    const secFetchSite = String(req.headers["sec-fetch-site"] || "").trim().toLowerCase();
+    if (secFetchSite && secFetchSite !== "same-origin" && secFetchSite !== "same-site" && secFetchSite !== "none") {
+        return false;
+    }
+
+    const host = String(req.headers["x-forwarded-host"] || req.headers.host || "").split(",")[0].trim().toLowerCase();
+    if (!host) return true;
+
+    const originRaw = String(req.headers.origin || "").trim().toLowerCase();
+    if (originRaw) {
+        try {
+            const originHost = new URL(originRaw).host.toLowerCase();
+            return originHost === host;
+        } catch {
+            return false;
+        }
+    }
+
+    const refererRaw = String(req.headers.referer || "").trim().toLowerCase();
+    if (refererRaw) {
+        try {
+            const refererHost = new URL(refererRaw).host.toLowerCase();
+            return refererHost === host;
+        } catch {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+function enforceCsrfOrigin(req: Request, res: ExpressResponse): boolean {
+    if (hasTrustedRequestOrigin(req)) {
+        return true;
+    }
+    res.status(403).json({ message: "CSRF validation failed (origin mismatch)." });
+    return false;
+}
+
 function checkRateLimitInMemory(
     limiter: Map<string, number[]>,
     clientId: string,
@@ -334,8 +369,19 @@ async function checkPersistentRateLimit(
     windowMs: number,
     maxRequests: number
 ) {
-    const now = Date.now();
+    try {
+        const distributed = await checkAndUpdateRateLimitBucket(scope, clientId, windowMs, maxRequests);
+        if (distributed.supported) {
+            return {
+                limited: distributed.limited,
+                retryAfterMs: distributed.retryAfterMs
+            };
+        }
+    } catch (err) {
+        console.error(`Distributed rate limiter failed for ${scope}:`, err);
+    }
 
+    const now = Date.now();
     try {
         const scopedData = await readScopedData();
         const rootRateLimits = asObject(scopedData.rateLimits) || {};
@@ -344,56 +390,41 @@ async function checkPersistentRateLimit(
 
         if (active.length >= maxRequests) {
             const retryAfterMs = Math.max(1, windowMs - (now - active[0]));
-            const nextScopeRateLimits: Record<string, unknown> = {
-                ...scopeRateLimits,
-                [clientId]: active
-            };
+            scopeRateLimits[clientId] = active;
             await replaceScopedData({
                 ...scopedData,
                 rateLimits: {
                     ...rootRateLimits,
-                    [scope]: nextScopeRateLimits
+                    [scope]: scopeRateLimits
                 }
             });
             return { limited: true, retryAfterMs };
         }
 
         active.push(now);
+        scopeRateLimits[clientId] = active;
 
-        const nextScopeRateLimits: Record<string, unknown> = {
-            ...scopeRateLimits,
-            [clientId]: active
-        };
-
-        const keys = Object.keys(nextScopeRateLimits);
+        const keys = Object.keys(scopeRateLimits);
         if (keys.length > RATE_LIMIT_CLIENT_BUCKET_MAX) {
-            keys
-                .sort((left, right) => {
-                    const leftArr = sanitizeRateHistory(nextScopeRateLimits[left], now, windowMs);
-                    const rightArr = sanitizeRateHistory(nextScopeRateLimits[right], now, windowMs);
-                    const leftLast = leftArr[leftArr.length - 1] || 0;
-                    const rightLast = rightArr[rightArr.length - 1] || 0;
-                    return leftLast - rightLast;
-                })
-                .slice(0, keys.length - RATE_LIMIT_CLIENT_BUCKET_MAX)
-                .forEach((key) => {
-                    delete nextScopeRateLimits[key];
-                });
+            keys.slice(0, keys.length - RATE_LIMIT_CLIENT_BUCKET_MAX).forEach((key) => {
+                delete scopeRateLimits[key];
+            });
         }
 
         await replaceScopedData({
             ...scopedData,
             rateLimits: {
                 ...rootRateLimits,
-                [scope]: nextScopeRateLimits
+                [scope]: scopeRateLimits
             }
         });
 
         return { limited: false, retryAfterMs: 0 };
     } catch (err) {
         console.error(`Persistent rate limiter fallback for ${scope}:`, err);
-        return checkRateLimitInMemory(fallbackLimiter, clientId, windowMs, maxRequests);
     }
+
+    return checkRateLimitInMemory(fallbackLimiter, clientId, windowMs, maxRequests);
 }
 
 function checkAIRateLimit(clientId: string) {
@@ -842,280 +873,9 @@ async function requestGroqChatCompletion(systemPrompt: string, question: string)
     return content.trim();
 }
 
-router.post("/auth/register", async (req, res) => {
-    const clientId = getClientIdentifier(req);
-    const registerLimit = await checkRegisterRateLimit(clientId);
-    if (registerLimit.limited) {
-        res.setHeader("Retry-After", String(Math.ceil(registerLimit.retryAfterMs / 1000)));
-        return res.status(429).json({
-            message: "Demasiados intentos de registro. Espera un momento antes de reintentar.",
-            retryAfterMs: registerLimit.retryAfterMs
-        });
-    }
+const randomToken = () => randomBytes(32).toString("hex");
 
-    const credentials = parseAuthCredentials(req.body);
-    if (!credentials) {
-        return res.status(400).json({
-            message: `Usuario/contraseña invalidos. Usuario: ${USERNAME_MIN}-${USERNAME_MAX} caracteres [A-Za-z0-9_], contraseña: ${PASSWORD_MIN}-${PASSWORD_MAX} caracteres.`
-        });
-    }
-
-    try {
-        const { scopedData, auth } = await readAuthState();
-        pruneSessions(auth);
-
-        const userKey = usernameToKey(credentials.username);
-        if (auth.users[userKey]) {
-            return res.status(409).json({ message: "Ese usuario ya existe." });
-        }
-
-        const nowIso = new Date().toISOString();
-        const hashed = await hashPassword(credentials.password);
-        auth.users[userKey] = {
-            username: credentials.username,
-            passwordSalt: hashed.saltHex,
-            passwordHash: hashed.hashHex,
-            createdAt: nowIso,
-            updatedAt: nowIso,
-            store: {}
-        };
-
-        const token = randomBytes(32).toString("hex");
-        const session = buildSessionRecord(req, userKey);
-        auth.sessions[token] = session;
-        pruneSessions(auth);
-
-        await persistAuthState(scopedData, auth);
-        setAuthCookie(req, res, token, Date.parse(session.expiresAt));
-
-        return res.status(201).json({
-            ok: true,
-            authenticated: true,
-            user: {
-                username: auth.users[userKey].username
-            },
-            warning: "No hay recuperacion de contraseña. Guardala en un lugar seguro."
-        });
-    } catch (err) {
-        console.error("Auth register failed:", err);
-        return res.status(500).json({
-            message: resolveDataBaseErrorMessage(err, "No se pudo crear la cuenta.")
-        });
-    }
-});
-
-router.post("/auth/login", async (req, res) => {
-    const clientId = getClientIdentifier(req);
-    const loginLimit = await checkLoginRateLimit(clientId);
-    if (loginLimit.limited) {
-        res.setHeader("Retry-After", String(Math.ceil(loginLimit.retryAfterMs / 1000)));
-        return res.status(429).json({
-            message: "Demasiados intentos de login. Espera un momento antes de reintentar.",
-            retryAfterMs: loginLimit.retryAfterMs
-        });
-    }
-
-    const credentials = parseAuthCredentials(req.body);
-    if (!credentials) {
-        return res.status(400).json({ message: "Credenciales invalidas." });
-    }
-
-    try {
-        const { scopedData, auth } = await readAuthState();
-        pruneSessions(auth);
-
-        const userKey = usernameToKey(credentials.username);
-        const user = auth.users[userKey];
-        if (!user || !(await verifyPassword(credentials.password, user.passwordSalt, user.passwordHash))) {
-            return res.status(401).json({ message: "Usuario o contraseña incorrectos." });
-        }
-
-        const token = randomBytes(32).toString("hex");
-        const session = buildSessionRecord(req, userKey);
-        auth.sessions[token] = session;
-        pruneSessions(auth);
-        await persistAuthState(scopedData, auth);
-        setAuthCookie(req, res, token, Date.parse(session.expiresAt));
-
-        return res.json({
-            ok: true,
-            authenticated: true,
-            user: {
-                username: user.username
-            }
-        });
-    } catch (err) {
-        console.error("Auth login failed:", err);
-        return res.status(500).json({
-            message: resolveDataBaseErrorMessage(err, "No se pudo iniciar sesion.")
-        });
-    }
-});
-
-router.post("/auth/logout", async (req, res) => {
-    const token = getAuthCookieToken(req);
-
-    try {
-        if (token) {
-            const { scopedData, auth } = await readAuthState();
-            if (auth.sessions[token]) {
-                delete auth.sessions[token];
-                pruneSessions(auth);
-                await persistAuthState(scopedData, auth);
-            }
-        }
-    } catch (err) {
-        console.error("Auth logout failed:", err);
-    }
-
-    clearAuthCookie(req, res);
-    return res.json({
-        ok: true,
-        authenticated: false
-    });
-});
-
-router.get("/auth/session", async (req, res) => {
-    try {
-        const ctx = await resolveAuthContext(req);
-        if (!ctx) {
-            return res.json({
-                authenticated: false
-            });
-        }
-
-        return res.json({
-            authenticated: true,
-            user: {
-                username: ctx.user.username
-            }
-        });
-    } catch (err) {
-        console.error("Auth session check failed:", err);
-        if (isDataBaseError(err)) {
-            clearAuthCookie(req, res);
-            return res.json({
-                authenticated: false,
-                message: resolveDataBaseErrorMessage(err, "No se pudo validar la sesion.")
-            });
-        }
-        return res.status(500).json({
-            authenticated: false,
-            message: resolveDataBaseErrorMessage(err, "No se pudo validar la sesion.")
-        });
-    }
-});
-
-router.get("/profile-store", async (req, res) => {
-    try {
-        const ctx = await resolveAuthContext(req);
-        if (!ctx) {
-            clearAuthCookie(req, res);
-            return unauthorized(res);
-        }
-
-        return res.json({
-            namespace: getDatabaseMeta().namespace,
-            user: {
-                username: ctx.user.username
-            },
-            data: asObject(ctx.user.store) || {}
-        });
-    } catch (err) {
-        console.error("Profile store read failed:", err);
-        return res.status(500).json({
-            message: "No se pudo leer el perfil en base de datos."
-        });
-    }
-});
-
-router.post("/profile-store/sync", async (req, res) => {
-    const payload: ProfileStoreSyncBody = req.body || {};
-    const patch: Record<string, unknown> = {};
-
-    const progress = normalizeProgressPatch(payload.progress);
-    const lessons = normalizeLessonsPatch(payload.lessons);
-    const profile = normalizeProfilePatch(payload.profile);
-
-    if (progress) {
-        patch.progress = progress;
-    }
-    if (lessons) {
-        patch.lessons = lessons;
-    }
-    if (profile) {
-        patch.profile = profile;
-    }
-
-    if (Object.keys(patch).length === 0) {
-        return res.status(400).json({ message: "Payload de sincronizacion invalido." });
-    }
-    if (!isJsonPayloadSizeSafe(patch, PROFILE_SYNC_MAX_BYTES)) {
-        return res.status(413).json({ message: "El payload de sincronizacion es demasiado grande." });
-    }
-
-    try {
-        const ctx = await resolveAuthContext(req);
-        if (!ctx) {
-            clearAuthCookie(req, res);
-            return unauthorized(res);
-        }
-
-        const currentStore = asObject(ctx.user.store) || {};
-        const mergedStore = mergeObjectDeep(currentStore, patch);
-        const updatedUser: UserRecord = {
-            ...ctx.user,
-            updatedAt: new Date().toISOString(),
-            store: asObject(mergedStore) || {}
-        };
-        ctx.auth.users[ctx.userKey] = updatedUser;
-        pruneSessions(ctx.auth);
-        await persistAuthState(ctx.scopedData, ctx.auth);
-
-        return res.json({
-            ok: true,
-            namespace: getDatabaseMeta().namespace,
-            user: {
-                username: updatedUser.username
-            },
-            data: updatedUser.store
-        });
-    } catch (err) {
-        console.error("Profile store sync failed:", err);
-        return res.status(500).json({
-            message: "No se pudo sincronizar el perfil en base de datos."
-        });
-    }
-});
-
-router.post("/parse", async (req, res) => {
-    const clientId = getClientIdentifier(req);
-    const parseLimit = await checkParseRateLimit(clientId);
-    if (parseLimit.limited) {
-        res.setHeader("Retry-After", String(Math.ceil(parseLimit.retryAfterMs / 1000)));
-        return res.status(429).json({
-            message: "Demasiadas solicitudes de parseo PGN. Espera unos segundos.",
-            retryAfterMs: parseLimit.retryAfterMs
-        });
-    }
-
-    let { pgn }: ParseRequestBody = req.body || {};
-    
-    if (!isNonEmptyString(pgn)) {
-        return res.status(400).json({ message: "Introduce un PGN para analizar." });
-    }
-
-    pgn = pgn.trim();
-    if (pgn.length > MAX_PGN_LENGTH) {
-        return res.status(413).json({ message: "El PGN es demasiado grande." });
-    }
-
-    // Accept PGNs that do not explicitly include a result marker.
-    if (!/(1-0|0-1|1\/2-1\/2|\*)\s*$/.test(pgn)) {
-        pgn += " *";
-    }
-
-    // Try chess.js loadPgn first (handles annotations, NAGs, comments, etc.)
+async function parsePgnToPositions(pgn: string): Promise<Position[]> {
     const board = new Chess();
     let moves: { from: string; to: string; san: string; promotion?: string }[];
 
@@ -1123,16 +883,14 @@ router.post("/parse", async (req, res) => {
         board.loadPgn(pgn);
         moves = board.history({ verbose: true });
     } catch {
-        // Fall back to pgn-parser for backwards compatibility
         let parsedPGN;
         try {
-            [ parsedPGN ] = pgnParser.parse(pgn);
-
+            [parsedPGN] = pgnParser.parse(pgn);
             if (!parsedPGN) {
-                return res.status(400).json({ message: "Introduce un PGN para analizar." });
+                throw new Error("Introduce un PGN para analizar.");
             }
         } catch {
-            return res.status(400).json({ message: "Formato PGN invalido." });
+            throw new Error("Formato PGN invalido.");
         }
 
         const fallbackBoard = new Chess();
@@ -1141,32 +899,30 @@ router.post("/parse", async (req, res) => {
         for (const pgnMove of parsedPGN.moves) {
             const moveSAN = pgnMove.move;
             if (!isNonEmptyString(moveSAN)) {
-                return res.status(400).json({ message: "El PGN contiene jugadas invalidas." });
+                throw new Error("El PGN contiene jugadas invalidas.");
             }
 
             let virtualBoardMove;
             try {
                 virtualBoardMove = fallbackBoard.move(moveSAN);
             } catch {
-                return res.status(400).json({ message: "El PGN contiene jugadas ilegales." });
+                throw new Error("El PGN contiene jugadas ilegales.");
             }
 
             if (!virtualBoardMove) {
-                return res.status(400).json({ message: "El PGN contiene jugadas ilegales." });
+                throw new Error("El PGN contiene jugadas ilegales.");
             }
 
             moves.push(virtualBoardMove);
         }
     }
 
-    // Replay moves to build positions array
     const replay = new Chess();
     const positions: Position[] = [{ fen: replay.fen() }];
 
     for (const move of moves) {
         replay.move(move.san);
         const moveUCI = `${move.from}${move.to}${move.promotion || ""}`;
-
         positions.push({
             fen: replay.fen(),
             move: {
@@ -1176,248 +932,76 @@ router.post("/parse", async (req, res) => {
         });
     }
 
-    res.json({ positions });
+    return positions;
+}
 
+registerAuthProfileRoutes(router, {
+    enforceCsrfOrigin,
+    getClientIdentifier,
+    checkRegisterRateLimit,
+    checkLoginRateLimit,
+    parseAuthCredentials,
+    USERNAME_MIN,
+    USERNAME_MAX,
+    PASSWORD_MIN,
+    PASSWORD_MAX,
+    readAuthState,
+    pruneSessions,
+    usernameToKey,
+    hashPassword,
+    randomToken,
+    buildSessionRecord,
+    persistAuthState,
+    setAuthCookie,
+    resolveDataBaseErrorMessage,
+    verifyPassword,
+    getAuthCookieToken,
+    clearAuthCookie,
+    resolveAuthContext,
+    isDataBaseError,
+    unauthorized,
+    getDatabaseMeta,
+    asObject,
+    normalizeProgressPatch,
+    normalizeLessonsPatch,
+    normalizeProfilePatch,
+    isJsonPayloadSizeSafe,
+    PROFILE_SYNC_MAX_BYTES,
+    mergeObjectDeep
 });
 
-router.get("/openings", async (_req, res) => {
-    try {
-        const payload = (openings as OpeningCatalogEntry[])
-            .filter((entry) => isNonEmptyString(entry.name) && isNonEmptyString(entry.fen) && entry.name!.trim() !== "Starting Position")
-            .map((entry) => ({
-                name: entry.name!.trim(),
-                fen: entry.fen!.trim()
-            }));
-
-        res.json({
-            count: payload.length,
-            openings: payload
-        });
-    } catch (err) {
-        console.error("Openings catalog request failed:", err);
-        res.status(500).json({ message: "No se pudo cargar el catalogo de aperturas." });
-    }
+registerGameRoutes(router, {
+    getClientIdentifier,
+    checkParseRateLimit,
+    checkReportRateLimit,
+    checkAIRateLimit,
+    MAX_PGN_LENGTH,
+    isNonEmptyString,
+    parsePgnToPositions,
+    openingsCatalog: openings as OpeningCatalogEntry[],
+    sanitizeExplorerFen,
+    parseExplorerMoves,
+    sanitizeExplorerSpeeds,
+    sanitizeExplorerRatings,
+    buildExplorerCacheKey,
+    getFreshTimedCacheValue,
+    explorerCache,
+    EXPLORER_CACHE_TTL_MS,
+    OPENING_EXPLORER_TIMEOUT_MS,
+    OPENING_EXPLORER_ENDPOINT,
+    getExplorerFallbackPayload,
+    sanitizeOpeningMeta,
+    isValidUciMove,
+    sanitizeInlineText,
+    setTimedCacheValue,
+    EXPLORER_CACHE_MAX_ENTRIES,
+    OPENING_EXPLORER_DEGRADED_MESSAGE,
+    isValidEngineLine,
+    analyse,
+    ChessCtor: Chess,
+    clampText,
+    requestGroqChatCompletion,
+    parseStructuredAIResponse
 });
-
-router.get("/opening-explorer", async (req, res) => {
-    const fen = sanitizeExplorerFen(req.query.fen);
-    if (!fen) {
-        return res.status(400).json({ message: "FEN invalido." });
-    }
-
-    const movesNum = parseExplorerMoves(req.query.moves);
-    if (movesNum == null) {
-        return res.status(400).json({ message: "Parametro de jugadas invalido." });
-    }
-
-    const speeds = sanitizeExplorerSpeeds(req.query.speeds);
-    if (!speeds) {
-        return res.status(400).json({ message: "Parametro de velocidades invalido." });
-    }
-
-    const ratings = sanitizeExplorerRatings(req.query.ratings);
-    if (!ratings) {
-        return res.status(400).json({ message: "Parametro de ratings invalido." });
-    }
-
-    const cacheKey = buildExplorerCacheKey(fen, movesNum, speeds, ratings);
-    const cached = getFreshTimedCacheValue(explorerCache, cacheKey, EXPLORER_CACHE_TTL_MS);
-    if (cached) {
-        return res.json(cached);
-    }
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), OPENING_EXPLORER_TIMEOUT_MS);
-
-    try {
-        const query = new URLSearchParams({
-            variant: "standard",
-            fen,
-            moves: String(movesNum),
-            speeds: speeds.join(","),
-            ratings: ratings.join(",")
-        });
-
-        const response = await fetch(`${OPENING_EXPLORER_ENDPOINT}?${query.toString()}`, {
-            signal: controller.signal
-        });
-
-        const rawPayload = await response.text();
-        let payload: Record<string, unknown> = {};
-        try {
-            payload = JSON.parse(rawPayload) as Record<string, unknown>;
-        } catch {}
-
-        if (!response.ok) {
-            const fallbackPayload = getExplorerFallbackPayload(cacheKey, fen);
-            return res.json({
-                ...fallbackPayload,
-                degraded: true,
-                message: payload?.error || `Opening explorer provider error (${response.status}).`
-            });
-        }
-
-        const safePayload = {
-            fen,
-            white: Number(payload?.white || 0),
-            draws: Number(payload?.draws || 0),
-            black: Number(payload?.black || 0),
-            opening: sanitizeOpeningMeta(payload?.opening),
-            moves: Array.isArray(payload?.moves)
-                ? payload.moves.slice(0, 18).map((move: any) => ({
-                    uci: isValidUciMove(move?.uci) ? String(move.uci).trim().toLowerCase() : "",
-                    san: sanitizeInlineText(move?.san, 24),
-                    white: Number(move?.white || 0),
-                    draws: Number(move?.draws || 0),
-                    black: Number(move?.black || 0),
-                    averageRating: Number(move?.averageRating || 0),
-                    opening: sanitizeOpeningMeta(move?.opening)
-                }))
-                : []
-        };
-
-        setTimedCacheValue(explorerCache, cacheKey, safePayload, {
-            ttlMs: EXPLORER_CACHE_TTL_MS,
-            maxEntries: EXPLORER_CACHE_MAX_ENTRIES
-        });
-
-        return res.json(safePayload);
-    } catch (err) {
-        const fallbackPayload = getExplorerFallbackPayload(cacheKey, fen);
-        if (err instanceof Error && err.name == "AbortError") {
-            return res.json({
-                ...fallbackPayload,
-                degraded: true,
-                message: `Opening explorer timeout (${OPENING_EXPLORER_TIMEOUT_MS}ms).`
-            });
-        }
-
-        const message = err instanceof Error ? err.message : "Opening explorer request failed.";
-        return res.json({
-            ...fallbackPayload,
-            degraded: true,
-            message: message || OPENING_EXPLORER_DEGRADED_MESSAGE
-        });
-    } finally {
-        clearTimeout(timeout);
-    }
-});
-
-router.post("/report", async (req, res) => {
-    const clientId = getClientIdentifier(req);
-    const reportLimit = await checkReportRateLimit(clientId);
-    if (reportLimit.limited) {
-        res.setHeader("Retry-After", String(Math.ceil(reportLimit.retryAfterMs / 1000)));
-        return res.status(429).json({
-            message: "Demasiadas solicitudes de reporte. Espera unos segundos.",
-            retryAfterMs: reportLimit.retryAfterMs
-        });
-    }
-
-    const { positions }: ReportRequestBody = req.body || {};
-
-    if (!Array.isArray(positions) || positions.length === 0) {
-        return res.status(400).json({ message: "Faltan parametros." });
-    }
-
-    if (positions.length > 600) {
-        return res.status(400).json({ message: "Demasiadas posiciones (max 600)." });
-    }
-
-    // Validate minimal schema for each position
-    for (let i = 0; i < positions.length; i++) {
-        const pos = positions[i] as any;
-        if (!pos || typeof pos.fen !== "string" || pos.fen.trim().length === 0) {
-            return res.status(400).json({ message: `Posicion ${i} tiene FEN invalido o faltante.` });
-        }
-
-        try {
-            new Chess(pos.fen.trim());
-        } catch {
-            return res.status(400).json({ message: `Posicion ${i} tiene un FEN invalido.` });
-        }
-
-        if (!Array.isArray(pos.topLines) || pos.topLines.length === 0) {
-            return res.status(400).json({ message: `Posicion ${i} no tiene topLines validas.` });
-        }
-
-        const hasInvalidTopLine = pos.topLines.some((line: unknown) => !isValidEngineLine(line));
-        if (hasInvalidTopLine) {
-            return res.status(400).json({ message: `Posicion ${i} contiene lineas de motor invalidas.` });
-        }
-
-        if (i > 0) {
-            if (!pos.move || !isNonEmptyString(pos.move.san) || !isValidUciMove(pos.move.uci)) {
-                return res.status(400).json({ message: `Posicion ${i} tiene jugada invalida o faltante.` });
-            }
-        }
-    }
-
-    // Generate report
-    let results;
-    try {
-        results = await analyse(positions);
-    } catch (err) {
-        console.error("Report generation failed:", err);
-        return res.status(500).json({ message: "No se pudo generar el reporte." });
-    }
-
-    res.json({ results });
-
-});
-
-router.post("/ai-chat", async (req, res) => {
-
-    const { question, systemPrompt, structured }: AIChatRequestBody = req.body || {};
-
-    if (!isNonEmptyString(question)) {
-        return res.status(400).json({ message: "La pregunta es requerida." });
-    }
-
-    const clientId = getClientIdentifier(req);
-    const limit = await checkAIRateLimit(clientId);
-    if (limit.limited) {
-        res.setHeader("Retry-After", String(Math.ceil(limit.retryAfterMs / 1000)));
-        return res.status(429).json({
-            message: "Limite de solicitudes de IA excedido. Espera unos segundos antes de reintentar.",
-            retryAfterMs: limit.retryAfterMs
-        });
-    }
-
-    const safeQuestion = clampText(question.trim(), 1600);
-    const safeSystemPrompt = isNonEmptyString(systemPrompt)
-        ? clampText(systemPrompt.trim(), 4500)
-        : "You are a concise chess assistant.";
-
-    try {
-        const content = await requestGroqChatCompletion(safeSystemPrompt, safeQuestion);
-
-        if (structured) {
-            const parsed = parseStructuredAIResponse(content);
-            return res.json({
-                content: parsed.text || content,
-                actions: parsed.actions
-            });
-        }
-
-        return res.json({ content });
-    } catch (err) {
-        if (err instanceof Error && err.message == "GROQ_API_KEY_MISSING") {
-            return res.status(503).json({ message: "El asistente IA no esta configurado en el servidor." });
-        }
-
-        console.error("AI chat request failed:", err);
-
-        if (structured) {
-            return res.json({
-                content: "No pude completar la solicitud de IA ahora. Te muestro fallback limpio sin acciones ejecutables.",
-                actions: []
-            });
-        }
-
-        return res.status(502).json({ message: "No se pudo obtener respuesta del asistente IA." });
-    }
-
-});
-
 export default router;
+

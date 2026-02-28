@@ -5,6 +5,7 @@ import { Pool, PoolConfig } from "pg";
 const NAMESPACE = "freechess_lab_v1";
 const DEFAULT_DB_FILE = path.resolve("data", "database.json");
 const POSTGRES_TABLE = "freechess_store";
+const POSTGRES_RATE_LIMIT_TABLE = "freechess_rate_limit";
 const MAX_MERGE_DEPTH = 20;
 const UNSAFE_KEYS = new Set(["__proto__", "prototype", "constructor"]);
 
@@ -446,6 +447,95 @@ export async function readScopedData(): Promise<Record<string, unknown>> {
 
     const root = readRootObjectFromFile(config);
     return asObject(root[NAMESPACE]);
+}
+
+export async function checkAndUpdateRateLimitBucket(
+    scope: string,
+    clientId: string,
+    windowMs: number,
+    maxRequests: number
+): Promise<{ supported: boolean; limited: boolean; retryAfterMs: number }> {
+    const config = getBackendConfig();
+    if (config.kind !== "postgres") {
+        return {
+            supported: false,
+            limited: false,
+            retryAfterMs: 0
+        };
+    }
+
+    storageMode = "postgres";
+    await ensurePostgresStoreReady(config);
+    const pool = getPostgresPool(config);
+
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS ${POSTGRES_RATE_LIMIT_TABLE} (
+            scope TEXT NOT NULL,
+            client_id TEXT NOT NULL,
+            timestamps BIGINT[] NOT NULL DEFAULT '{}',
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (scope, client_id)
+        )
+    `);
+
+    const now = Date.now();
+    const tx = await pool.connect();
+    try {
+        await tx.query("BEGIN");
+        const select = await tx.query(
+            `SELECT timestamps FROM ${POSTGRES_RATE_LIMIT_TABLE} WHERE scope = $1 AND client_id = $2 FOR UPDATE`,
+            [scope, clientId]
+        );
+
+        const raw = Array.isArray(select.rows[0]?.timestamps)
+            ? (select.rows[0].timestamps as unknown[])
+            : [];
+        const active = raw
+            .map((value) => Number(value))
+            .filter((value) => Number.isFinite(value) && now - value < windowMs)
+            .sort((left, right) => left - right);
+
+        if (active.length >= maxRequests) {
+            const retryAfterMs = Math.max(1, windowMs - (now - active[0]));
+            await tx.query(
+                `
+                INSERT INTO ${POSTGRES_RATE_LIMIT_TABLE} (scope, client_id, timestamps, updated_at)
+                VALUES ($1, $2, $3::BIGINT[], NOW())
+                ON CONFLICT (scope, client_id)
+                DO UPDATE SET timestamps = EXCLUDED.timestamps, updated_at = NOW()
+                `,
+                [scope, clientId, active]
+            );
+            await tx.query("COMMIT");
+            return {
+                supported: true,
+                limited: true,
+                retryAfterMs
+            };
+        }
+
+        active.push(now);
+        await tx.query(
+            `
+            INSERT INTO ${POSTGRES_RATE_LIMIT_TABLE} (scope, client_id, timestamps, updated_at)
+            VALUES ($1, $2, $3::BIGINT[], NOW())
+            ON CONFLICT (scope, client_id)
+            DO UPDATE SET timestamps = EXCLUDED.timestamps, updated_at = NOW()
+            `,
+            [scope, clientId, active]
+        );
+        await tx.query("COMMIT");
+        return {
+            supported: true,
+            limited: false,
+            retryAfterMs: 0
+        };
+    } catch (err) {
+        await tx.query("ROLLBACK").catch(() => {});
+        throw err;
+    } finally {
+        tx.release();
+    }
 }
 
 export async function replaceScopedData(nextData: Record<string, unknown>): Promise<Record<string, unknown>> {

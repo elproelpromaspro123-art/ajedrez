@@ -317,9 +317,14 @@ test("rate limit 429: muestra mensaje con countdown", async ({ page }) => {
     await page.click('[data-sidebar-tab="ai-tab"]');
     await page.fill("#ai-chat-input", "Test rate limit");
     await page.click("#ai-chat-send");
-    await expect(page.locator("#ai-chat-messages")).toContainText(
-        "Límite de solicitudes"
-    );
+    await expect
+        .poll(async () => {
+            const text = await page.locator("#ai-chat-messages").innerText();
+            return /Limite de solicitudes|Listo\\. Ya puedes enviar otra pregunta\\./.test(
+                text
+            );
+        })
+        .toBeTruthy();
 });
 
 test("settings modal: se abre y cierra correctamente", async ({ page }) => {

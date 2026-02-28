@@ -222,6 +222,18 @@ async function runApiIntegrationTests() {
 
         let response = await fetch(`${baseUrl}/healthz`);
         assert(response.status === 200, "Health endpoint should return 200.");
+        assert(Boolean(response.headers.get("x-request-id")), "Health endpoint should include x-request-id header.");
+
+        response = await fetch(`${baseUrl}/api/unknown-route`);
+        assert(response.status === 404, "Unknown API route should return 404.");
+        const unknownApiPayload = await response.json() as { message?: string };
+        assert(unknownApiPayload.message === "API route not found.", "Unknown API route payload should be explicit.");
+
+        response = await fetch(`${baseUrl}/`);
+        assert(response.status === 200, "Index route should return 200.");
+        const indexHtml = await response.text();
+        assert(!indexHtml.includes("__OG_URL__"), "Index route should render absolute OG URL.");
+        assert(!indexHtml.includes("__OG_IMAGE__"), "Index route should render absolute OG image.");
 
         response = await fetch(`${baseUrl}/api/parse`, {
             method: "POST",
@@ -326,6 +338,20 @@ async function runApiIntegrationTests() {
             })
         });
         assert(response.status === 401, "Profile store sync should require authentication.");
+
+        response = await fetch(`${baseUrl}/api/profile-store/sync`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "Sec-Fetch-Site": "cross-site"
+            },
+            body: JSON.stringify({
+                progress: {
+                    games: [{ at: "2026-02-25T00:00:00.000Z", accuracy: 88.5 }]
+                }
+            })
+        });
+        assert(response.status === 403, "Cross-site POST should be blocked by CSRF origin checks.");
 
         response = await fetch(`${baseUrl}/api/auth/register`, {
             method: "POST",

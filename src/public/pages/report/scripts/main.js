@@ -107,6 +107,7 @@ const playModule = APP_MODULES.play || null;
 const analysisModule = APP_MODULES.analysis || null;
 const engineModule = APP_MODULES.engine || null;
 const localeModule = APP_MODULES.locale || null;
+const chatUiModule = APP_MODULES.chatUi || null;
 function t(key, params) {
     return localeModule ? localeModule.t(key, params) : key;
 }
@@ -4504,8 +4505,31 @@ function renderAnalysisMoveList() {
     }
 
     const positions = analysisState.report.positions;
+    const totalMoves = Math.max(0, positions.length - 1);
+    let startIndex = 1;
+    let endIndex = positions.length - 1;
 
-    for (let i = 1; i < positions.length; i += 1) {
+    if (totalMoves > 180) {
+        const halfWindow = 80;
+        startIndex = Math.max(1, analysisState.currentIndex - halfWindow);
+        endIndex = Math.min(positions.length - 1, analysisState.currentIndex + halfWindow);
+        if ((endIndex - startIndex) < 160) {
+            if (startIndex === 1) {
+                endIndex = Math.min(positions.length - 1, 161);
+            } else if (endIndex === positions.length - 1) {
+                startIndex = Math.max(1, positions.length - 161);
+            }
+        }
+    }
+
+    if (startIndex > 1) {
+        const skippedTop = document.createElement("li");
+        skippedTop.className = "move-list-virtual-note";
+        skippedTop.textContent = `... ${startIndex - 1} jugadas anteriores ocultas`;
+        el.analysisMoveList.appendChild(skippedTop);
+    }
+
+    for (let i = startIndex; i <= endIndex; i += 1) {
         const position = positions[i];
 
         const item = document.createElement("li");
@@ -4573,6 +4597,13 @@ function renderAnalysisMoveList() {
         });
 
         el.analysisMoveList.appendChild(item);
+    }
+
+    if (endIndex < positions.length - 1) {
+        const skippedBottom = document.createElement("li");
+        skippedBottom.className = "move-list-virtual-note";
+        skippedBottom.textContent = `... ${positions.length - 1 - endIndex} jugadas posteriores ocultas`;
+        el.analysisMoveList.appendChild(skippedBottom);
     }
 
     const activeItem = el.analysisMoveList.querySelector(".is-active");
@@ -7318,6 +7349,11 @@ const aiChatInput = document.querySelector("#ai-chat-input");
 const aiChatSend = document.querySelector("#ai-chat-send");
 
 function addAiMessage(text, type) {
+    if (chatUiModule && chatUiModule.appendMessage) {
+        const external = chatUiModule.appendMessage(aiChatMessages, text, type);
+        scheduleSessionSnapshotSave();
+        return external;
+    }
     if (!aiChatMessages) return;
     const div = document.createElement("div");
     div.className = `ai-msg ${type}`;
@@ -7339,6 +7375,10 @@ function addAiMessage(text, type) {
 }
 
 function addAiCountdownMessage(seconds) {
+    if (chatUiModule && chatUiModule.appendCountdown) {
+        chatUiModule.appendCountdown(aiChatMessages, seconds);
+        return;
+    }
     if (!aiChatMessages) return;
     const div = document.createElement("div");
     div.className = "ai-msg ai-bot ai-rate-limit";

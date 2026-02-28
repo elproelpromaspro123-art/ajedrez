@@ -7,6 +7,8 @@ const projectRoot = process.cwd();
 const srcPublicDir = path.resolve(projectRoot, "src/public");
 const distPublicDir = path.resolve(projectRoot, "dist/public");
 const reportHtmlPath = path.join(distPublicDir, "pages/report/index.html");
+const JS_BUDGET_BYTES = Number(process.env.BUILD_BUDGET_JS_BYTES || 900_000);
+const CSS_BUDGET_BYTES = Number(process.env.BUILD_BUDGET_CSS_BYTES || 220_000);
 
 function asPosixPath(value) {
     return value.split(path.sep).join("/");
@@ -65,6 +67,7 @@ async function minifyAsset(filePath) {
 async function fingerprintAndMinify(html) {
     const assetUrls = extractAssetUrls(html);
     const replacements = new Map();
+    const emittedAssets = [];
 
     for (const url of assetUrls) {
         const relativePath = url.replace(/^\/static\//, "");
@@ -81,6 +84,11 @@ async function fingerprintAndMinify(html) {
         const hashedAbsolutePath = path.join(distPublicDir, hashedRelativePath);
         await fs.writeFile(hashedAbsolutePath, minified, "utf8");
         replacements.set(url, buildStaticUrl(hashedRelativePath));
+        emittedAssets.push({
+            originalPath: absolutePath,
+            hashedPath: hashedAbsolutePath,
+            bytes: Buffer.byteLength(minified, "utf8")
+        });
     }
 
     let nextHtml = html;
@@ -88,15 +96,42 @@ async function fingerprintAndMinify(html) {
         nextHtml = nextHtml.split(from).join(to);
     }
 
-    return nextHtml;
+    return { html: nextHtml, emittedAssets };
+}
+
+async function cleanupOriginalAssets(emittedAssets) {
+    for (const asset of emittedAssets) {
+        if (asset.originalPath === asset.hashedPath) {
+            continue;
+        }
+        await fs.rm(asset.originalPath, { force: true });
+    }
+}
+
+function enforceBudgets(emittedAssets) {
+    const jsTotal = emittedAssets
+        .filter((asset) => asset.hashedPath.endsWith(".js"))
+        .reduce((acc, asset) => acc + asset.bytes, 0);
+    const cssTotal = emittedAssets
+        .filter((asset) => asset.hashedPath.endsWith(".css"))
+        .reduce((acc, asset) => acc + asset.bytes, 0);
+
+    if (jsTotal > JS_BUDGET_BYTES) {
+        throw new Error(`JS bundle budget exceeded: ${jsTotal} > ${JS_BUDGET_BYTES} bytes`);
+    }
+    if (cssTotal > CSS_BUDGET_BYTES) {
+        throw new Error(`CSS bundle budget exceeded: ${cssTotal} > ${CSS_BUDGET_BYTES} bytes`);
+    }
 }
 
 async function run() {
     await copyStaticTree();
 
     const html = await fs.readFile(reportHtmlPath, "utf8");
-    const fingerprintedHtml = await fingerprintAndMinify(html);
+    const { html: fingerprintedHtml, emittedAssets } = await fingerprintAndMinify(html);
     await fs.writeFile(reportHtmlPath, fingerprintedHtml, "utf8");
+    await cleanupOriginalAssets(emittedAssets);
+    enforceBudgets(emittedAssets);
 }
 
 run().catch((err) => {
