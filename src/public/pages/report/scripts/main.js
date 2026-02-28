@@ -94,7 +94,8 @@ const CLASSIFICATION_DOT_COLOR = {
 };
 
 const ENGINE_PRIMARY = "/static/scripts/stockfish.js";
-const ENGINE_FALLBACK = "/static/scripts/stockfish-nnue-16.js";
+// Keep a non-wasm fallback to avoid CSP + WebAssembly instantiate errors.
+const ENGINE_FALLBACK = "/static/scripts/stockfish.js";
 const APP_BOOT_AT = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
 const APP_MODULES = window.ReportModules || {};
 const storageModule = APP_MODULES.storage || null;
@@ -234,6 +235,7 @@ const el = {
     analysisEvalGraph: document.querySelector("#analysis-eval-graph"),
     analysisGraphLegend: document.querySelector("#analysis-graph-legend"),
     analysisMoveExplanation: document.querySelector("#analysis-move-explanation"),
+    analysisAiSummary: document.querySelector("#analysis-ai-summary"),
     analysisExplainAiBtn: document.querySelector("#analysis-explain-ai-btn"),
     analysisRetryStatus: document.querySelector("#analysis-retry-status"),
     analysisRetryBoard: document.querySelector("#analysis-retry-board"),
@@ -3907,7 +3909,9 @@ const analysisState = {
     retryExpectedMoveUci: "",
     retrySourceIndex: 0,
     retryStartFen: "",
-    retrySolved: false
+    retrySolved: false,
+    aiSummary: "",
+    aiSummaryLoading: false
 };
 
 function setAnalysisStatus(message) {
@@ -3936,6 +3940,8 @@ function resetAnalysisSummary() {
     analysisState.retrySourceIndex = 0;
     analysisState.retryStartFen = "";
     analysisState.retrySolved = false;
+    analysisState.aiSummary = "";
+    analysisState.aiSummaryLoading = false;
 
     analysisState.board.setFen("8/8/8/8/8/8/8/8 w - - 0 1");
     analysisState.board.clearHighlights();
@@ -3945,6 +3951,9 @@ function resetAnalysisSummary() {
     }
     if (el.analysisMoveExplanation) {
         el.analysisMoveExplanation.textContent = "Selecciona una jugada para ver su explicacion.";
+    }
+    if (el.analysisAiSummary) {
+        el.analysisAiSummary.textContent = "Ejecuta un analisis para generar un resumen estructurado con IA.";
     }
     if (el.analysisRetryStatus) {
         el.analysisRetryStatus.textContent = "Carga una jugada marcada como inexactitud/error/blunder para practicar.";
@@ -4648,6 +4657,168 @@ function renderAnalysisPosition() {
     }
 }
 
+function collectAnalysisErrors(report) {
+    const empty = { inaccuracy: 0, mistake: 0, blunder: 0 };
+    if (!report || !report.classifications) {
+        return empty;
+    }
+
+    const white = report.classifications.white || {};
+    const black = report.classifications.black || {};
+    return {
+        inaccuracy: Number(white.inaccuracy || 0) + Number(black.inaccuracy || 0),
+        mistake: Number(white.mistake || 0) + Number(black.mistake || 0),
+        blunder: Number(white.blunder || 0) + Number(black.blunder || 0)
+    };
+}
+
+function buildFallbackAnalysisSummary(report) {
+    if (!report || !Array.isArray(report.positions)) {
+        return "Plan inmediato: completa primero el analisis para generar resumen.";
+    }
+
+    const openingPos = report.positions.find((position) => position && position.opening);
+    const openingName = openingPos && openingPos.opening ? openingPos.opening : "Sin apertura detectada";
+    const accuracy = computeOverallAccuracyFromReport(report);
+    const errors = collectAnalysisErrors(report);
+
+    return [
+        `Plan inmediato: revisa primero tus ${errors.blunder} blunders y ${errors.mistake} errores.`,
+        `Por que funciona: corregir errores graves mejora mas rapido que pulir detalles menores.`,
+        `Riesgo principal: repetir la misma secuencia sin entender el plan posicional.`,
+        "Linea sugerida: vuelve a las jugadas marcadas con 'Reintentar' y busca 2 alternativas sanas.",
+        `Apertura/tema: ${openingName}. Accuracy global ${accuracy.toFixed(1)}%.`
+    ].join("\n");
+}
+
+function buildAnalysisAiQuestion(report, pgn) {
+    const positions = Array.isArray(report && report.positions) ? report.positions : [];
+    const interestingMoves = positions
+        .map((position, index) => ({ position, index }))
+        .filter(({ position, index }) =>
+            index > 0
+            && position
+            && position.move
+            && isAnalysisErrorClassification(position.classification)
+        )
+        .slice(0, 8)
+        .map(({ position, index }) => {
+            const moveSan = position.move && position.move.san ? position.move.san : "--";
+            const evalText = formatEval(getAnalysisTopLine(position)?.evaluation || null);
+            return `- Jugada ${index}: ${moveSan} (${position.classification || "sin clasificar"}) -> Eval ${evalText}`;
+        });
+
+    const openingPos = positions.find((position) => position && position.opening);
+    const openingName = openingPos && openingPos.opening ? openingPos.opening : "Sin apertura detectada";
+    const overall = computeOverallAccuracyFromReport(report);
+    const errors = collectAnalysisErrors(report);
+
+    return [
+        "Genera un resumen de partida para entrenamiento.",
+        `Apertura principal detectada: ${openingName}`,
+        `Accuracy global: ${overall.toFixed(1)}%`,
+        `Errores totales -> Inexactitudes: ${errors.inaccuracy}, Errores: ${errors.mistake}, Blunders: ${errors.blunder}`,
+        "Jugadas criticas:",
+        interestingMoves.length > 0 ? interestingMoves.join("\n") : "- No se detectaron jugadas criticas.",
+        `PGN analizado: ${String(pgn || "").slice(0, 5000)}`
+    ].join("\n");
+}
+
+async function generateAnalysisSummaryWithAI(report, pgn) {
+    const systemPrompt = [
+        "Eres un entrenador de ajedrez experto.",
+        "Tu salida debe ser clara, ordenada y no confusa.",
+        "Explica el por que de las decisiones, no solo que jugada hacer.",
+        "Responde en espanol con este formato exacto:",
+        "Plan inmediato: ...",
+        "Por que funciona: ...",
+        "Riesgo principal: ...",
+        "Linea sugerida: ...",
+        "Apertura/tema: ...",
+        "Incluye nombre teorico de apertura o tema cuando exista."
+    ].join("\n");
+
+    try {
+        const response = await fetch("/api/ai-chat", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                systemPrompt,
+                question: buildAnalysisAiQuestion(report, pgn)
+            })
+        });
+
+        const payload = await response.json();
+        if (!response.ok) {
+            throw new Error(payload && payload.message ? payload.message : "No se pudo generar resumen IA.");
+        }
+
+        const content = typeof payload.content === "string" ? payload.content.trim() : "";
+        return content || buildFallbackAnalysisSummary(report);
+    } catch {
+        return buildFallbackAnalysisSummary(report);
+    }
+}
+
+function persistAnalyzedGame(report, pgnText) {
+    if (!authState.authenticated || !analysisModule || !analysisModule.registerFinishedGame) {
+        return null;
+    }
+
+    const openingPos = Array.isArray(report && report.positions)
+        ? report.positions.find((position) => position && position.opening)
+        : null;
+    const openingName = openingPos && openingPos.opening ? openingPos.opening : "Sin apertura detectada";
+    const errors = collectAnalysisErrors(report);
+    const summary = analysisModule.registerFinishedGame({
+        opening: openingName,
+        result: "analysis",
+        botElo: null,
+        color: "analisis",
+        accuracy: computeOverallAccuracyFromReport(report),
+        errors,
+        mode: "analysis",
+        ranked: false,
+        pgn: String(pgnText || "").slice(0, 10000)
+    });
+
+    return summary;
+}
+
+async function yieldToUi() {
+    await new Promise((resolve) => {
+        if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+            window.requestAnimationFrame(() => resolve());
+            return;
+        }
+        setTimeout(resolve, 0);
+    });
+}
+
+async function refreshAnalysisSummaryIfCurrent(localRunId, report, pgn) {
+    if (localRunId !== analysisState.runId) {
+        return;
+    }
+
+    analysisState.aiSummaryLoading = true;
+    if (el.analysisAiSummary) {
+        el.analysisAiSummary.textContent = "Generando resumen IA de la partida...";
+    }
+
+    const summary = await generateAnalysisSummaryWithAI(report, pgn);
+    if (localRunId !== analysisState.runId) {
+        return;
+    }
+
+    analysisState.aiSummaryLoading = false;
+    analysisState.aiSummary = summary;
+    if (el.analysisAiSummary) {
+        el.analysisAiSummary.textContent = summary;
+    }
+}
+
 async function runAnalysis() {
     const pgn = el.analysisPgn.value.trim();
     if (!pgn) {
@@ -4690,22 +4861,27 @@ async function runAnalysis() {
         }
 
         const depth = clamp(parseInt(el.analysisDepth.value, 10), 8, 20);
+        const targetMoveTime = clamp(280 + depth * 55, 420, 1500);
+        const totalPositions = positions.length;
 
-        for (let i = 0; i < positions.length; i += 1) {
+        for (let i = 0; i < totalPositions; i += 1) {
             if (localRunId !== analysisState.runId) {
                 return;
             }
 
-            const progress = Math.round((i / positions.length) * 100);
+            const progress = Math.round((i / totalPositions) * 92);
             el.analysisProgress.value = progress;
-            setAnalysisStatus(`Evaluando posici\u00f3n ${i + 1} de ${positions.length}...`);
+            setAnalysisStatus(`Evaluando posici\u00f3n ${i + 1} de ${totalPositions}...`);
+            await yieldToUi();
 
             let evaluation;
             try {
                 evaluation = await evaluateWithStockfish({
                     fen: positions[i].fen,
                     depth,
-                    multipv: 2
+                    multipv: 2,
+                    movetime: targetMoveTime,
+                    timeoutMs: 14_000
                 });
             } catch {
                 evaluation = {
@@ -4735,8 +4911,9 @@ async function runAnalysis() {
             positions[i].worker = "local";
         }
 
-        el.analysisProgress.value = 100;
-        setAnalysisStatus("Calculando clasificaciones...");
+        el.analysisProgress.value = 95;
+        setAnalysisStatus("Generando reporte final...");
+        await yieldToUi();
 
         const reportResponse = await fetch("/api/report", {
             method: "POST",
@@ -4754,6 +4931,11 @@ async function runAnalysis() {
 
         analysisState.report = reportPayload.results;
         analysisState.currentIndex = 0;
+        analysisState.aiSummary = "";
+        analysisState.aiSummaryLoading = false;
+        if (el.analysisAiSummary) {
+            el.analysisAiSummary.textContent = "Preparando resumen IA...";
+        }
 
         if (el.analysisOverallAccuracy) {
             el.analysisOverallAccuracy.textContent = `${computeOverallAccuracyFromReport(analysisState.report).toFixed(1)}%`;
@@ -4792,8 +4974,18 @@ async function runAnalysis() {
             scheduleProfileStoreSync();
         }
 
+        if (authState.authenticated) {
+            const summary = persistAnalyzedGame(analysisState.report, pgn);
+            if (summary) {
+                renderProgressDashboard(summary);
+            }
+            scheduleProfileStoreSync();
+        }
+
+        el.analysisProgress.value = 100;
         setAnalysisStatus("Analisis completado.");
         showAnalysisDetail("analysis-review");
+        void refreshAnalysisSummaryIfCurrent(localRunId, analysisState.report, pgn);
     } catch (error) {
         setAnalysisStatus(error instanceof Error ? error.message : "Error inesperado en el an\u00e1lisis.");
     } finally {
@@ -6523,14 +6715,6 @@ function bindTabs() {
             if (target === "study-section") {
                 registerStudyActivity({ source: "tab_switch" });
             }
-            if (target === "analysis-section") {
-                const landing = document.getElementById("analysis-landing");
-                const hasVisibleDetail = Array.from(document.querySelectorAll(".analysis-detail"))
-                    .some((panel) => panel && panel.style && panel.style.display === "block");
-                if (landing && landing.style.display !== "none" && !hasVisibleDetail) {
-                    showAnalysisDetail("analysis-input");
-                }
-            }
 
             scheduleSessionSnapshotSave();
         });
@@ -7378,6 +7562,7 @@ async function generateAiResponse(question) {
     const materialDesc = describeMaterial(material.diff);
     const turn = game.turn() === "w" ? "blancas" : "negras";
     const moveNum = Math.ceil(history.length / 2);
+    const detectedOpening = detectOpening(history, fen);
 
     let engineEval = null;
     let bestMoveStr = "";
@@ -7393,26 +7578,39 @@ async function generateAiResponse(question) {
 
     const evalText = engineEval ? formatEval(engineEval) : "desconocida";
 
-    const systemPrompt = `Eres un asistente de ajedrez conciso y accionable para la webapp Ajedrez Lab.
+    const systemPrompt = `Eres un entrenador de ajedrez claro, ordenado y didactico para Ajedrez Lab.
+
+OBJETIVO:
+- Responder de forma directa pero explicativa.
+- Explicar SIEMPRE: que jugar, por que funciona y cual es el riesgo.
+
+FORMATO OBLIGATORIO:
+1) Plan inmediato: una frase concreta.
+2) Por que funciona: 1-2 frases (tactica/estrategia).
+3) Riesgo principal: una frase.
+4) Linea sugerida: 2-4 jugadas en SAN.
+5) Apertura/tema: nombre teorico exacto si existe; si no, "Sin nombre teorico claro".
 
 REGLAS:
-1. Se BREVE y DIRECTO. Maximo 3-4 oraciones.
-2. Cuando sugieras un movimiento, siempre menciona el nombre de la pieza en espanol (Peon, Caballo, Alfil, Torre, Dama, Rey) seguido de la notacion.
-3. Ejemplo: "Mueve el Caballo a f3 (Nf3)" o "Juega Peon a e4 (e4)".
-4. Si te piden ayuda, da la mejor jugada con el nombre de la pieza y una razon corta.
-5. Responde en espanol.
-6. Usa simbolos visuales de forma moderada para claridad: "\u2022", "\u2192", "\u2713", "\u26A0".
-7. Debes responder SOLO en JSON valido sin markdown.
-8. Formato obligatorio: {"text":"...", "actions":[{"type":"hint|undo|new_game|analyze|study|flip|open_study|load_line","label":"...", "argument":"..."}]}.
-9. Incluye 0-3 acciones maximo. Solo usa tipos de la whitelist.
-10. Si hablas de una apertura concreta, incluye accion study con el nombre exacto en argument.
+1. Responde en espanol claro.
+2. Usa nombre de pieza + jugada SAN cuando recomiendes.
+3. Si preguntan por apertura o ataque, da 2-3 opciones con nombre teorico y en que contexto se usan.
+4. Texto maximo: 11 lineas.
+5. Si no hay suficiente informacion, dilo y da plan prudente.
+6. Devuelve SOLO JSON valido (sin markdown externo).
+7. Formato JSON: {"text":"...", "actions":[{"type":"hint|undo|new_game|analyze|study|flip|open_study|load_line","label":"...", "argument":"..."}]}
+8. Usa 0-3 acciones maximo.
+9. Si recomiendas estudio de apertura, agrega accion "study" con el nombre en "argument".
 
-Contexto de la partida:
-- Fase: ${phase} | Turno: ${turn} | Jugada #${moveNum}
-- Ultimas jugadas: ${history.slice(-8).join(" ")}
+Contexto:
+- Fase: ${phase}
+- Turno: ${turn}
+- Jugada: ${moveNum}
+- Ultimas jugadas: ${history.slice(-10).join(" ") || "(sin jugadas)"}
 - Material: ${materialDesc}
 - Eval Stockfish: ${evalText}
-- Mejor jugada: ${bestMoveDesc} (${bestMoveStr})`;
+- Mejor jugada sugerida: ${bestMoveDesc} (${bestMoveStr})
+- Apertura detectada: ${detectedOpening || "Sin apertura detectada"}`;
 
     const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
     const timeoutId = controller

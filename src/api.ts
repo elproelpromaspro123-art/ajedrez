@@ -1101,7 +1101,7 @@ router.post("/parse", async (req, res) => {
 router.get("/openings", async (_req, res) => {
     try {
         const payload = (openings as OpeningCatalogEntry[])
-            .filter((entry) => isNonEmptyString(entry.name) && isNonEmptyString(entry.fen))
+            .filter((entry) => isNonEmptyString(entry.name) && isNonEmptyString(entry.fen) && entry.name!.trim() !== "Starting Position")
             .map((entry) => ({
                 name: entry.name!.trim(),
                 fen: entry.fen!.trim()
