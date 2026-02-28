@@ -328,7 +328,7 @@ function getPostgresPool(config: PostgresBackendConfig): Pool {
 
     if (shouldUsePostgresTls(config.connectionString)) {
         poolConfig.ssl = {
-            rejectUnauthorized: false
+            rejectUnauthorized: process.env.PG_REJECT_UNAUTHORIZED !== "false"
         };
     }
 

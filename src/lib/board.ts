@@ -36,10 +36,10 @@ function getSquare(coordinate: Coordinate): Square {
 
 export function getAttackers(fen: string, square: Square): InfluencingPiece[] {
 
-    let attackers: InfluencingPiece[] = [];
+    const attackers: InfluencingPiece[] = [];
 
-    let board = new Chess(fen);
-    let piece = board.get(square);
+    const board = new Chess(fen);
+    const piece = board.get(square);
     if (!piece) return attackers;
 
     // Set colour to move to opposite of attacked piece
@@ -49,7 +49,7 @@ export function getAttackers(fen: string, square: Square): InfluencingPiece[] {
     );
 
     // Find each legal move that captures attacked piece
-    let legalMoves = board.moves({ verbose: true });
+    const legalMoves = board.moves({ verbose: true });
 
     for (let move of legalMoves) {
         if (move.to == square) {
@@ -64,9 +64,9 @@ export function getAttackers(fen: string, square: Square): InfluencingPiece[] {
     // If there is an opposite king around the attacked piece add him as an attacker
     // if he is not the only attacker or it is a legal move for the king to capture it
     let oppositeKing: InfluencingPiece | undefined;
-    let oppositeColour = piece.color == "w" ? "b" : "w";
+    const oppositeColour = piece.color == "w" ? "b" : "w";
 
-    let pieceCoordinate = getBoardCoordinates(square);
+    const pieceCoordinate = getBoardCoordinates(square);
     for (let xOffset = -1; xOffset <= 1; xOffset++) {
         for (let yOffset = -1; yOffset <= 1; yOffset++) {
             if (xOffset == 0 && yOffset == 0) continue;
@@ -75,11 +75,11 @@ export function getAttackers(fen: string, square: Square): InfluencingPiece[] {
             let newY = pieceCoordinate.y + yOffset;
             if (newX < 0 || newX > 7 || newY < 0 || newY > 7) continue;
 
-            let offsetSquare = getSquare({
+            const offsetSquare = getSquare({
                 x: newX,
                 y: newY
             });
-            let offsetPiece = board.get(offsetSquare);
+            const offsetPiece = board.get(offsetSquare);
             if (!offsetPiece) continue;
 
             if (offsetPiece.color == oppositeColour && offsetPiece.type == "k") {
@@ -116,11 +116,11 @@ export function getAttackers(fen: string, square: Square): InfluencingPiece[] {
 
 export function getDefenders(fen: string, square: Square) {
 
-    let board = new Chess(fen);
-    let piece = board.get(square);
+    const board = new Chess(fen);
+    const piece = board.get(square);
     if (!piece) return [];
 
-    let testAttacker = getAttackers(fen, square)[0];
+    const testAttacker = getAttackers(fen, square)[0];
 
     // If there is an attacker we can test capture the piece with
     if (testAttacker) {
@@ -166,15 +166,15 @@ export function getDefenders(fen: string, square: Square) {
 
 export function isPieceHanging(lastFen: string, fen: string, square: Square) {
 
-    let lastBoard = new Chess(lastFen);
-    let board = new Chess(fen);
+    const lastBoard = new Chess(lastFen);
+    const board = new Chess(fen);
 
-    let lastPiece = lastBoard.get(square);
-    let piece = board.get(square);
+    const lastPiece = lastBoard.get(square);
+    const piece = board.get(square);
     if (!piece) return false;
 
-    let attackers = getAttackers(fen, square);
-    let defenders = getDefenders(fen, square);
+    const attackers = getAttackers(fen, square);
+    const defenders = getDefenders(fen, square);
 
     // If piece was just traded equally or better, not hanging
     if (lastPiece && pieceValues[lastPiece.type] >= pieceValues[piece.type] && lastPiece.color != piece.color) {

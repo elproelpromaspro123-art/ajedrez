@@ -17,23 +17,23 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
     
     // Generate classifications for each position
     let positionIndex = 0;
-    for (let position of positions.slice(1)) {
+    for (const position of positions.slice(1)) {
 
         positionIndex++;
 
-        let board = new Chess(position.fen);
+        const board = new Chess(position.fen);
 
-        let lastPosition = positions[positionIndex - 1];
+        const lastPosition = positions[positionIndex - 1];
 
-        let topMove = lastPosition.topLines.find(line => line.id == 1);
-        let secondTopMove = lastPosition.topLines.find(line => line.id == 2);
+        const topMove = lastPosition.topLines.find(line => line.id == 1);
+        const secondTopMove = lastPosition.topLines.find(line => line.id == 2);
         if (!topMove) continue;
 
         let previousEvaluation = topMove.evaluation;
         let evaluation = position.topLines.find(line => line.id == 1)?.evaluation;
         if (!previousEvaluation) continue;
 
-        let moveColour = position.fen.includes(" b ") ? "white" : "black";
+        const moveColour = position.fen.includes(" b ") ? "white" : "black";
 
         // If there are no legal moves in this position, game is in terminal state
         if (!evaluation) {
@@ -46,17 +46,17 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
             });
         }
 
-        let absoluteEvaluation = evaluation.value * (moveColour == "white" ? 1 : -1);
-        let previousAbsoluteEvaluation = previousEvaluation.value * (moveColour == "white" ? 1 : -1);
+        const absoluteEvaluation = evaluation.value * (moveColour == "white" ? 1 : -1);
+        const previousAbsoluteEvaluation = previousEvaluation.value * (moveColour == "white" ? 1 : -1);
 
-        let absoluteSecondEvaluation = (secondTopMove?.evaluation.value ?? 0) * (moveColour == "white" ? 1 : -1);
+        const absoluteSecondEvaluation = (secondTopMove?.evaluation.value ?? 0) * (moveColour == "white" ? 1 : -1);
         
         // Calculate evaluation loss as a result of this move
         let evalLoss = Infinity;
         let cutoffEvalLoss = Infinity;
         let lastLineEvalLoss = Infinity;
 
-        let matchingTopLine = lastPosition.topLines.find(line => line.moveUCI == position.move.uci);
+        const matchingTopLine = lastPosition.topLines.find(line => line.moveUCI == position.move.uci);
         if (matchingTopLine) {
             if (moveColour == "white") {
                 lastLineEvalLoss = previousEvaluation.value - matchingTopLine.evaluation.value;
@@ -87,7 +87,7 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
             continue;
         }
 
-        let noMate = previousEvaluation.type == "cp" && evaluation.type == "cp";
+        const noMate = previousEvaluation.type == "cp" && evaluation.type == "cp";
 
         // If it is the top line, disregard other detections and give best
         if (topMove.moveUCI == position.move.uci) {
@@ -95,7 +95,7 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
         } else {
             // If no mate on the board last move and still no mate
             if (noMate) {
-                for (let classif of centipawnClassifications) {
+                for (const classif of centipawnClassifications) {
                     if (evalLoss <= getEvaluationLossThreshold(classif, previousEvaluation.value)) {
                         position.classification = classif;
                         break;
@@ -160,21 +160,21 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
         if (position.classification == Classification.BEST) {
             // Test for brilliant move classification
             // Must be winning for the side that played the brilliancy
-            let winningAnyways = (
+            const winningAnyways = (
                 absoluteSecondEvaluation >= 700 && topMove.evaluation.type == "cp"
                 || (topMove.evaluation.type == "mate" && secondTopMove.evaluation.type == "mate")
             );
 
             if (absoluteEvaluation >= 0 && !winningAnyways && !position.move.san.includes("=")) {
-                let lastBoard = new Chess(lastPosition.fen);
-                let currentBoard = new Chess(position.fen);
+                const lastBoard = new Chess(lastPosition.fen);
+                const currentBoard = new Chess(position.fen);
                 if (lastBoard.isCheck()) continue;
 
-                let lastPiece = lastBoard.get(position.move.uci.slice(2, 4) as Square) || { type: "m" };
+                const lastPiece = lastBoard.get(position.move.uci.slice(2, 4) as Square) || { type: "m" };
 
-                let sacrificedPieces: InfluencingPiece[] = [];
-                for (let row of currentBoard.board()) {
-                    for (let piece of row) {
+                const sacrificedPieces: InfluencingPiece[] = [];
+                for (const row of currentBoard.board()) {
+                    for (const piece of row) {
                         if (!piece) continue;
                         if (piece.color != moveColour.charAt(0)) continue;
                         if (piece.type == "k" || piece.type == "p") continue;
@@ -196,13 +196,13 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
                 // If all captures of all of your hanging pieces would result in an enemy piece
                 // of greater or equal value also being hanging OR mate in 1, not brilliant
                 let anyPieceViablyCapturable = false;
-                let captureTestBoard = new Chess(position.fen);
+                const captureTestBoard = new Chess(position.fen);
 
-                for (let piece of sacrificedPieces) {
-                    let attackers = getAttackers(position.fen, piece.square);
+                for (const piece of sacrificedPieces) {
+                    const attackers = getAttackers(position.fen, piece.square);
 
-                    for (let attacker of attackers) {
-                        for (let promotion of promotions) {
+                    for (const attacker of attackers) {
+                        for (const promotion of promotions) {
                             try {
                                 captureTestBoard.move({
                                     from: attacker.square,
@@ -213,8 +213,8 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
                                 // If the capture of the piece with the current attacker leads to
                                 // a piece of greater or equal value being hung (if attacker is pinned)
                                 let attackerPinned = false;
-                                for (let row of captureTestBoard.board()) {
-                                    for (let enemyPiece of row) {
+                                for (const row of captureTestBoard.board()) {
+                                    for (const enemyPiece of row) {
                                         if (!enemyPiece) continue;
                                         if (enemyPiece.color == captureTestBoard.turn()) continue;
                                         if (enemyPiece.type == "k" || enemyPiece.type == "p") continue;
@@ -295,15 +295,22 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
     }
 
     // Generate opening names for named positions
-    for (let position of positions) {
-        let positionPlacement = position.fen.split(" ")[0];
-        let opening = openings.find(opening => positionPlacement === opening.fen.split(" ")[0]);
-        position.opening = opening?.name;
+    const openingsByPlacement = new Map<string, string>();
+    for (const entry of openings) {
+        const placement = entry.fen.split(" ")[0];
+        if (placement && entry.name && !openingsByPlacement.has(placement)) {
+            openingsByPlacement.set(placement, entry.name);
+        }
+    }
+
+    for (const position of positions) {
+        const positionPlacement = position.fen.split(" ")[0];
+        position.opening = openingsByPlacement.get(positionPlacement);
     }
 
     // Apply book moves for cloud evaluations and named positions
-    let positiveClassifs = Object.keys(classificationValues).slice(4, 8);
-    for (let position of positions.slice(1)) {
+    const positiveClassifs = Object.keys(classificationValues).slice(4, 8);
+    for (const position of positions.slice(1)) {
         if (
             (position.worker == "cloud" && positiveClassifs.includes(position.classification!))
             || position.opening
@@ -316,11 +323,11 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
 
     // Generate SAN moves from all engine lines
     // This is used for the engine suggestions card on the frontend
-    for (let position of positions) {
-        for (let line of position.topLines) {
+    for (const position of positions) {
+        for (const line of position.topLines) {
             if (line.evaluation.type == "mate" && line.evaluation.value == 0) continue;
 
-            let board = new Chess(position.fen);
+            const board = new Chess(position.fen);
 
             try {
                 line.moveSAN = board.move({
@@ -372,7 +379,7 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
         }
     };
 
-    for (let position of positions.slice(1)) {
+    for (const position of positions.slice(1)) {
         const moveColour = position.fen.includes(" b ") ? "white" : "black";
 
         accuracies[moveColour].current += classificationValues[position.classification!];

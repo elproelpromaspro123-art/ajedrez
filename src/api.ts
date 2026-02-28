@@ -90,14 +90,17 @@ const PROFILE_LESSON_KEYS_MAX = 250;
 const AUTH_COOKIE_NAME = "freechess_auth";
 const AUTH_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const AUTH_SESSION_MAX = 5000;
+const AUTH_LOGIN_RATE_WINDOW_MS = 60_000;
+const AUTH_LOGIN_RATE_MAX_ATTEMPTS = 8;
 const USERNAME_MIN = 3;
 const USERNAME_MAX = 24;
 const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 120;
 const aiRateLimiter = new Map<string, number[]>();
+const loginRateLimiter = new Map<string, number[]>();
 
 // Prune stale rate-limiter entries every 60 seconds
-const aiLimiterPruneTimer = setInterval(() => {
+const rateLimiterPruneTimer = setInterval(() => {
     const now = Date.now();
     for (const [clientId, timestamps] of aiRateLimiter) {
         const active = timestamps.filter((t) => now - t < AI_RATE_WINDOW_MS);
@@ -107,8 +110,16 @@ const aiLimiterPruneTimer = setInterval(() => {
             aiRateLimiter.set(clientId, active);
         }
     }
+    for (const [clientId, timestamps] of loginRateLimiter) {
+        const active = timestamps.filter((t) => now - t < AUTH_LOGIN_RATE_WINDOW_MS);
+        if (active.length === 0) {
+            loginRateLimiter.delete(clientId);
+        } else {
+            loginRateLimiter.set(clientId, active);
+        }
+    }
 }, 60_000);
-aiLimiterPruneTimer.unref?.();
+rateLimiterPruneTimer.unref?.();
 
 function isNonEmptyString(value: unknown): value is string {
     return typeof value == "string" && value.trim().length > 0;
@@ -226,27 +237,34 @@ function getClientIdentifier(req: Request): string {
     return String(req.ip || "unknown");
 }
 
-function checkAIRateLimit(clientId: string) {
+function checkRateLimit(
+    limiter: Map<string, number[]>,
+    clientId: string,
+    windowMs: number,
+    maxRequests: number
+) {
     const now = Date.now();
-    const history = aiRateLimiter.get(clientId) || [];
-    const active = history.filter((timestamp) => now - timestamp < AI_RATE_WINDOW_MS);
+    const history = limiter.get(clientId) || [];
+    const active = history.filter((timestamp) => now - timestamp < windowMs);
 
-    if (active.length >= AI_RATE_MAX_REQUESTS) {
-        const retryAfterMs = Math.max(1, AI_RATE_WINDOW_MS - (now - active[0]));
-        aiRateLimiter.set(clientId, active);
-        return {
-            limited: true,
-            retryAfterMs
-        };
+    if (active.length >= maxRequests) {
+        const retryAfterMs = Math.max(1, windowMs - (now - active[0]));
+        limiter.set(clientId, active);
+        return { limited: true, retryAfterMs };
     }
 
     active.push(now);
-    aiRateLimiter.set(clientId, active);
+    limiter.set(clientId, active);
 
-    return {
-        limited: false,
-        retryAfterMs: 0
-    };
+    return { limited: false, retryAfterMs: 0 };
+}
+
+function checkAIRateLimit(clientId: string) {
+    return checkRateLimit(aiRateLimiter, clientId, AI_RATE_WINDOW_MS, AI_RATE_MAX_REQUESTS);
+}
+
+function checkLoginRateLimit(clientId: string) {
+    return checkRateLimit(loginRateLimiter, clientId, AUTH_LOGIN_RATE_WINDOW_MS, AUTH_LOGIN_RATE_MAX_ATTEMPTS);
 }
 
 function normalizeUsername(value: unknown): string | null {
@@ -700,6 +718,16 @@ router.post("/auth/register", async (req, res) => {
 });
 
 router.post("/auth/login", async (req, res) => {
+    const clientId = getClientIdentifier(req);
+    const loginLimit = checkLoginRateLimit(clientId);
+    if (loginLimit.limited) {
+        res.setHeader("Retry-After", String(Math.ceil(loginLimit.retryAfterMs / 1000)));
+        return res.status(429).json({
+            message: "Demasiados intentos de login. Espera un momento antes de reintentar.",
+            retryAfterMs: loginLimit.retryAfterMs
+        });
+    }
+
     const credentials = parseAuthCredentials(req.body);
     if (!credentials) {
         return res.status(400).json({ message: "Credenciales invalidas." });
@@ -833,10 +861,10 @@ router.post("/profile-store/sync", async (req, res) => {
     }
 
     if (Object.keys(patch).length === 0) {
-        return res.status(400).json({ message: "Invalid sync payload." });
+        return res.status(400).json({ message: "Payload de sincronizacion invalido." });
     }
     if (!isJsonPayloadSizeSafe(patch, PROFILE_SYNC_MAX_BYTES)) {
-        return res.status(413).json({ message: "Sync payload too large." });
+        return res.status(413).json({ message: "El payload de sincronizacion es demasiado grande." });
     }
 
     try {
@@ -878,12 +906,12 @@ router.post("/parse", async (req, res) => {
     let { pgn }: ParseRequestBody = req.body || {};
     
     if (!isNonEmptyString(pgn)) {
-        return res.status(400).json({ message: "Enter a PGN to analyse." });
+        return res.status(400).json({ message: "Introduce un PGN para analizar." });
     }
 
     pgn = pgn.trim();
     if (pgn.length > MAX_PGN_LENGTH) {
-        return res.status(413).json({ message: "PGN too large." });
+        return res.status(413).json({ message: "El PGN es demasiado grande." });
     }
 
     // Accept PGNs that do not explicitly include a result marker.
@@ -905,10 +933,10 @@ router.post("/parse", async (req, res) => {
             [ parsedPGN ] = pgnParser.parse(pgn);
 
             if (!parsedPGN) {
-                return res.status(400).json({ message: "Enter a PGN to analyse." });
+                return res.status(400).json({ message: "Introduce un PGN para analizar." });
             }
         } catch {
-            return res.status(400).json({ message: "Invalid PGN format." });
+            return res.status(400).json({ message: "Formato PGN invalido." });
         }
 
         const fallbackBoard = new Chess();
@@ -917,18 +945,18 @@ router.post("/parse", async (req, res) => {
         for (const pgnMove of parsedPGN.moves) {
             const moveSAN = pgnMove.move;
             if (!isNonEmptyString(moveSAN)) {
-                return res.status(400).json({ message: "PGN contains invalid moves." });
+                return res.status(400).json({ message: "El PGN contiene jugadas invalidas." });
             }
 
             let virtualBoardMove;
             try {
                 virtualBoardMove = fallbackBoard.move(moveSAN);
             } catch {
-                return res.status(400).json({ message: "PGN contains illegal moves." });
+                return res.status(400).json({ message: "El PGN contiene jugadas ilegales." });
             }
 
             if (!virtualBoardMove) {
-                return res.status(400).json({ message: "PGN contains illegal moves." });
+                return res.status(400).json({ message: "El PGN contiene jugadas ilegales." });
             }
 
             moves.push(virtualBoardMove);
@@ -971,29 +999,29 @@ router.get("/openings", async (_req, res) => {
         });
     } catch (err) {
         console.error("Openings catalog request failed:", err);
-        res.status(500).json({ message: "Failed to load openings catalog." });
+        res.status(500).json({ message: "No se pudo cargar el catalogo de aperturas." });
     }
 });
 
 router.get("/opening-explorer", async (req, res) => {
     const fen = sanitizeExplorerFen(req.query.fen);
     if (!fen) {
-        return res.status(400).json({ message: "Invalid FEN." });
+        return res.status(400).json({ message: "FEN invalido." });
     }
 
     const movesNum = parseExplorerMoves(req.query.moves);
     if (movesNum == null) {
-        return res.status(400).json({ message: "Invalid moves parameter." });
+        return res.status(400).json({ message: "Parametro de jugadas invalido." });
     }
 
     const speeds = sanitizeExplorerSpeeds(req.query.speeds);
     if (!speeds) {
-        return res.status(400).json({ message: "Invalid speeds parameter." });
+        return res.status(400).json({ message: "Parametro de velocidades invalido." });
     }
 
     const ratings = sanitizeExplorerRatings(req.query.ratings);
     if (!ratings) {
-        return res.status(400).json({ message: "Invalid ratings parameter." });
+        return res.status(400).json({ message: "Parametro de ratings invalido." });
     }
 
     const cacheKey = buildExplorerCacheKey(fen, movesNum, speeds, ratings);
@@ -1084,25 +1112,25 @@ router.post("/report", async (req, res) => {
     const { positions }: ReportRequestBody = req.body || {};
 
     if (!Array.isArray(positions) || positions.length === 0) {
-        return res.status(400).json({ message: "Missing parameters." });
+        return res.status(400).json({ message: "Faltan parametros." });
     }
 
     if (positions.length > 600) {
-        return res.status(400).json({ message: "Too many positions (max 600)." });
+        return res.status(400).json({ message: "Demasiadas posiciones (max 600)." });
     }
 
     // Validate minimal schema for each position
     for (let i = 0; i < positions.length; i++) {
         const pos = positions[i];
         if (!pos || typeof pos.fen !== "string" || pos.fen.trim().length === 0) {
-            return res.status(400).json({ message: `Position ${i} has invalid or missing FEN.` });
+            return res.status(400).json({ message: `Posicion ${i} tiene FEN invalido o faltante.` });
         }
         if (i > 0) {
             if (!pos.move || typeof pos.move.uci !== "string" || pos.move.uci.trim().length === 0) {
-                return res.status(400).json({ message: `Position ${i} has invalid or missing move.` });
+                return res.status(400).json({ message: `Posicion ${i} tiene jugada invalida o faltante.` });
             }
             if (!Array.isArray(pos.topLines)) {
-                return res.status(400).json({ message: `Position ${i} has missing topLines.` });
+                return res.status(400).json({ message: `Posicion ${i} no tiene topLines.` });
             }
         }
     }
@@ -1113,7 +1141,7 @@ router.post("/report", async (req, res) => {
         results = await analyse(positions);
     } catch (err) {
         console.error("Report generation failed:", err);
-        return res.status(500).json({ message: "Failed to generate report." });
+        return res.status(500).json({ message: "No se pudo generar el reporte." });
     }
 
     res.json({ results });
@@ -1125,7 +1153,7 @@ router.post("/ai-chat", async (req, res) => {
     const { question, systemPrompt, structured }: AIChatRequestBody = req.body || {};
 
     if (!isNonEmptyString(question)) {
-        return res.status(400).json({ message: "Question is required." });
+        return res.status(400).json({ message: "La pregunta es requerida." });
     }
 
     const clientId = getClientIdentifier(req);
@@ -1133,7 +1161,7 @@ router.post("/ai-chat", async (req, res) => {
     if (limit.limited) {
         res.setHeader("Retry-After", String(Math.ceil(limit.retryAfterMs / 1000)));
         return res.status(429).json({
-            message: "Rate limit exceeded for AI chat. Wait a few seconds before trying again.",
+            message: "Limite de solicitudes de IA excedido. Espera unos segundos antes de reintentar.",
             retryAfterMs: limit.retryAfterMs
         });
     }
@@ -1157,7 +1185,7 @@ router.post("/ai-chat", async (req, res) => {
         return res.json({ content });
     } catch (err) {
         if (err instanceof Error && err.message == "GROQ_API_KEY_MISSING") {
-            return res.status(503).json({ message: "AI assistant is not configured on the server." });
+            return res.status(503).json({ message: "El asistente IA no esta configurado en el servidor." });
         }
 
         console.error("AI chat request failed:", err);
@@ -1169,7 +1197,7 @@ router.post("/ai-chat", async (req, res) => {
             });
         }
 
-        return res.status(502).json({ message: "Failed to get a response from AI assistant." });
+        return res.status(502).json({ message: "No se pudo obtener respuesta del asistente IA." });
     }
 
 });
