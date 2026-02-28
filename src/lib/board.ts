@@ -106,7 +106,7 @@ export function getAttackers(fen: string, square: Square): InfluencingPiece[] {
         kingCaptureLegal = true;
     } catch {}
 
-    if (oppositeKing && (attackers.length > 0 || kingCaptureLegal)) {
+    if (oppositeKing && kingCaptureLegal) {
         attackers.push(oppositeKing);
     }
 

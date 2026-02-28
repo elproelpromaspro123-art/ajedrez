@@ -93,9 +93,10 @@ const CLASSIFICATION_DOT_COLOR = {
     blunder: "#ca3431"
 };
 
-const ENGINE_PRIMARY = "/static/scripts/stockfish.js";
-// Keep a non-wasm fallback to avoid CSP + WebAssembly instantiate errors.
+const ENGINE_PRIMARY = "/static/scripts/stockfish-nnue-16.js";
 const ENGINE_FALLBACK = "/static/scripts/stockfish.js";
+const MAX_ENGINE_MATE_PLY = 99;
+const MAX_ENGINE_CP = 3500;
 const APP_BOOT_AT = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
 const APP_MODULES = window.ReportModules || {};
 const storageModule = APP_MODULES.storage || null;
@@ -145,6 +146,9 @@ const el = {
     playNewGameBtn: document.querySelector("#play-new-game-btn"),
     playAccuracyScore: document.querySelector("#play-accuracy-score"),
     playPremoveState: document.querySelector("#play-premove-state"),
+    playClockStrip: document.querySelector("#play-clock-strip"),
+    playClockBot: document.querySelector("#play-clock-bot"),
+    playClockPlayer: document.querySelector("#play-clock-player"),
 
     playSetupPanel: document.querySelector("#play-setup-panel"),
     playGamePanel: document.querySelector("#play-game-panel"),
@@ -675,16 +679,52 @@ function formatEval(evaluation) {
     }
 
     if (evaluation.type === "mate") {
-        if (evaluation.value === 0) {
+        const value = clamp(Math.trunc(Number(evaluation.value) || 0), -MAX_ENGINE_MATE_PLY, MAX_ENGINE_MATE_PLY);
+        if (value === 0) {
             return "M0";
         }
 
-        const sign = evaluation.value > 0 ? "+" : "-";
-        return `${sign}M${Math.abs(evaluation.value)}`;
+        const sign = value > 0 ? "+" : "-";
+        return `${sign}M${Math.abs(value)}`;
     }
 
-    const sign = evaluation.value >= 0 ? "+" : "-";
-    return `${sign}${Math.abs(evaluation.value / 100).toFixed(2)}`;
+    const cpValue = clamp(Math.trunc(Number(evaluation.value) || 0), -MAX_ENGINE_CP, MAX_ENGINE_CP);
+    const sign = cpValue >= 0 ? "+" : "-";
+    return `${sign}${Math.abs(cpValue / 100).toFixed(2)}`;
+}
+
+function sanitizeEngineEvaluation(evaluation) {
+    if (!evaluation || typeof evaluation !== "object") {
+        return null;
+    }
+
+    const type = String(evaluation.type || "").toLowerCase();
+    if (type === "mate") {
+        const raw = Number(evaluation.value);
+        if (!Number.isFinite(raw)) {
+            return null;
+        }
+        return {
+            type: "mate",
+            value: clamp(Math.trunc(raw), -MAX_ENGINE_MATE_PLY, MAX_ENGINE_MATE_PLY)
+        };
+    }
+
+    const raw = Number(evaluation.value);
+    if (!Number.isFinite(raw)) {
+        return null;
+    }
+
+    return {
+        type: "cp",
+        value: clamp(Math.trunc(raw), -MAX_ENGINE_CP, MAX_ENGINE_CP)
+    };
+}
+
+function isPromotionTransitionValid(from, to) {
+    const fromRank = parseInt(from && from[1], 10);
+    const toRank = parseInt(to && to[1], 10);
+    return (fromRank === 7 && toRank === 8) || (fromRank === 2 && toRank === 1);
 }
 
 function parseUciMove(uci) {
@@ -692,11 +732,82 @@ function parseUciMove(uci) {
         return null;
     }
 
+    const from = uci.slice(0, 2);
+    const to = uci.slice(2, 4);
+    const promotion = uci.slice(4) || undefined;
+
+    if (promotion && !isPromotionTransitionValid(from, to)) {
+        return null;
+    }
+
     return {
-        from: uci.slice(0, 2),
-        to: uci.slice(2, 4),
-        promotion: uci.slice(4) || undefined
+        from,
+        to,
+        promotion
     };
+}
+
+function normalizeUciMoveForFen(fen, uciMove) {
+    const parsed = parseUciMove(uciMove);
+    if (!parsed) {
+        return null;
+    }
+
+    try {
+        const game = new Chess(fen);
+        const move = game.move(parsed);
+        if (!move) {
+            return null;
+        }
+
+        const promotion = move.promotion || undefined;
+        return {
+            from: move.from,
+            to: move.to,
+            promotion,
+            uci: `${move.from}${move.to}${promotion || ""}`,
+            san: move.san
+        };
+    } catch {
+        return null;
+    }
+}
+
+function normalizeEngineLinesForFen(fen, lines) {
+    const source = Array.isArray(lines) ? lines : [];
+    if (source.length === 0) {
+        return [];
+    }
+
+    const byId = new Map();
+    source.forEach((line) => {
+        if (!line || typeof line !== "object") {
+            return;
+        }
+
+        const normalizedMove = normalizeUciMoveForFen(fen, line.moveUCI || line.bestMove || "");
+        const evaluation = sanitizeEngineEvaluation(line.evaluation);
+        if (!normalizedMove || !evaluation) {
+            return;
+        }
+
+        const id = clamp(parseInt(line.id || "1", 10) || 1, 1, 8);
+        const depth = clamp(parseInt(line.depth || "0", 10) || 0, 0, 99);
+        const normalizedLine = {
+            id,
+            depth,
+            moveUCI: normalizedMove.uci,
+            moveSAN: normalizedMove.san,
+            evaluation
+        };
+
+        const existing = byId.get(id);
+        if (!existing || normalizedLine.depth >= existing.depth) {
+            byId.set(id, normalizedLine);
+        }
+    });
+
+    return Array.from(byId.values()).sort((a, b) => a.id - b.id);
 }
 
 function fenMapFromFen(fen) {
@@ -733,6 +844,9 @@ class BoardView {
         this.squareMap = new Map();
         this.onSquareClick = null;
         this.canDragFrom = null;
+        this.arrowIdPrefix = `board-arrows-${Math.random().toString(36).slice(2, 9)}`;
+        this.arrowLayer = null;
+        this.arrowGroup = null;
 
         if (!this.root) {
             throw new Error("Board root not found.");
@@ -925,6 +1039,7 @@ class BoardView {
         });
 
         this.root.appendChild(fragment);
+        this.ensureArrowLayer();
         this.root.classList.toggle("hide-coordinates", !this.showCoordinates);
         this.setFen(this.currentFen);
     }
@@ -941,6 +1056,122 @@ class BoardView {
     setCoordinatesVisible(visible) {
         this.showCoordinates = visible;
         this.root.classList.toggle("hide-coordinates", !visible);
+    }
+
+    ensureArrowLayer() {
+        if (!this.arrowLayer) {
+            this.arrowLayer = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+            this.arrowLayer.setAttribute("class", "board-arrows");
+            this.arrowLayer.setAttribute("viewBox", "0 0 100 100");
+            this.arrowLayer.setAttribute("preserveAspectRatio", "none");
+
+            const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+
+            const suggestionMarker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+            suggestionMarker.setAttribute("id", `${this.arrowIdPrefix}-suggestion`);
+            suggestionMarker.setAttribute("viewBox", "0 0 10 10");
+            suggestionMarker.setAttribute("refX", "8");
+            suggestionMarker.setAttribute("refY", "5");
+            suggestionMarker.setAttribute("markerWidth", "6");
+            suggestionMarker.setAttribute("markerHeight", "6");
+            suggestionMarker.setAttribute("orient", "auto-start-reverse");
+            const suggestionPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            suggestionPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+            suggestionPath.setAttribute("class", "board-arrow-head board-arrow-head-suggestion");
+            suggestionMarker.appendChild(suggestionPath);
+
+            const threatMarker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+            threatMarker.setAttribute("id", `${this.arrowIdPrefix}-threat`);
+            threatMarker.setAttribute("viewBox", "0 0 10 10");
+            threatMarker.setAttribute("refX", "8");
+            threatMarker.setAttribute("refY", "5");
+            threatMarker.setAttribute("markerWidth", "6");
+            threatMarker.setAttribute("markerHeight", "6");
+            threatMarker.setAttribute("orient", "auto-start-reverse");
+            const threatPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            threatPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
+            threatPath.setAttribute("class", "board-arrow-head board-arrow-head-threat");
+            threatMarker.appendChild(threatPath);
+
+            defs.append(suggestionMarker, threatMarker);
+            this.arrowLayer.appendChild(defs);
+
+            this.arrowGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            this.arrowGroup.setAttribute("class", "board-arrows-group");
+            this.arrowLayer.appendChild(this.arrowGroup);
+        }
+
+        if (!this.arrowLayer.parentNode || this.arrowLayer.parentNode !== this.root) {
+            this.root.appendChild(this.arrowLayer);
+        }
+    }
+
+    squareCenter(square) {
+        if (!square || !/^[a-h][1-8]$/.test(square)) {
+            return null;
+        }
+
+        const file = "abcdefgh".indexOf(square[0]);
+        const rank = parseInt(square[1], 10);
+        if (file < 0 || !Number.isFinite(rank)) {
+            return null;
+        }
+
+        const fileIndex = this.orientation === "white" ? file : (7 - file);
+        const rankIndex = this.orientation === "white" ? (8 - rank) : (rank - 1);
+        return {
+            x: (fileIndex + 0.5) * 12.5,
+            y: (rankIndex + 0.5) * 12.5
+        };
+    }
+
+    clearArrows() {
+        if (!this.arrowGroup) {
+            return;
+        }
+        while (this.arrowGroup.firstChild) {
+            this.arrowGroup.removeChild(this.arrowGroup.firstChild);
+        }
+    }
+
+    drawArrow(fromSquare, toSquare, kind = "suggestion") {
+        if (!this.arrowLayer || !this.arrowGroup) {
+            this.ensureArrowLayer();
+        }
+
+        const from = this.squareCenter(fromSquare);
+        const to = this.squareCenter(toSquare);
+        if (!from || !to) {
+            return;
+        }
+
+        const dx = to.x - from.x;
+        const dy = to.y - from.y;
+        const distance = Math.hypot(dx, dy);
+        if (distance < 0.3) {
+            return;
+        }
+
+        const shrink = Math.min(4, distance * 0.2);
+        const targetX = to.x - (dx / distance) * shrink;
+        const targetY = to.y - (dy / distance) * shrink;
+        const colorKind = kind === "threat" ? "threat" : "suggestion";
+
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", from.x.toFixed(3));
+        line.setAttribute("y1", from.y.toFixed(3));
+        line.setAttribute("x2", targetX.toFixed(3));
+        line.setAttribute("y2", targetY.toFixed(3));
+        line.setAttribute("class", `board-arrow board-arrow-${colorKind}`);
+        line.setAttribute("marker-end", `url(#${this.arrowIdPrefix}-${colorKind})`);
+
+        const tail = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        tail.setAttribute("cx", from.x.toFixed(3));
+        tail.setAttribute("cy", from.y.toFixed(3));
+        tail.setAttribute("r", "1.9");
+        tail.setAttribute("class", `board-arrow-tail board-arrow-tail-${colorKind}`);
+
+        this.arrowGroup.append(line, tail);
     }
 
     setFen(fen) {
@@ -1055,6 +1286,7 @@ class BoardView {
                 dot.remove();
             }
         });
+        this.clearArrows();
     }
 
     highlightSquares(squares, className) {
@@ -1150,24 +1382,25 @@ function parseInfoLine(message, fen) {
     const id = parseInt(idMatch ? idMatch[1] : "1", 10);
     const depth = parseInt(depthMatch[1], 10);
 
-    let evaluation;
-
     const cpMatch = message.match(/\bscore cp (-?\d+)/);
     const mateMatch = message.match(/\bscore mate (-?\d+)/);
+    let evaluation = null;
 
     if (cpMatch) {
         let value = parseInt(cpMatch[1], 10);
         if (fen.includes(" b ")) {
             value *= -1;
         }
-        evaluation = { type: "cp", value };
+        evaluation = sanitizeEngineEvaluation({ type: "cp", value });
     } else if (mateMatch) {
         let value = parseInt(mateMatch[1], 10);
         if (fen.includes(" b ")) {
             value *= -1;
         }
-        evaluation = { type: "mate", value };
-    } else {
+        evaluation = sanitizeEngineEvaluation({ type: "mate", value });
+    }
+
+    if (!evaluation) {
         return null;
     }
 
@@ -1181,6 +1414,31 @@ function parseInfoLine(message, fen) {
 
 function eloToSkill(elo) {
     return clamp(Math.round((elo - 400) / 120), 0, 20);
+}
+
+function getEngineThreads() {
+    if (typeof navigator === "undefined") {
+        return 2;
+    }
+    const hw = Number(navigator.hardwareConcurrency || 2);
+    if (!Number.isFinite(hw) || hw <= 1) {
+        return 1;
+    }
+    return clamp(Math.floor(hw / 2), 1, 4);
+}
+
+function getEngineHashMb() {
+    if (typeof navigator === "undefined") {
+        return 96;
+    }
+    const memory = Number(navigator.deviceMemory || 4);
+    if (!Number.isFinite(memory)) {
+        return 96;
+    }
+    if (memory >= 12) return 192;
+    if (memory >= 8) return 160;
+    if (memory >= 4) return 128;
+    return 64;
 }
 
 function runStockfishInternal(options, enginePath) {
@@ -1215,7 +1473,10 @@ function runStockfishInternal(options, enginePath) {
         }
 
         timeoutId = setTimeout(() => {
-            const partialLines = Array.from(linesById.values()).sort((a, b) => a.id - b.id);
+            const partialLines = normalizeEngineLinesForFen(
+                fen,
+                Array.from(linesById.values()).sort((a, b) => a.id - b.id)
+            );
             if (!resolved && partialLines.length > 0) {
                 resolved = true;
                 cleanup();
@@ -1233,6 +1494,13 @@ function runStockfishInternal(options, enginePath) {
             const message = String(event.data || "");
 
             if (message === "uciok") {
+                worker.postMessage(`setoption name Threads value ${getEngineThreads()}`);
+                worker.postMessage(`setoption name Hash value ${getEngineHashMb()}`);
+                worker.postMessage("setoption name UCI_AnalyseMode value true");
+                worker.postMessage("setoption name Move Overhead value 20");
+                worker.postMessage("setoption name Minimum Thinking Time value 15");
+                worker.postMessage("setoption name Ponder value false");
+                worker.postMessage("setoption name Use NNUE value true");
                 worker.postMessage(`setoption name MultiPV value ${Math.max(1, multipv || 1)}`);
 
                 if (elo) {
@@ -1250,6 +1518,7 @@ function runStockfishInternal(options, enginePath) {
 
             if (message === "readyok" && !started) {
                 started = true;
+                worker.postMessage("ucinewgame");
                 worker.postMessage(`position fen ${fen}`);
 
                 if (movetime) {
@@ -1270,14 +1539,19 @@ function runStockfishInternal(options, enginePath) {
 
             if (message.startsWith("bestmove")) {
                 const bestMove = message.split(" ")[1] || "";
+                const normalizedLines = normalizeEngineLinesForFen(
+                    fen,
+                    Array.from(linesById.values()).sort((a, b) => a.id - b.id)
+                );
+                const normalizedBest = normalizeUciMoveForFen(fen, bestMove);
 
                 if (!resolved) {
                     resolved = true;
                     cleanup();
 
                     resolve({
-                        bestMove,
-                        lines: Array.from(linesById.values()).sort((a, b) => a.id - b.id)
+                        bestMove: normalizedBest ? normalizedBest.uci : (normalizedLines[0] ? normalizedLines[0].moveUCI : ""),
+                        lines: normalizedLines
                     });
                 }
             }
@@ -1366,18 +1640,8 @@ function uciToSanFromFen(fen, uciMove) {
         return engineModule.uciToSanFromFen(fen, uciMove);
     }
 
-    const parsed = parseUciMove(uciMove);
-    if (!parsed) {
-        return uciMove;
-    }
-
-    try {
-        const game = new Chess(fen);
-        const move = game.move(parsed);
-        return move ? move.san : uciMove;
-    } catch {
-        return uciMove;
-    }
+    const normalized = normalizeUciMoveForFen(fen, uciMove);
+    return normalized ? normalized.san : String(uciMove || "");
 }
 
 /* ===== Promotion Modal ===== */
@@ -1489,13 +1753,19 @@ const playState = {
     pendingConfirmMove: null, // {from, to, san, promotion} awaiting yes/no
     premove: null, // {from,to,promotion}
     computerTopLines: [],    // latest engine top lines for computer panel
+    computerTopLinesFen: "",
     moveHistory: [],         // persistent move history until new game
     pendingEvaluations: 0,
     startTime: null,         // track game duration
     endgameShown: false,
     manualGameOver: null,    // { title, reason, winner } for resign outcomes
     lastRankedProfileDelta: null, // summary of profile changes after a ranked game
-    lastAnimatedMoveKey: ""
+    lastAnimatedMoveKey: "",
+    clockConfigSeconds: 0,
+    clockRemainingMs: { white: 0, black: 0 },
+    clockActiveSide: null,
+    clockLastTickAt: 0,
+    clockTimerId: null
 };
 
 const progressState = {
@@ -1604,6 +1874,7 @@ function refreshPlayModeUiState() {
     const requiresAuth = !authState.authenticated;
     const rankedSelected = getSelectedPlayMode() === PLAY_MODES.RANKED;
     const rankedLive = isRankedActiveGame();
+    const activeGame = Boolean(playState.startTime) && !isPlayGameOver();
     const lockControls = rankedSelected || rankedLive;
     const lockColorSelector = rankedSelected || rankedLive;
 
@@ -1646,6 +1917,12 @@ function refreshPlayModeUiState() {
     if (el.playStartBtn) {
         el.playStartBtn.disabled = requiresAuth;
     }
+    if (el.setTimeControl) {
+        el.setTimeControl.disabled = activeGame;
+    }
+    if (el.setGameType) {
+        el.setGameType.disabled = activeGame;
+    }
 }
 
 function getRankedGamesOnly(games) {
@@ -1659,6 +1936,7 @@ function getRankedGamesOnly(games) {
 }
 
 function getPlaySettings() {
+    const rawTimeControl = parseInt(el.setTimeControl ? el.setTimeControl.value : "0", 10);
     return {
         showLegal: el.setLegal ? el.setLegal.checked : true,
         showLastMove: el.setLastMove ? el.setLastMove.checked : true,
@@ -1675,9 +1953,203 @@ function getPlaySettings() {
         takebacksEnabled: el.setTakebacks ? el.setTakebacks.checked : true,
         computerEnabled: el.setComputer ? el.setComputer.checked : true,
         moveComments: el.setMoveComments ? el.setMoveComments.checked : true,
+        threatArrows: el.setThreatArrows ? el.setThreatArrows.checked : false,
+        suggestionArrows: el.setSuggestionArrows ? el.setSuggestionArrows.checked : false,
+        timeControlSeconds: Number.isFinite(rawTimeControl) ? clamp(rawTimeControl, 0, 1800) : 0,
+        gameType: el.setGameType ? String(el.setGameType.value || "standard") : "standard",
         boardTheme: el.setBoardTheme ? el.setBoardTheme.value : "classic",
         pieceTheme: el.setPieceTheme ? el.setPieceTheme.value : "default"
     };
+}
+
+function setComputerTopLines(lines, fen, options = {}) {
+    const normalize = options.normalize !== false;
+    const source = Array.isArray(lines) ? lines : [];
+    const normalized = normalize ? normalizeEngineLinesForFen(fen, source) : source;
+    playState.computerTopLines = normalized;
+    playState.computerTopLinesFen = normalized.length > 0 ? String(fen || "") : "";
+}
+
+function clearComputerTopLines() {
+    playState.computerTopLines = [];
+    playState.computerTopLinesFen = "";
+}
+
+function formatClockMs(ms) {
+    const safeMs = Math.max(0, Math.trunc(Number(ms) || 0));
+    const totalSeconds = Math.floor(safeMs / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function stopPlayClockTimer() {
+    if (playState.clockTimerId) {
+        clearInterval(playState.clockTimerId);
+        playState.clockTimerId = null;
+    }
+}
+
+function renderPlayClock() {
+    if (!el.playClockStrip || !el.playClockPlayer || !el.playClockBot) {
+        return;
+    }
+
+    const enabled = Boolean(playState.startTime)
+        && !isPlayGameOver()
+        && Number(playState.clockConfigSeconds) > 0;
+    if (!enabled) {
+        el.playClockStrip.style.display = "none";
+        return;
+    }
+
+    el.playClockStrip.style.display = "";
+    const playerMs = playState.playerColor === "white"
+        ? playState.clockRemainingMs.white
+        : playState.clockRemainingMs.black;
+    const botMs = playState.botColor === "white"
+        ? playState.clockRemainingMs.white
+        : playState.clockRemainingMs.black;
+
+    el.playClockPlayer.textContent = `Tu reloj: ${formatClockMs(playerMs)}`;
+    el.playClockBot.textContent = `Bot: ${formatClockMs(botMs)}`;
+
+    el.playClockPlayer.classList.toggle("is-active", playState.clockActiveSide === playState.playerColor);
+    el.playClockBot.classList.toggle("is-active", playState.clockActiveSide === playState.botColor);
+    el.playClockPlayer.classList.toggle("is-low", playerMs <= 15000);
+    el.playClockBot.classList.toggle("is-low", botMs <= 15000);
+}
+
+function settleActiveClock(now = Date.now()) {
+    if (Number(playState.clockConfigSeconds) <= 0 || !playState.clockActiveSide) {
+        return;
+    }
+
+    const elapsed = Math.max(0, Number(now) - Number(playState.clockLastTickAt || now));
+    if (elapsed <= 0) {
+        return;
+    }
+
+    const key = playState.clockActiveSide === "black" ? "black" : "white";
+    playState.clockRemainingMs[key] = Math.max(0, (playState.clockRemainingMs[key] || 0) - elapsed);
+    playState.clockLastTickAt = now;
+}
+
+function handleTimeForfeit(flaggedSide) {
+    if (isPlayGameOver()) {
+        return;
+    }
+
+    stopPlayClockTimer();
+    const side = flaggedSide === "black" ? "black" : "white";
+    const winner = side === "white" ? "Negras" : "Blancas";
+    const playerLost = side === playState.playerColor;
+    const title = playerLost ? "Derrota" : "Victoria";
+    const reason = "por tiempo";
+
+    if (side === "white") {
+        playState.clockRemainingMs.white = 0;
+    } else {
+        playState.clockRemainingMs.black = 0;
+    }
+
+    playState.manualGameOver = { title, reason, winner };
+    showEndgameSummary(title, reason, winner);
+    setCoachMessage(coachNotice("game", `${title} - ${reason}`));
+    if (getPlaySettings().sound) {
+        playAudio(el.fxEnd);
+    }
+    renderPlayBoard();
+    renderPlayStatus();
+    scheduleSessionSnapshotSave();
+}
+
+function tickPlayClock() {
+    if (Number(playState.clockConfigSeconds) <= 0 || !playState.startTime || isPlayGameOver()) {
+        stopPlayClockTimer();
+        renderPlayClock();
+        return;
+    }
+
+    if (!playState.clockActiveSide) {
+        playState.clockActiveSide = sideFromTurn(playState.game.turn());
+        playState.clockLastTickAt = Date.now();
+    }
+
+    settleActiveClock(Date.now());
+    const key = playState.clockActiveSide === "black" ? "black" : "white";
+    if ((playState.clockRemainingMs[key] || 0) <= 0) {
+        handleTimeForfeit(playState.clockActiveSide);
+        return;
+    }
+
+    renderPlayClock();
+}
+
+function switchPlayClockTo(side) {
+    if (Number(playState.clockConfigSeconds) <= 0 || !playState.startTime || isPlayGameOver()) {
+        return;
+    }
+
+    const target = side === "black" ? "black" : "white";
+    const now = Date.now();
+    settleActiveClock(now);
+    playState.clockActiveSide = target;
+    playState.clockLastTickAt = now;
+    renderPlayClock();
+}
+
+function syncPlayClockState() {
+    const seconds = Number(getPlaySettings().timeControlSeconds || 0);
+    const shouldRun = Boolean(playState.startTime) && !isPlayGameOver() && seconds > 0;
+
+    if (!shouldRun) {
+        playState.clockConfigSeconds = seconds;
+        playState.clockActiveSide = null;
+        playState.clockLastTickAt = 0;
+        stopPlayClockTimer();
+        renderPlayClock();
+        return;
+    }
+
+    if (playState.clockConfigSeconds !== seconds || !Number.isFinite(playState.clockRemainingMs.white)) {
+        const initialMs = seconds * 1000;
+        playState.clockConfigSeconds = seconds;
+        playState.clockRemainingMs = { white: initialMs, black: initialMs };
+        playState.clockActiveSide = sideFromTurn(playState.game.turn());
+        playState.clockLastTickAt = Date.now();
+    }
+
+    if (!playState.clockTimerId) {
+        playState.clockTimerId = setInterval(tickPlayClock, 200);
+    }
+
+    const turnSide = sideFromTurn(playState.game.turn());
+    if (playState.clockActiveSide !== turnSide) {
+        switchPlayClockTo(turnSide);
+    } else if (!playState.clockLastTickAt) {
+        playState.clockLastTickAt = Date.now();
+    }
+
+    renderPlayClock();
+}
+
+function resetPlayClockForNewGame() {
+    stopPlayClockTimer();
+    const seconds = Number(getPlaySettings().timeControlSeconds || 0);
+    playState.clockConfigSeconds = seconds;
+    if (seconds > 0) {
+        const initialMs = seconds * 1000;
+        playState.clockRemainingMs = { white: initialMs, black: initialMs };
+        playState.clockActiveSide = sideFromTurn(playState.game.turn());
+        playState.clockLastTickAt = Date.now();
+        playState.clockTimerId = setInterval(tickPlayClock, 200);
+    } else {
+        playState.clockRemainingMs = { white: 0, black: 0 };
+        playState.clockActiveSide = null;
+        playState.clockLastTickAt = 0;
+    }
+    renderPlayClock();
 }
 
 function getEvalValueForSide(evaluation, side) {
@@ -1695,9 +2167,11 @@ function formatEvalForPlayer(evaluation) {
     const playerValue = getEvalValueForPlayer(evaluation);
     if (evaluation.type === "mate") {
         if (playerValue === 0) return "M0";
-        return `${playerValue > 0 ? "+" : "-"}M${Math.abs(playerValue)}`;
+        const matePly = clamp(Math.trunc(Math.abs(playerValue)), 0, MAX_ENGINE_MATE_PLY);
+        return `${playerValue > 0 ? "+" : "-"}M${matePly}`;
     }
-    return `${playerValue >= 0 ? "+" : "-"}${Math.abs(playerValue / 100).toFixed(2)}`;
+    const cpValue = clamp(Math.trunc(playerValue), -MAX_ENGINE_CP, MAX_ENGINE_CP);
+    return `${cpValue >= 0 ? "+" : "-"}${Math.abs(cpValue / 100).toFixed(2)}`;
 }
 
 const COACH_PREFIX = {
@@ -1858,9 +2332,10 @@ function normalizeCpLossNoise(cpLoss, cpBefore, cpAfter, historyPly, hasOpeningC
 function evalToCp(evaluation) {
     if (!evaluation) return 0;
     if (evaluation.type === "mate") {
-        return evaluation.value > 0 ? 10000 : -10000;
+        const value = clamp(Math.trunc(Number(evaluation.value) || 0), -MAX_ENGINE_MATE_PLY, MAX_ENGINE_MATE_PLY);
+        return value > 0 ? 10000 : (value < 0 ? -10000 : 0);
     }
-    return evaluation.value; // centipawns
+    return clamp(Math.trunc(Number(evaluation.value) || 0), -MAX_ENGINE_CP, MAX_ENGINE_CP); // centipawns
 }
 
 function showMoveBadge(classification, sideLabel = "", detail = "", detailContext = null) {
@@ -2480,32 +2955,32 @@ function getAdaptiveCoachEvalProfile(fen, intent = "classify", multipv = 1) {
     const opening = historyPly <= 16;
     const endgame = historyPly >= 56 || material.majorsMinors <= 6 || material.pawns <= 8;
 
-    let depth = 14;
-    let movetime = 1100;
+    let depth = 13;
+    let movetime = 700;
 
     if (opening) {
-        depth = 14;
-        movetime = 1050;
+        depth = 13;
+        movetime = 620;
     } else if (endgame) {
-        depth = 16;
-        movetime = 1450;
-    } else {
         depth = 15;
-        movetime = 1250;
+        movetime = 980;
+    } else {
+        depth = 14;
+        movetime = 820;
     }
 
     if (intent === "hint") {
         depth += 1;
-        movetime += 220;
-    } else if (intent === "lines") {
         movetime += 120;
+    } else if (intent === "lines") {
+        movetime += 80;
     } else if (intent === "classify") {
-        movetime += 160;
+        movetime += 130;
     }
 
     return {
         depth: clamp(depth, 10, 20),
-        movetime: clamp(movetime, 700, 2400),
+        movetime: clamp(movetime, 420, 1800),
         multipv: clamp(Number(multipv || 1), 1, 6)
     };
 }
@@ -2916,9 +3391,10 @@ function renderPlayStatus() {
 
 function renderPlayBoard() {
     const settings = getPlaySettings();
+    const currentFen = playState.game.fen();
 
     playState.board.setCoordinatesVisible(settings.showCoordinates);
-    playState.board.setFen(playState.game.fen());
+    playState.board.setFen(currentFen);
     const moveKey = playState.lastMove
         ? `${playState.game.history().length}:${playState.lastMove.from}${playState.lastMove.to}${playState.lastMove.san}`
         : "";
@@ -2955,7 +3431,32 @@ function renderPlayBoard() {
         playState.board.highlightSquares([playState.selectedSquare], "selected");
 
         if (settings.showLegal) {
-            playState.board.highlightLegalMoves(playState.legalTargets, playState.game.fen());
+            playState.board.highlightLegalMoves(playState.legalTargets, currentFen);
+        }
+    }
+
+    const showAssistArrows = normalizePlayMode(playState.gameMode) !== PLAY_MODES.RANKED;
+    if (showAssistArrows && settings.suggestionArrows) {
+        let suggestionMove = playState.previewMove || playState.hintMove || null;
+        if (!suggestionMove
+            && playState.computerTopLinesFen === currentFen
+            && playState.computerTopLines.length > 0) {
+            const firstLine = playState.computerTopLines.find((line) => line.id === 1) || playState.computerTopLines[0];
+            const normalized = firstLine ? normalizeUciMoveForFen(currentFen, firstLine.moveUCI) : null;
+            suggestionMove = normalized
+                ? { from: normalized.from, to: normalized.to }
+                : null;
+        }
+        if (suggestionMove) {
+            playState.board.drawArrow(suggestionMove.from, suggestionMove.to, "suggestion");
+        }
+    }
+
+    if (showAssistArrows && settings.threatArrows && playState.lastMove) {
+        const isPlayerTurn = sideFromTurn(playState.game.turn()) === playState.playerColor;
+        const botTurnCode = turnFromSide(playState.botColor);
+        if (isPlayerTurn && playState.lastMove.color === botTurnCode) {
+            playState.board.drawArrow(playState.lastMove.from, playState.lastMove.to, "threat");
         }
     }
 
@@ -2972,6 +3473,7 @@ function renderPlayBoard() {
         el.playCancelPremoveBtn.disabled = !playState.premove;
     }
     refreshPlayModeUiState();
+    syncPlayClockState();
 
     renderPlayMoveList();
     renderPlayStatus();
@@ -3013,22 +3515,33 @@ function renderComputerPanel() {
     const settings = getPlaySettings();
     if (!el.computerPanel || !el.computerLines) return;
     if (normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED) {
-        playState.computerTopLines = [];
+        clearComputerTopLines();
         el.computerPanel.style.display = "none";
         return;
     }
     updateComputerPanelTitle();
     const isPlayerTurn = sideFromTurn(playState.game.turn()) === playState.playerColor;
+    const fen = playState.game.fen();
 
-    if (!settings.computerEnabled || !isPlayerTurn || playState.computerTopLines.length === 0) {
+    if (!settings.computerEnabled
+        || !isPlayerTurn
+        || playState.computerTopLines.length === 0
+        || playState.computerTopLinesFen !== fen) {
+        if (playState.computerTopLinesFen && playState.computerTopLinesFen !== fen) {
+            clearComputerTopLines();
+        }
         el.computerPanel.style.display = "none";
         return;
     }
     el.computerPanel.style.display = "";
     el.computerLines.innerHTML = "";
 
-    const fen = playState.game.fen();
     playState.computerTopLines.forEach((line) => {
+        const normalizedMove = normalizeUciMoveForFen(fen, line.moveUCI);
+        if (!normalizedMove) {
+            return;
+        }
+
         const div = document.createElement("div");
         div.className = "engine-line";
 
@@ -3040,7 +3553,7 @@ function renderComputerPanel() {
 
         const movesSpan = document.createElement("span");
         movesSpan.className = "engine-moves";
-        const san = line.moveSAN || uciToSanFromFen(fen, line.moveUCI);
+        const san = line.moveSAN || normalizedMove.san || uciToSanFromFen(fen, line.moveUCI);
         const desc = sanToSpanish(san);
         movesSpan.textContent = `${desc} (${san})`;
 
@@ -3052,14 +3565,17 @@ function renderComputerPanel() {
 
         // Click to preview this move
         div.addEventListener("click", () => {
-            const parsed = parseUciMove(line.moveUCI);
-            if (parsed) {
-                showMoveConfirmation(parsed.from, parsed.to, san, parsed.promotion);
+            if (normalizedMove) {
+                showMoveConfirmation(normalizedMove.from, normalizedMove.to, san, normalizedMove.promotion);
             }
         });
 
         el.computerLines.appendChild(div);
     });
+
+    if (!el.computerLines.firstChild) {
+        el.computerPanel.style.display = "none";
+    }
 }
 
 /* ===== Move Preview & Confirmation ===== */
@@ -3142,7 +3658,8 @@ async function confirmSuggestedMove() {
     playState.lastMove = move;
     playState.hintMove = null;
     playState.premove = null;
-    playState.computerTopLines = [];
+    clearComputerTopLines();
+    switchPlayClockTo(sideFromTurn(playState.game.turn()));
     clearPlaySelection();
     playMoveSound(move);
     renderPlayBoard();
@@ -3168,14 +3685,14 @@ async function confirmSuggestedMove() {
 async function updateComputerLines(fen, localSession) {
     const settings = getPlaySettings();
     if (normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED) {
-        playState.computerTopLines = [];
+        clearComputerTopLines();
         renderComputerPanel();
         return;
     }
     if (!settings.computerEnabled) return;
     const turnFromFen = fen.includes(" w ") ? "white" : "black";
     if (turnFromFen !== playState.playerColor) {
-        playState.computerTopLines = [];
+        clearComputerTopLines();
         renderComputerPanel();
         return;
     }
@@ -3190,10 +3707,10 @@ async function updateComputerLines(fen, localSession) {
         });
         if (localSession !== playState.sessionId) return;
 
-        playState.computerTopLines = result.lines || [];
+        setComputerTopLines(result.lines || [], fen);
         renderComputerPanel();
     } catch {
-        playState.computerTopLines = [];
+        clearComputerTopLines();
         renderComputerPanel();
     }
 }
@@ -3338,7 +3855,8 @@ async function tryExecuteQueuedPremove(localSession) {
 
     playState.lastMove = move;
     playState.hintMove = null;
-    playState.computerTopLines = [];
+    clearComputerTopLines();
+    switchPlayClockTo(sideFromTurn(playState.game.turn()));
     clearPlaySelection();
     playMoveSound(move);
     renderPlayBoard();
@@ -3409,16 +3927,21 @@ async function playBotMove() {
             return;
         }
 
-        const selectedLine = chooseBotMoveFromLines(result.lines || [], playState.botColor, botProfile);
+        const normalizedLines = normalizeEngineLinesForFen(fenBeforeMove, result.lines || []);
+        const selectedLine = chooseBotMoveFromLines(normalizedLines, playState.botColor, botProfile);
         const selectedMoveUci = selectedLine && selectedLine.moveUCI
             ? selectedLine.moveUCI
             : result.bestMove;
-        const parsed = parseUciMove(selectedMoveUci);
-        if (!parsed) {
+        const normalizedBestMove = normalizeUciMoveForFen(fenBeforeMove, selectedMoveUci);
+        if (!normalizedBestMove) {
             throw new Error("El motor devolvio una jugada invalida.");
         }
 
-        const move = playState.game.move(parsed);
+        const move = playState.game.move({
+            from: normalizedBestMove.from,
+            to: normalizedBestMove.to,
+            promotion: normalizedBestMove.promotion
+        });
         if (!move) {
             throw new Error("No se pudo aplicar la jugada del bot.");
         }
@@ -3429,6 +3952,8 @@ async function playBotMove() {
 
         playState.lastMove = move;
         playState.hintMove = null;
+        clearComputerTopLines();
+        switchPlayClockTo(sideFromTurn(playState.game.turn()));
         hideMoveBadge();
         clearPlaySelection();
         playMoveSound(move);
@@ -3518,16 +4043,18 @@ async function requestCoachHint(isAuto = false) {
         }
 
         // Update computer panel with engine lines
-        playState.computerTopLines = result.lines || [];
+        const normalizedLines = normalizeEngineLinesForFen(fen, result.lines || []);
+        setComputerTopLines(normalizedLines, fen, { normalize: false });
 
-        const bestParsed = parseUciMove(result.bestMove);
-        playState.hintMove = bestParsed ? { from: bestParsed.from, to: bestParsed.to } : null;
+        const bestLine = normalizedLines.find((line) => line.id === 1) || normalizedLines[0] || null;
+        const secondLine = normalizedLines.length > 1
+            ? (normalizedLines.find((line) => line.id === 2) || normalizedLines[1])
+            : null;
+        const bestMove = bestLine ? normalizeUciMoveForFen(fen, bestLine.moveUCI) : normalizeUciMoveForFen(fen, result.bestMove);
+        playState.hintMove = bestMove ? { from: bestMove.from, to: bestMove.to } : null;
 
-        const bestLine = result.lines[0];
-        const secondLine = result.lines[1];
-
-        const bestSan = uciToSanFromFen(fen, result.bestMove);
-        const bestDesc = sanToSpanish(bestSan);
+        const bestSan = bestMove ? bestMove.san : "";
+        const bestDesc = bestSan ? sanToSpanish(bestSan) : "sin jugada valida";
         const evalText = bestLine ? formatEvalForPlayer(bestLine.evaluation) : "--";
         const evalBias = bestLine
             ? (getEvalValueForPlayer(bestLine.evaluation) >= 0 ? "a tu favor" : "a favor del rival")
@@ -3538,10 +4065,13 @@ async function requestCoachHint(isAuto = false) {
             updatePlayEvalBar(bestLine.evaluation);
         }
 
-        let message = `\u265f\ufe0f \u2726 Mejor para ti: ${bestDesc} (${bestSan}), eval ${evalText}${evalBias ? ` (${evalBias})` : ""}.`;
+        let message = bestSan
+            ? `\u265f\ufe0f \u2726 Mejor para ti: ${bestDesc} (${bestSan}), eval ${evalText}${evalBias ? ` (${evalBias})` : ""}.`
+            : `\u265f\ufe0f \u2726 El motor no devolvio una jugada valida en este intento. Eval ${evalText}${evalBias ? ` (${evalBias})` : ""}.`;
 
         if (secondLine) {
-            const alt = uciToSanFromFen(fen, secondLine.moveUCI);
+            const secondMove = normalizeUciMoveForFen(fen, secondLine.moveUCI);
+            const alt = secondMove ? secondMove.san : uciToSanFromFen(fen, secondLine.moveUCI);
             const altDesc = sanToSpanish(alt);
             message += ` \u2022 Alternativa: ${altDesc} (${alt}).`;
         }
@@ -3688,7 +4218,8 @@ async function onPlaySquareClick(square) {
     playState.lastMove = move;
     playState.hintMove = null;
     playState.premove = null;
-    playState.computerTopLines = [];
+    clearComputerTopLines();
+    switchPlayClockTo(sideFromTurn(playState.game.turn()));
     clearPlaySelection();
     playMoveSound(move);
     renderPlayBoard();
@@ -3746,7 +4277,7 @@ function goToPlaySetup(message = coachNotice("setup", "Configura una nueva parti
     playState.previewMove = null;
     playState.pendingConfirmMove = null;
     playState.premove = null;
-    playState.computerTopLines = [];
+    clearComputerTopLines();
     playState.moveHistory = [];
     playState.pendingEvaluations = 0;
     playState.startTime = null;
@@ -3754,6 +4285,11 @@ function goToPlaySetup(message = coachNotice("setup", "Configura una nueva parti
     playState.manualGameOver = null;
     playState.lastRankedProfileDelta = null;
     playState.lastAnimatedMoveKey = "";
+    playState.clockConfigSeconds = 0;
+    playState.clockRemainingMs = { white: 0, black: 0 };
+    playState.clockActiveSide = null;
+    playState.clockLastTickAt = 0;
+    stopPlayClockTimer();
     progressState.persistedGameSession = null;
     clearPlaySelection();
     cancelMoveConfirmation();
@@ -3819,7 +4355,7 @@ function startNewGame() {
     playState.previewMove = null;
     playState.pendingConfirmMove = null;
     playState.premove = null;
-    playState.computerTopLines = [];
+    clearComputerTopLines();
     playState.moveHistory = [];
     playState.pendingEvaluations = 0;
     playState.startTime = Date.now();
@@ -3854,12 +4390,21 @@ function startNewGame() {
         el.playEvalBar.style.display = getPlaySettings().showEvalBar ? "" : "none";
     }
 
+    const settings = getPlaySettings();
+    const timeControlMsg = settings.timeControlSeconds > 0
+        ? ` Reloj activo: ${Math.floor(settings.timeControlSeconds / 60)} min por lado.`
+        : " Sin control de tiempo.";
+    const typeMsg = settings.gameType === "standard"
+        ? " Tipo: estandar."
+        : ` Tipo: ${settings.gameType}.`;
     const eloMsg = rankedMode
         ? `Clasificatoria iniciada contra bot ${playState.botElo} ELO. Color asignado al azar: juegas con ${chosenColor === "white" ? "blancas" : "negras"}.`
-        : (getPlaySettings().computerEnabled
+        : (settings.computerEnabled
             ? `Partida clasica iniciada. Bot configurado en ${playState.botElo} ELO (no suma perfil).`
             : "Partida clasica iniciada con motor desactivado (no suma perfil).");
-    setCoachMessage(coachNotice("setup", eloMsg));
+    setCoachMessage(coachNotice("setup", `${eloMsg}${timeControlMsg}${typeMsg}`));
+    playStartSound();
+    resetPlayClockForNewGame();
     refreshPlayModeUiState();
 
     if (getPlaySettings().computerEnabled) {
@@ -3900,6 +4445,8 @@ function undoPlayMove() {
     playState.premove = null;
     playState.pendingEvaluations = 0;
     playState.lastAnimatedMoveKey = "";
+    clearComputerTopLines();
+    switchPlayClockTo(sideFromTurn(playState.game.turn()));
     clearPlaySelection();
     setCoachMessage(coachNotice("ok", "Jugada deshecha. Es tu turno."));
     renderPlayBoard();
@@ -3917,7 +4464,10 @@ function resignCurrentGame() {
     playState.coaching = false;
     playState.hintMove = null;
     playState.premove = null;
-    playState.computerTopLines = [];
+    clearComputerTopLines();
+    stopPlayClockTimer();
+    playState.clockActiveSide = null;
+    playState.clockLastTickAt = 0;
     clearPlaySelection();
     cancelMoveConfirmation();
 
@@ -4672,7 +5222,8 @@ function renderAnalysisLines(lines, fen) {
         .sort((a, b) => a.id - b.id)
         .forEach((line) => {
             const item = document.createElement("li");
-            const san = line.moveSAN || uciToSanFromFen(fen, line.moveUCI);
+            const normalizedMove = normalizeUciMoveForFen(fen, line.moveUCI);
+            const san = line.moveSAN || (normalizedMove ? normalizedMove.san : uciToSanFromFen(fen, line.moveUCI));
             item.textContent = `#${line.id}  ${san}  |  Eval ${formatEval(line.evaluation)}  |  D${line.depth}`;
             el.analysisTopLines.appendChild(item);
         });
@@ -6357,6 +6908,55 @@ function formatExplorerFrequencyLabel(tier) {
     }
 }
 
+function playStartSound() {
+    const settings = getPlaySettings();
+    if (!settings.sound) {
+        return;
+    }
+
+    try {
+        if (typeof window === "undefined" || !window.AudioContext) {
+            playAudio(el.fxMove);
+            return;
+        }
+
+        if (!errorAudioContext) {
+            errorAudioContext = new window.AudioContext();
+        }
+
+        const context = errorAudioContext;
+        if (context.state === "suspended") {
+            context.resume().catch(() => {});
+        }
+
+        const now = context.currentTime;
+        const oscA = context.createOscillator();
+        const oscB = context.createOscillator();
+        const gain = context.createGain();
+
+        oscA.type = "triangle";
+        oscB.type = "sine";
+        oscA.frequency.setValueAtTime(440, now);
+        oscA.frequency.exponentialRampToValueAtTime(659.25, now + 0.13);
+        oscB.frequency.setValueAtTime(554.37, now + 0.02);
+        oscB.frequency.exponentialRampToValueAtTime(880, now + 0.16);
+
+        gain.gain.setValueAtTime(0.0001, now);
+        gain.gain.linearRampToValueAtTime(0.09, now + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.19);
+
+        oscA.connect(gain);
+        oscB.connect(gain);
+        gain.connect(context.destination);
+        oscA.start(now);
+        oscB.start(now + 0.01);
+        oscA.stop(now + 0.2);
+        oscB.stop(now + 0.2);
+    } catch {
+        playAudio(el.fxMove);
+    }
+}
+
 function formatExplorerResultLabel(tier) {
     switch (String(tier || "all").toLowerCase()) {
     case "favorable":
@@ -6953,6 +7553,8 @@ function applySettingsToBoard() {
         uiModule.savePreference("piece_animation", Boolean(s.pieceAnimation));
         uiModule.savePreference("premove_enabled", Boolean(s.premoveEnabled));
     }
+    writeStored("preferences.time_control", String(s.timeControlSeconds));
+    writeStored("preferences.game_type", String(s.gameType || "standard"));
 
     /* Eval bar visibility in analysis */
     if (el.evalBar) {
@@ -6960,7 +7562,7 @@ function applySettingsToBoard() {
     }
 
     if (!s.computerEnabled) {
-        playState.computerTopLines = [];
+        clearComputerTopLines();
     } else if (playState.startTime
         && !isPlayGameOver()
         && sideFromTurn(playState.game.turn()) === playState.playerColor
@@ -6968,6 +7570,7 @@ function applySettingsToBoard() {
         updateComputerLines(playState.game.fen(), playState.sessionId);
     }
 
+    syncPlayClockState();
     renderPlayBoard();
 }
 
@@ -7110,7 +7713,7 @@ function bindEvents() {
 
         playState.hintMove = null;
         playState.premove = null;
-        playState.computerTopLines = [];
+        clearComputerTopLines();
         clearPlaySelection();
         playState.board.setOrientation(playState.playerColor);
         renderPlayBoard();
@@ -7203,7 +7806,7 @@ function bindEvents() {
         el.setLegal, el.setLastMove, el.setCoordinates,
         el.setSound, el.setErrorSound, el.setAutoPromo,
         el.setBoardTheme, el.setPieceTheme, el.setUiTheme,
-        el.setPieceAnim, el.setPremove
+        el.setPieceAnim, el.setPremove, el.setTimeControl, el.setGameType
     ];
     allSettings.forEach((toggle) => {
         if (toggle) {
@@ -8211,6 +8814,7 @@ function restoreAiChatFromSession(history) {
 }
 
 function buildSessionSnapshot() {
+    settleActiveClock(Date.now());
     return {
         savedAt: new Date().toISOString(),
         activeTab: getCurrentActiveTabId(),
@@ -8226,7 +8830,10 @@ function buildSessionSnapshot() {
             botColor: playState.botColor,
             botElo: playState.botElo,
             manualGameOver: playState.manualGameOver,
-            boardOrientation: playState.board.getOrientation ? playState.board.getOrientation() : playState.playerColor
+            boardOrientation: playState.board.getOrientation ? playState.board.getOrientation() : playState.playerColor,
+            clockConfigSeconds: playState.clockConfigSeconds,
+            clockRemainingMs: playState.clockRemainingMs,
+            clockActiveSide: playState.clockActiveSide
         },
         explorer: {
             color: el.ecoFilterColor ? el.ecoFilterColor.value : "white",
@@ -8365,6 +8972,26 @@ function restorePlayFromSnapshot(snapshot) {
         }
         : null;
     playState.endgameShown = false;
+    stopPlayClockTimer();
+    playState.clockConfigSeconds = clamp(Number(play.clockConfigSeconds || 0), 0, 1800);
+    const savedClock = play.clockRemainingMs || {};
+    const initialClockMs = playState.clockConfigSeconds > 0 ? playState.clockConfigSeconds * 1000 : 0;
+    const maxClockMs = Math.max(initialClockMs, 1_800_000);
+    playState.clockRemainingMs = {
+        white: Number.isFinite(Number(savedClock.white))
+            ? clamp(Number(savedClock.white), 0, maxClockMs)
+            : initialClockMs,
+        black: Number.isFinite(Number(savedClock.black))
+            ? clamp(Number(savedClock.black), 0, maxClockMs)
+            : initialClockMs
+    };
+    playState.clockActiveSide = play.clockActiveSide === "black" ? "black" : "white";
+    playState.clockLastTickAt = Date.now();
+    if (playState.startTime && !isPlayGameOver() && playState.clockConfigSeconds > 0) {
+        playState.clockTimerId = setInterval(tickPlayClock, 200);
+    } else {
+        playState.clockActiveSide = null;
+    }
 
     if (el.playerColor) {
         el.playerColor.value = playState.playerColor;
@@ -8553,6 +9180,18 @@ async function init() {
         }
         if (el.setPremove && uiModule.loadPreference) {
             el.setPremove.checked = Boolean(uiModule.loadPreference("premove_enabled", true));
+        }
+    }
+    if (el.setTimeControl) {
+        const savedTimeControl = String(readStored("preferences.time_control", el.setTimeControl.value || "0"));
+        if (Array.from(el.setTimeControl.options || []).some((opt) => opt.value === savedTimeControl)) {
+            el.setTimeControl.value = savedTimeControl;
+        }
+    }
+    if (el.setGameType) {
+        const savedGameType = String(readStored("preferences.game_type", el.setGameType.value || "standard"));
+        if (Array.from(el.setGameType.options || []).some((opt) => opt.value === savedGameType)) {
+            el.setGameType.value = savedGameType;
         }
     }
 

@@ -1,9 +1,10 @@
 (function initEngineModule(global) {
     const Chess = global.Chess;
 
-    const ENGINE_PRIMARY = "/static/scripts/stockfish.js";
-    // Use non-WASM fallback to avoid CSP + WebAssembly instantiate errors.
+    const ENGINE_PRIMARY = "/static/scripts/stockfish-nnue-16.js";
     const ENGINE_FALLBACK = "/static/scripts/stockfish.js";
+    const MAX_ENGINE_MATE_PLY = 99;
+    const MAX_ENGINE_CP = 3500;
     const ENGINE_EVAL_CACHE = new Map();
     const CACHE_TTL_MS = 2200;
     let engineAssetWarm = false;
@@ -16,11 +17,111 @@
         if (!uci || !/^[a-h][1-8][a-h][1-8][nbrq]?$/.test(uci)) {
             return null;
         }
+
+        const from = uci.slice(0, 2);
+        const to = uci.slice(2, 4);
+        const promotion = uci.slice(4) || undefined;
+        const fromRank = parseInt(from[1], 10);
+        const toRank = parseInt(to[1], 10);
+        if (promotion && !((fromRank === 7 && toRank === 8) || (fromRank === 2 && toRank === 1))) {
+            return null;
+        }
+
         return {
-            from: uci.slice(0, 2),
-            to: uci.slice(2, 4),
-            promotion: uci.slice(4) || undefined
+            from,
+            to,
+            promotion
         };
+    }
+
+    function sanitizeEngineEvaluation(evaluation) {
+        if (!evaluation || typeof evaluation !== "object") {
+            return null;
+        }
+
+        const type = String(evaluation.type || "").toLowerCase();
+        if (type === "mate") {
+            const raw = Number(evaluation.value);
+            if (!Number.isFinite(raw)) {
+                return null;
+            }
+            return {
+                type: "mate",
+                value: clamp(Math.trunc(raw), -MAX_ENGINE_MATE_PLY, MAX_ENGINE_MATE_PLY)
+            };
+        }
+
+        const raw = Number(evaluation.value);
+        if (!Number.isFinite(raw)) {
+            return null;
+        }
+
+        return {
+            type: "cp",
+            value: clamp(Math.trunc(raw), -MAX_ENGINE_CP, MAX_ENGINE_CP)
+        };
+    }
+
+    function normalizeUciMoveForFen(fen, uciMove) {
+        const parsed = parseUciMove(uciMove);
+        if (!parsed) {
+            return null;
+        }
+
+        try {
+            const game = new Chess(fen);
+            const move = game.move(parsed);
+            if (!move) {
+                return null;
+            }
+            const promotion = move.promotion || undefined;
+            return {
+                from: move.from,
+                to: move.to,
+                promotion,
+                uci: `${move.from}${move.to}${promotion || ""}`,
+                san: move.san
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    function normalizeEngineLinesForFen(fen, lines) {
+        const source = Array.isArray(lines) ? lines : [];
+        if (source.length === 0) {
+            return [];
+        }
+
+        const byId = new Map();
+        source.forEach((line) => {
+            if (!line || typeof line !== "object") {
+                return;
+            }
+
+            const normalizedMove = normalizeUciMoveForFen(fen, line.moveUCI || line.bestMove || "");
+            const evaluation = sanitizeEngineEvaluation(line.evaluation);
+            if (!normalizedMove || !evaluation) {
+                return;
+            }
+
+            const id = clamp(parseInt(line.id || "1", 10) || 1, 1, 8);
+            const depth = clamp(parseInt(line.depth || "0", 10) || 0, 0, 99);
+            const normalizedLine = {
+                id,
+                depth,
+                moveUCI: normalizedMove.uci,
+                moveSAN: normalizedMove.san,
+                evaluation
+            };
+
+            const existing = byId.get(id);
+            if (!existing || normalizedLine.depth >= existing.depth) {
+                byId.set(id, normalizedLine);
+            }
+        });
+
+        return Array.from(byId.values()).sort((a, b) => a.id - b.id);
     }
 
     function parseInfoLine(message, fen) {
@@ -39,24 +140,25 @@
         const id = parseInt(idMatch ? idMatch[1] : "1", 10);
         const depth = parseInt(depthMatch[1], 10);
 
-        let evaluation;
-
         const cpMatch = message.match(/\bscore cp (-?\d+)/);
         const mateMatch = message.match(/\bscore mate (-?\d+)/);
+        let evaluation = null;
 
         if (cpMatch) {
             let value = parseInt(cpMatch[1], 10);
             if (fen.includes(" b ")) {
                 value *= -1;
             }
-            evaluation = { type: "cp", value };
+            evaluation = sanitizeEngineEvaluation({ type: "cp", value });
         } else if (mateMatch) {
             let value = parseInt(mateMatch[1], 10);
             if (fen.includes(" b ")) {
                 value *= -1;
             }
-            evaluation = { type: "mate", value };
-        } else {
+            evaluation = sanitizeEngineEvaluation({ type: "mate", value });
+        }
+
+        if (!evaluation) {
             return null;
         }
 
@@ -65,6 +167,31 @@
 
     function eloToSkill(elo) {
         return clamp(Math.round((elo - 400) / 120), 0, 20);
+    }
+
+    function getEngineThreads() {
+        if (typeof navigator === "undefined") {
+            return 2;
+        }
+        const hw = Number(navigator.hardwareConcurrency || 2);
+        if (!Number.isFinite(hw) || hw <= 1) {
+            return 1;
+        }
+        return clamp(Math.floor(hw / 2), 1, 4);
+    }
+
+    function getEngineHashMb() {
+        if (typeof navigator === "undefined") {
+            return 96;
+        }
+        const memory = Number(navigator.deviceMemory || 4);
+        if (!Number.isFinite(memory)) {
+            return 96;
+        }
+        if (memory >= 12) return 192;
+        if (memory >= 8) return 160;
+        if (memory >= 4) return 128;
+        return 64;
     }
 
     function runStockfishInternal(options, enginePath) {
@@ -99,7 +226,10 @@
             }
 
             timeoutId = setTimeout(() => {
-                const partialLines = Array.from(linesById.values()).sort((a, b) => a.id - b.id);
+                const partialLines = normalizeEngineLinesForFen(
+                    fen,
+                    Array.from(linesById.values()).sort((a, b) => a.id - b.id)
+                );
                 if (!resolved && partialLines.length > 0) {
                     resolved = true;
                     cleanup();
@@ -117,6 +247,13 @@
                 const message = String(event.data || "");
 
                 if (message === "uciok") {
+                    worker.postMessage("setoption name Threads value " + getEngineThreads());
+                    worker.postMessage("setoption name Hash value " + getEngineHashMb());
+                    worker.postMessage("setoption name UCI_AnalyseMode value true");
+                    worker.postMessage("setoption name Move Overhead value 20");
+                    worker.postMessage("setoption name Minimum Thinking Time value 15");
+                    worker.postMessage("setoption name Ponder value false");
+                    worker.postMessage("setoption name Use NNUE value true");
                     worker.postMessage("setoption name MultiPV value " + Math.max(1, multipv || 1));
 
                     if (elo) {
@@ -134,6 +271,7 @@
 
                 if (message === "readyok" && !started) {
                     started = true;
+                    worker.postMessage("ucinewgame");
                     worker.postMessage("position fen " + fen);
 
                     if (movetime) {
@@ -154,14 +292,19 @@
 
                 if (message.startsWith("bestmove")) {
                     const bestMove = message.split(" ")[1] || "";
+                    const normalizedLines = normalizeEngineLinesForFen(
+                        fen,
+                        Array.from(linesById.values()).sort((a, b) => a.id - b.id)
+                    );
+                    const normalizedBest = normalizeUciMoveForFen(fen, bestMove);
 
                     if (!resolved) {
                         resolved = true;
                         cleanup();
 
                         resolve({
-                            bestMove,
-                            lines: Array.from(linesById.values()).sort((a, b) => a.id - b.id)
+                            bestMove: normalizedBest ? normalizedBest.uci : (normalizedLines[0] ? normalizedLines[0].moveUCI : ""),
+                            lines: normalizedLines
                         });
                     }
                 }
@@ -241,18 +384,8 @@
     }
 
     function uciToSanFromFen(fen, uciMove) {
-        const parsed = parseUciMove(uciMove);
-        if (!parsed) {
-            return uciMove;
-        }
-
-        try {
-            const game = new Chess(fen);
-            const move = game.move(parsed);
-            return move ? move.san : uciMove;
-        } catch {
-            return uciMove;
-        }
+        const normalized = normalizeUciMoveForFen(fen, uciMove);
+        return normalized ? normalized.san : String(uciMove || "");
     }
 
     function clearEvalCache() {

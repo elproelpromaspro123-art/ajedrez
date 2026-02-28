@@ -27,17 +27,29 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
 
         const topMove = lastPosition.topLines.find(line => line.id == 1);
         const secondTopMove = lastPosition.topLines.find(line => line.id == 2);
-        if (!topMove) continue;
+        if (!topMove) {
+            position.classification = Classification.BOOK;
+            continue;
+        }
 
         let previousEvaluation = topMove.evaluation;
         let evaluation = position.topLines.find(line => line.id == 1)?.evaluation;
-        if (!previousEvaluation) continue;
+        if (!previousEvaluation) {
+            position.classification = Classification.BOOK;
+            continue;
+        }
 
         const moveColour = position.fen.includes(" b ") ? "white" : "black";
 
         // If there are no legal moves in this position, game is in terminal state
         if (!evaluation) {
-            evaluation = { type: board.isCheckmate() ? "mate" : "cp", value: 0 };
+            if (board.isCheckmate()) {
+                // Side to move is checkmated; determine sign from mover's perspective
+                const whiteIsMated = board.turn() === "w";
+                evaluation = { type: "mate", value: whiteIsMated ? -1 : 1 };
+            } else {
+                evaluation = { type: "cp", value: 0 };
+            }
             position.topLines.push({
                 id: 1,
                 depth: 0,
@@ -236,6 +248,7 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
                                 if (pieceValues[piece.type] >= 5) {
                                     if (!attackerPinned) {
                                         anyPieceViablyCapturable = true;
+                                        captureTestBoard.undo();
                                         break;
                                     }
                                 } else if (
@@ -243,6 +256,7 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
                                     && !captureTestBoard.moves().some(move => move.endsWith("#"))
                                 ) {
                                     anyPieceViablyCapturable = true;
+                                    captureTestBoard.undo();
                                     break;
                                 }
 

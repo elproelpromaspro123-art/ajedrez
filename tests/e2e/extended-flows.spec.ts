@@ -335,3 +335,31 @@ test("settings modal: se abre y cierra correctamente", async ({ page }) => {
     await expect(page.locator("#settings-modal")).toBeVisible();
     await page.click("#settings-close-btn");
 });
+
+test("ajustes avanzados: reloj activo en clasica y ayudas bloqueadas en ranked", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator("body")).not.toHaveClass(/auth-locked/);
+
+    await page.click("#play-settings-btn");
+    await expect(page.locator("#settings-modal")).toBeVisible();
+    await page.selectOption("#set-time-control", "60");
+    await page.check("#set-suggestion-arrows");
+    await page.check("#set-threat-arrows");
+    await page.click("#settings-close-btn");
+
+    await page.click("#play-start-btn");
+    await expect(page.locator("#play-clock-strip")).toBeVisible();
+    await expect(page.locator("#play-clock-player")).toContainText("1:00");
+
+    await page.click("#play-hint-btn");
+    await expect
+        .poll(async () => page.locator("#play-board .board-arrow-suggestion").count())
+        .toBeGreaterThan(0);
+
+    await page.click("#play-back-btn");
+    await page.selectOption("#play-mode", "ranked");
+    await expect(page.locator("#set-suggestion-arrows")).toBeDisabled();
+    await expect(page.locator("#set-suggestion-arrows")).not.toBeChecked();
+    await expect(page.locator("#set-threat-arrows")).toBeDisabled();
+    await expect(page.locator("#set-threat-arrows")).not.toBeChecked();
+});
