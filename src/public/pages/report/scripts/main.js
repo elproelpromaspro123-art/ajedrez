@@ -6243,7 +6243,12 @@ function renderExplorerDetail(node) {
         const plans = studyModule && studyModule.buildOpeningPlan
             ? studyModule.buildOpeningPlan(node.name, el.ecoFilterColor ? el.ecoFilterColor.value : "white")
             : ["Desarrolla piezas, controla centro y asegura al rey."];
-        el.ecoDetailPlan.innerHTML = plans.map((step, index) => `${index + 1}. ${step}`).join("<br>");
+        el.ecoDetailPlan.textContent = "";
+        plans.forEach((step, index) => {
+            const line = document.createElement("div");
+            line.textContent = `${index + 1}. ${step}`;
+            el.ecoDetailPlan.appendChild(line);
+        });
     }
 
     if (el.ecoDetailBoard) {
@@ -6262,7 +6267,7 @@ function renderExplorerTree() {
     if (!el.ecoTree) {
         return;
     }
-    el.ecoTree.innerHTML = "";
+    el.ecoTree.textContent = "";
 
     const rows = openingExplorerState.visibleRows.slice(0, 220);
     if (rows.length === 0) {
@@ -6272,7 +6277,10 @@ function renderExplorerTree() {
         const emptyMessage = hasQuery
             ? "No hay coincidencias con esa busqueda. Prueba con otro termino o codigo ECO."
             : `Sin lineas con los filtros actuales (Popularidad ${minPopularity}% / Exito ${minSuccess}%).`;
-        el.ecoTree.innerHTML = `<p class="eco-empty-note">${emptyMessage}</p>`;
+        const emptyNote = document.createElement("p");
+        emptyNote.className = "eco-empty-note";
+        emptyNote.textContent = emptyMessage;
+        el.ecoTree.appendChild(emptyNote);
         el.ecoTree.removeAttribute("aria-activedescendant");
         return;
     }
@@ -6292,7 +6300,16 @@ function renderExplorerTree() {
 
         const success = Number(row.success || 0).toFixed(1);
         const pop = Number(row.popularity || 0).toFixed(1);
-        item.innerHTML = `<span class=\"eco-row-main\">${row.eco} - ${row.san || "..."} \u2192 ${row.name}</span><span class=\"eco-row-meta\">P ${pop}% | E ${success}%</span>`;
+        const main = document.createElement("span");
+        main.className = "eco-row-main";
+        main.textContent = `${row.eco} - ${row.san || "..."} \u2192 ${row.name}`;
+
+        const meta = document.createElement("span");
+        meta.className = "eco-row-meta";
+        meta.textContent = `P ${pop}% | E ${success}%`;
+
+        item.appendChild(main);
+        item.appendChild(meta);
         item.setAttribute("role", "treeitem");
         item.setAttribute("aria-level", String(row.depth + 1));
         const hasChildren = explorerHasChildren(row) || (row.depth < 5 && row.hasChildren);

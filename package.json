@@ -12,9 +12,11 @@
     "pgn-parser": "^2.2.0"
   },
   "scripts": {
-    "dev": "tsc && nodemon dist/index.js",
+    "dev": "npm run build && nodemon dist/index.js",
     "start": "node dist/index.js",
     "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "npm run typecheck",
     "test": "tsc && node dist/test/reports.js",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed"

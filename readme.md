@@ -6,7 +6,7 @@ Webapp personal para:
 - Analizar partidas PGN con clasificacion de jugadas.
 - Estudiar ideas de ajedrez en secciones rapidas con posiciones de referencia.
 
-No requiere login.
+Requiere crear una cuenta local (sin recuperacion de contrasena) para desbloquear la interfaz y sincronizar datos.
 
 ## Stack
 - Node.js + Express
@@ -36,6 +36,8 @@ No requiere login.
 - `npm run build`: compila TypeScript.
 - `npm start`: ejecuta backend compilado en `dist/index.js`.
 - `npm run dev`: compila y arranca servidor con nodemon.
+- `npm run typecheck`: valida tipos sin generar salida.
+- `npm run lint`: alias de chequeo de tipos.
 - `npm test`: genera reportes de prueba y ejecuta smoke tests de API.
 
 ## Healthcheck

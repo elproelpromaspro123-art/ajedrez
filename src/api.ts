@@ -1,7 +1,8 @@
 import { Request, Response as ExpressResponse, Router } from "express";
-import { randomBytes, scryptSync, timingSafeEqual } from "crypto";
+import { randomBytes, scrypt, timingSafeEqual } from "crypto";
 import { Chess } from "chess.js";
 import pgnParser from "pgn-parser";
+import { promisify } from "util";
 
 import analyse from "./lib/analysis";
 import { parseStructuredAIResponse } from "./lib/aiActions";
@@ -22,6 +23,7 @@ import openings from "./resources/openings.json";
 
 const router = Router();
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
+const scryptAsync = promisify(scrypt);
 
 interface GroqChatCompletionResponse {
     choices?: Array<{
@@ -92,32 +94,45 @@ const AUTH_SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const AUTH_SESSION_MAX = 5000;
 const AUTH_LOGIN_RATE_WINDOW_MS = 60_000;
 const AUTH_LOGIN_RATE_MAX_ATTEMPTS = 8;
+const AUTH_REGISTER_RATE_WINDOW_MS = 60_000;
+const AUTH_REGISTER_RATE_MAX_ATTEMPTS = 4;
+const PARSE_RATE_WINDOW_MS = 10_000;
+const PARSE_RATE_MAX_REQUESTS = 6;
+const REPORT_RATE_WINDOW_MS = 15_000;
+const REPORT_RATE_MAX_REQUESTS = 4;
 const USERNAME_MIN = 3;
 const USERNAME_MAX = 24;
 const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 120;
 const aiRateLimiter = new Map<string, number[]>();
 const loginRateLimiter = new Map<string, number[]>();
+const registerRateLimiter = new Map<string, number[]>();
+const parseRateLimiter = new Map<string, number[]>();
+const reportRateLimiter = new Map<string, number[]>();
+
+function pruneRateLimiter(
+    limiter: Map<string, number[]>,
+    windowMs: number,
+    now: number
+) {
+    for (const [clientId, timestamps] of limiter) {
+        const active = timestamps.filter((timestamp) => now - timestamp < windowMs);
+        if (active.length === 0) {
+            limiter.delete(clientId);
+        } else {
+            limiter.set(clientId, active);
+        }
+    }
+}
 
 // Prune stale rate-limiter entries every 60 seconds
 const rateLimiterPruneTimer = setInterval(() => {
     const now = Date.now();
-    for (const [clientId, timestamps] of aiRateLimiter) {
-        const active = timestamps.filter((t) => now - t < AI_RATE_WINDOW_MS);
-        if (active.length === 0) {
-            aiRateLimiter.delete(clientId);
-        } else {
-            aiRateLimiter.set(clientId, active);
-        }
-    }
-    for (const [clientId, timestamps] of loginRateLimiter) {
-        const active = timestamps.filter((t) => now - t < AUTH_LOGIN_RATE_WINDOW_MS);
-        if (active.length === 0) {
-            loginRateLimiter.delete(clientId);
-        } else {
-            loginRateLimiter.set(clientId, active);
-        }
-    }
+    pruneRateLimiter(aiRateLimiter, AI_RATE_WINDOW_MS, now);
+    pruneRateLimiter(loginRateLimiter, AUTH_LOGIN_RATE_WINDOW_MS, now);
+    pruneRateLimiter(registerRateLimiter, AUTH_REGISTER_RATE_WINDOW_MS, now);
+    pruneRateLimiter(parseRateLimiter, PARSE_RATE_WINDOW_MS, now);
+    pruneRateLimiter(reportRateLimiter, REPORT_RATE_WINDOW_MS, now);
 }, 60_000);
 rateLimiterPruneTimer.unref?.();
 
@@ -201,6 +216,70 @@ function isJsonPayloadSizeSafe(value: unknown, maxBytes: number): boolean {
     }
 }
 
+function sanitizeInlineText(value: unknown, maxLength: number): string {
+    if (!isNonEmptyString(value)) {
+        return "";
+    }
+
+    return value
+        .replace(/[\u0000-\u001f\u007f]/g, " ")
+        .replace(/[<>]/g, "")
+        .trim()
+        .slice(0, maxLength);
+}
+
+function sanitizeOpeningMeta(value: unknown): { eco: string; name: string } | null {
+    const openingObj = asObject(value);
+    if (!openingObj) {
+        return null;
+    }
+
+    const eco = sanitizeInlineText(openingObj.eco, 12);
+    const name = sanitizeInlineText(openingObj.name, 120);
+    if (!eco && !name) {
+        return null;
+    }
+
+    return { eco, name };
+}
+
+function isValidUciMove(value: unknown): boolean {
+    if (!isNonEmptyString(value)) {
+        return false;
+    }
+    return /^[a-h][1-8][a-h][1-8][nbrq]?$/i.test(value.trim());
+}
+
+function isValidEngineEvaluation(value: unknown): boolean {
+    const evaluation = asObject(value);
+    if (!evaluation) {
+        return false;
+    }
+    const type = evaluation.type;
+    const numericValue = Number(evaluation.value);
+    if ((type !== "cp" && type !== "mate") || !Number.isFinite(numericValue)) {
+        return false;
+    }
+    return true;
+}
+
+function isValidEngineLine(value: unknown): boolean {
+    const line = asObject(value);
+    if (!line) {
+        return false;
+    }
+
+    const id = Number(line.id);
+    const depth = Number(line.depth);
+    const moveUCI = typeof line.moveUCI === "string" ? line.moveUCI.trim() : "";
+    const moveUciLooksValid = moveUCI === "" || isValidUciMove(moveUCI);
+    if (!Number.isFinite(id) || id <= 0 || !Number.isFinite(depth) || depth < 0 || !moveUciLooksValid) {
+        return false;
+    }
+
+    return isValidEngineEvaluation(line.evaluation);
+}
+
 function buildEmptyOpeningExplorerPayload(fen: string) {
     return {
         fen,
@@ -267,6 +346,18 @@ function checkLoginRateLimit(clientId: string) {
     return checkRateLimit(loginRateLimiter, clientId, AUTH_LOGIN_RATE_WINDOW_MS, AUTH_LOGIN_RATE_MAX_ATTEMPTS);
 }
 
+function checkRegisterRateLimit(clientId: string) {
+    return checkRateLimit(registerRateLimiter, clientId, AUTH_REGISTER_RATE_WINDOW_MS, AUTH_REGISTER_RATE_MAX_ATTEMPTS);
+}
+
+function checkParseRateLimit(clientId: string) {
+    return checkRateLimit(parseRateLimiter, clientId, PARSE_RATE_WINDOW_MS, PARSE_RATE_MAX_REQUESTS);
+}
+
+function checkReportRateLimit(clientId: string) {
+    return checkRateLimit(reportRateLimiter, clientId, REPORT_RATE_WINDOW_MS, REPORT_RATE_MAX_REQUESTS);
+}
+
 function normalizeUsername(value: unknown): string | null {
     if (!isNonEmptyString(value)) {
         return null;
@@ -298,18 +389,18 @@ function usernameToKey(username: string): string {
     return username.trim().toLowerCase();
 }
 
-function hashPassword(password: string, saltHex?: string) {
+async function hashPassword(password: string, saltHex?: string) {
     const salt = saltHex ? Buffer.from(saltHex, "hex") : randomBytes(16);
-    const hash = scryptSync(password, salt, 64);
+    const hash = await scryptAsync(password, salt, 64) as Buffer;
     return {
         saltHex: salt.toString("hex"),
         hashHex: hash.toString("hex")
     };
 }
 
-function verifyPassword(password: string, saltHex: string, expectedHashHex: string): boolean {
+async function verifyPassword(password: string, saltHex: string, expectedHashHex: string): Promise<boolean> {
     try {
-        const candidate = hashPassword(password, saltHex);
+        const candidate = await hashPassword(password, saltHex);
         const expected = Buffer.from(expectedHashHex, "hex");
         const actual = Buffer.from(candidate.hashHex, "hex");
         if (expected.length !== actual.length) {
@@ -339,7 +430,11 @@ function parseCookies(req: Request): Record<string, string> {
         if (!key) {
             return;
         }
-        parsed[key] = decodeURIComponent(value);
+        try {
+            parsed[key] = decodeURIComponent(value);
+        } catch {
+            // Ignore malformed cookie encoding.
+        }
     });
     return parsed;
 }
@@ -666,6 +761,16 @@ async function requestGroqChatCompletion(systemPrompt: string, question: string)
 }
 
 router.post("/auth/register", async (req, res) => {
+    const clientId = getClientIdentifier(req);
+    const registerLimit = checkRegisterRateLimit(clientId);
+    if (registerLimit.limited) {
+        res.setHeader("Retry-After", String(Math.ceil(registerLimit.retryAfterMs / 1000)));
+        return res.status(429).json({
+            message: "Demasiados intentos de registro. Espera un momento antes de reintentar.",
+            retryAfterMs: registerLimit.retryAfterMs
+        });
+    }
+
     const credentials = parseAuthCredentials(req.body);
     if (!credentials) {
         return res.status(400).json({
@@ -683,7 +788,7 @@ router.post("/auth/register", async (req, res) => {
         }
 
         const nowIso = new Date().toISOString();
-        const hashed = hashPassword(credentials.password);
+        const hashed = await hashPassword(credentials.password);
         auth.users[userKey] = {
             username: credentials.username,
             passwordSalt: hashed.saltHex,
@@ -739,7 +844,7 @@ router.post("/auth/login", async (req, res) => {
 
         const userKey = usernameToKey(credentials.username);
         const user = auth.users[userKey];
-        if (!user || !verifyPassword(credentials.password, user.passwordSalt, user.passwordHash)) {
+        if (!user || !(await verifyPassword(credentials.password, user.passwordSalt, user.passwordHash))) {
             return res.status(401).json({ message: "Usuario o contraseña incorrectos." });
         }
 
@@ -902,6 +1007,15 @@ router.post("/profile-store/sync", async (req, res) => {
 });
 
 router.post("/parse", async (req, res) => {
+    const clientId = getClientIdentifier(req);
+    const parseLimit = checkParseRateLimit(clientId);
+    if (parseLimit.limited) {
+        res.setHeader("Retry-After", String(Math.ceil(parseLimit.retryAfterMs / 1000)));
+        return res.status(429).json({
+            message: "Demasiadas solicitudes de parseo PGN. Espera unos segundos.",
+            retryAfterMs: parseLimit.retryAfterMs
+        });
+    }
 
     let { pgn }: ParseRequestBody = req.body || {};
     
@@ -1066,16 +1180,16 @@ router.get("/opening-explorer", async (req, res) => {
             white: Number(payload?.white || 0),
             draws: Number(payload?.draws || 0),
             black: Number(payload?.black || 0),
-            opening: payload?.opening || null,
+            opening: sanitizeOpeningMeta(payload?.opening),
             moves: Array.isArray(payload?.moves)
                 ? payload.moves.slice(0, 18).map((move: any) => ({
-                    uci: isNonEmptyString(move?.uci) ? move.uci : "",
-                    san: isNonEmptyString(move?.san) ? move.san : "",
+                    uci: isValidUciMove(move?.uci) ? String(move.uci).trim().toLowerCase() : "",
+                    san: sanitizeInlineText(move?.san, 24),
                     white: Number(move?.white || 0),
                     draws: Number(move?.draws || 0),
                     black: Number(move?.black || 0),
                     averageRating: Number(move?.averageRating || 0),
-                    opening: move?.opening || null
+                    opening: sanitizeOpeningMeta(move?.opening)
                 }))
                 : []
         };
@@ -1108,6 +1222,15 @@ router.get("/opening-explorer", async (req, res) => {
 });
 
 router.post("/report", async (req, res) => {
+    const clientId = getClientIdentifier(req);
+    const reportLimit = checkReportRateLimit(clientId);
+    if (reportLimit.limited) {
+        res.setHeader("Retry-After", String(Math.ceil(reportLimit.retryAfterMs / 1000)));
+        return res.status(429).json({
+            message: "Demasiadas solicitudes de reporte. Espera unos segundos.",
+            retryAfterMs: reportLimit.retryAfterMs
+        });
+    }
 
     const { positions }: ReportRequestBody = req.body || {};
 
@@ -1121,16 +1244,29 @@ router.post("/report", async (req, res) => {
 
     // Validate minimal schema for each position
     for (let i = 0; i < positions.length; i++) {
-        const pos = positions[i];
+        const pos = positions[i] as any;
         if (!pos || typeof pos.fen !== "string" || pos.fen.trim().length === 0) {
             return res.status(400).json({ message: `Posicion ${i} tiene FEN invalido o faltante.` });
         }
+
+        try {
+            new Chess(pos.fen.trim());
+        } catch {
+            return res.status(400).json({ message: `Posicion ${i} tiene un FEN invalido.` });
+        }
+
+        if (!Array.isArray(pos.topLines) || pos.topLines.length === 0) {
+            return res.status(400).json({ message: `Posicion ${i} no tiene topLines validas.` });
+        }
+
+        const hasInvalidTopLine = pos.topLines.some((line: unknown) => !isValidEngineLine(line));
+        if (hasInvalidTopLine) {
+            return res.status(400).json({ message: `Posicion ${i} contiene lineas de motor invalidas.` });
+        }
+
         if (i > 0) {
-            if (!pos.move || typeof pos.move.uci !== "string" || pos.move.uci.trim().length === 0) {
+            if (!pos.move || !isNonEmptyString(pos.move.san) || !isValidUciMove(pos.move.uci)) {
                 return res.status(400).json({ message: `Posicion ${i} tiene jugada invalida o faltante.` });
-            }
-            if (!Array.isArray(pos.topLines)) {
-                return res.status(400).json({ message: `Posicion ${i} no tiene topLines.` });
             }
         }
     }

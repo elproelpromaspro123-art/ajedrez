@@ -268,6 +268,21 @@ async function runApiIntegrationTests() {
         });
         assert(response.status === 413, "Oversized PGN should return 413.");
 
+        response = await fetch(`${baseUrl}/api/report`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+                positions: [
+                    {
+                        fen: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+                    }
+                ]
+            })
+        });
+        assert(response.status === 400, "Report endpoint should reject positions without topLines.");
+
         response = await fetch(`${baseUrl}/api/opening-explorer?fen=not-a-fen`);
         assert(response.status === 400, "Invalid explorer FEN should return 400.");
 
@@ -282,6 +297,22 @@ async function runApiIntegrationTests() {
 
         response = await fetch(`${baseUrl}/api/profile-store`);
         assert(response.status === 401, "Profile store read should require authentication.");
+
+        response = await fetch(`${baseUrl}/api/auth/session`, {
+            headers: {
+                Cookie: "freechess_auth=%E0%A4%A"
+            }
+        });
+        assert(response.status === 200, "Malformed auth cookie should not crash session endpoint.");
+        const malformedSessionPayload = await response.json() as { authenticated?: boolean };
+        assert(malformedSessionPayload.authenticated === false, "Malformed auth cookie should be treated as unauthenticated.");
+
+        response = await fetch(`${baseUrl}/api/profile-store`, {
+            headers: {
+                Cookie: "freechess_auth=%E0%A4%A"
+            }
+        });
+        assert(response.status === 401, "Malformed auth cookie should not crash profile-store endpoint.");
 
         response = await fetch(`${baseUrl}/api/profile-store/sync`, {
             method: "POST",

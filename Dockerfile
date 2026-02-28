@@ -1,17 +1,30 @@
-FROM node:20
+FROM node:24-slim AS build
 
-LABEL name="wintrcat/freechess"
-LABEL version="1.0.0"
+WORKDIR /app
 
-WORKDIR /usr/app/
+COPY package*.json ./
+RUN npm ci
 
-COPY . .
+COPY tsconfig.json ./
+COPY src ./src
+RUN npm run build
 
-RUN npm install -g typescript
-RUN npm i
+FROM node:24-slim AS runtime
 
-ENV PORT 80
+ENV NODE_ENV=production
+ENV PORT=80
 
-EXPOSE 80/tcp
+WORKDIR /app
 
-ENTRYPOINT ["npm", "start"]
+COPY package*.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+COPY --from=build /app/dist ./dist
+COPY src/public ./src/public
+
+RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 80
+
+CMD ["node", "dist/index.js"]
