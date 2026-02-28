@@ -1,8 +1,27 @@
 (function initChatUiModule(global) {
+    function resolveMessageClasses(type) {
+        const tokens = String(type || "")
+            .toLowerCase()
+            .split(/\s+/)
+            .map((token) => token.trim())
+            .filter(Boolean);
+
+        const isUser = tokens.includes("user") || tokens.includes("ai-user");
+        const baseRoleClass = isUser ? "ai-user" : "ai-bot";
+        const extras = tokens.filter((token) => (
+            token !== "user"
+            && token !== "bot"
+            && token !== "ai-user"
+            && token !== "ai-bot"
+        ));
+
+        return ["ai-msg", baseRoleClass, ...extras].join(" ");
+    }
+
     function appendMessage(messagesEl, text, type) {
         if (!messagesEl) return null;
         const div = document.createElement("div");
-        div.className = `ai-msg ${type === "user" ? "ai-user" : "ai-bot"}`;
+        div.className = resolveMessageClasses(type);
         div.textContent = text;
         messagesEl.appendChild(div);
         messagesEl.scrollTop = messagesEl.scrollHeight;

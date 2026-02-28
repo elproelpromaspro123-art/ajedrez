@@ -534,7 +534,7 @@ async function onAuthenticatedSessionChanged() {
 async function registerWithCredentials() {
     const credentials = getAuthInputCredentials();
     if (!credentials) {
-        setAuthStatus("Completa usuario y contraseña para crear cuenta.");
+        setAuthStatus("Completa usuario y contrase\u00f1a para crear cuenta.");
         return;
     }
 
@@ -570,7 +570,7 @@ async function registerWithCredentials() {
 async function loginWithCredentials() {
     const credentials = getAuthInputCredentials();
     if (!credentials) {
-        setAuthStatus("Completa usuario y contraseña para iniciar sesion.");
+        setAuthStatus("Completa usuario y contrase\u00f1a para iniciar sesion.");
         return;
     }
 
@@ -3100,12 +3100,27 @@ async function confirmSuggestedMove() {
         el.moveConfirmBar.classList.remove("visible");
     }
 
+    const from = String(pending.from || "").trim().toLowerCase();
+    const to = String(pending.to || "").trim().toLowerCase();
+    if (!/^[a-h][1-8]$/.test(from) || !/^[a-h][1-8]$/.test(to)) {
+        playErrorSound();
+        setCoachMessage(coachNotice("error", "Movimiento sugerido invalido."));
+        renderPlayBoard();
+        return;
+    }
+
     const fenBefore = playState.game.fen();
-    const move = playState.game.move({
-        from: pending.from,
-        to: pending.to,
-        promotion: pending.promotion || "q"
-    });
+    const movePayload = { from, to };
+    if (pending.promotion) {
+        movePayload.promotion = pending.promotion;
+    }
+
+    let move = null;
+    try {
+        move = playState.game.move(movePayload);
+    } catch {
+        move = null;
+    }
 
     if (!move) {
         playErrorSound();
@@ -3287,11 +3302,20 @@ async function tryExecuteQueuedPremove(localSession) {
     const queued = playState.premove;
     playState.premove = null;
     const fenBeforeMove = playState.game.fen();
-    const move = playState.game.move({
+    const movePayload = {
         from: queued.from,
-        to: queued.to,
-        promotion: queued.promotion || "q"
-    });
+        to: queued.to
+    };
+    if (queued.promotion) {
+        movePayload.promotion = queued.promotion;
+    }
+
+    let move = null;
+    try {
+        move = playState.game.move(movePayload);
+    } catch {
+        move = null;
+    }
 
     if (!move) {
         playErrorSound();
@@ -3576,7 +3600,10 @@ async function onPlaySquareClick(square) {
             return;
         }
 
-        const autoPromotion = settings.autoPromotion ? "q" : (premove.promotion || "q");
+        const needsPromotion = premove.piece === "p" && (premove.to.endsWith("8") || premove.to.endsWith("1"));
+        const autoPromotion = needsPromotion
+            ? (settings.autoPromotion ? "q" : (premove.promotion || "q"))
+            : undefined;
         playState.premove = {
             from: premove.from,
             to: premove.to,
@@ -4434,11 +4461,19 @@ function onRetryBoardSquareClick(square) {
         return;
     }
 
-    const move = analysisState.retryGame.move({
+    const retryMovePayload = {
         from: intendedMove.from,
-        to: intendedMove.to,
-        promotion: intendedMove.promotion || "q"
-    });
+        to: intendedMove.to
+    };
+    if (intendedMove.promotion) {
+        retryMovePayload.promotion = intendedMove.promotion;
+    }
+    let move = null;
+    try {
+        move = analysisState.retryGame.move(retryMovePayload);
+    } catch {
+        move = null;
+    }
 
     if (!move) {
         playErrorSound();
@@ -7385,10 +7420,10 @@ function addAiCountdownMessage(seconds) {
     let remaining = seconds;
     function update() {
         if (remaining <= 0) {
-            div.textContent = "✅ Ya puedes enviar otra pregunta.";
+            div.textContent = "Listo. Ya puedes enviar otra pregunta.";
             return;
         }
-        div.textContent = "⏳ Límite de solicitudes. Puedes reintentar en " + remaining + "s...";
+        div.textContent = "Limite de solicitudes. Puedes reintentar en " + remaining + "s...";
         remaining--;
         setTimeout(update, 1000);
     }
@@ -7704,7 +7739,28 @@ function getGamePhaseAI(game) {
     return "medio juego";
 }
 
-async function generateAiResponse(question) {
+function collectRecentAiChatContext(maxEntries = 6) {
+    if (!aiChatMessages || maxEntries <= 0) {
+        return [];
+    }
+
+    return Array.from(aiChatMessages.children)
+        .map((node) => {
+            const text = node && node.textContent ? String(node.textContent).trim() : "";
+            if (!text) {
+                return null;
+            }
+            if (node.classList && node.classList.contains("ai-thinking")) {
+                return null;
+            }
+            const role = node.classList && node.classList.contains("ai-user") ? "Usuario" : "Asistente";
+            return `${role}: ${text.slice(0, 260)}`;
+        })
+        .filter(Boolean)
+        .slice(-maxEntries);
+}
+
+async function generateAiResponse(question, recentContext = []) {
     const game = playState.game;
     const fen = game.fen();
     const history = game.history();
@@ -7733,6 +7789,7 @@ async function generateAiResponse(question) {
 
 OBJETIVO:
 - Responder de forma directa pero explicativa.
+- Responder SIEMPRE primero la pregunta exacta del usuario en una frase breve.
 - Explicar SIEMPRE: que jugar, por que funciona y cual es el riesgo.
 
 FORMATO OBLIGATORIO:
@@ -7752,6 +7809,7 @@ REGLAS:
 7. Formato JSON: {"text":"...", "actions":[{"type":"hint|undo|new_game|analyze|study|flip|open_study|load_line","label":"...", "argument":"..."}]}
 8. Usa 0-3 acciones maximo.
 9. Si recomiendas estudio de apertura, agrega accion "study" con el nombre en "argument".
+10. No ignores la pregunta del usuario. Si pregunta si una jugada fue blunder, dilo explicitamente.
 
 Contexto:
 - Fase: ${phase}
@@ -7762,6 +7820,13 @@ Contexto:
 - Eval Stockfish: ${evalText}
 - Mejor jugada sugerida: ${bestMoveDesc} (${bestMoveStr})
 - Apertura detectada: ${detectedOpening || "Sin apertura detectada"}`;
+    const contextBlock = Array.isArray(recentContext) && recentContext.length > 0
+        ? `Conversacion reciente:\n${recentContext.join("\n")}`
+        : "Conversacion reciente: (sin historial previo)";
+    const aiQuestion = [
+        contextBlock,
+        `Pregunta actual del usuario: ${question}`
+    ].join("\n\n");
 
     const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
     const timeoutId = controller
@@ -7777,7 +7842,7 @@ Contexto:
             signal: controller ? controller.signal : undefined,
             body: JSON.stringify({
                 systemPrompt,
-                question: question.slice(0, 1600),
+                question: aiQuestion.slice(0, 1600),
                 structured: true
             })
         });
@@ -7856,6 +7921,7 @@ async function handleAiChat() {
         return;
     }
 
+    const recentContext = collectRecentAiChatContext(6);
     addAiMessage(question, "ai-user");
     aiChatInput.value = "";
 
@@ -7864,7 +7930,7 @@ async function handleAiChat() {
     aiRuntimeState.lastSentAt = now;
 
     try {
-        const aiResponse = await generateAiResponse(question);
+        const aiResponse = await generateAiResponse(question, recentContext);
         if (aiResponse.rateLimited) {
             thinkingMsg.remove();
             addAiCountdownMessage(aiResponse.retryAfterSeconds);
