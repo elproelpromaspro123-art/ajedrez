@@ -80,14 +80,14 @@ function renderIndexHtml(req: express.Request): string {
 
 app.use((_req, res, next) => {
     res.setHeader("Content-Security-Policy", [
-        "default-src 'self'",
+        "default-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'",
         "script-src 'self' blob: 'wasm-unsafe-eval' 'unsafe-eval'",
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' https://fonts.gstatic.com",
         "img-src 'self' data:",
         "connect-src 'self' https://api.groq.com https://explorer.lichess.ovh",
         "media-src 'self'",
-        "worker-src 'self' blob:",
+        "worker-src 'self' blob: 'wasm-unsafe-eval' 'unsafe-eval'",
         "frame-src 'none'",
         "manifest-src 'self'"
     ].join("; "));

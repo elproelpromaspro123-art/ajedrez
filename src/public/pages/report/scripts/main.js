@@ -96,6 +96,7 @@ const CLASSIFICATION_DOT_COLOR = {
 const ENGINE_PRIMARY = "/static/scripts/stockfish-nnue-16.js";
 const ENGINE_FALLBACK = "/static/scripts/stockfish.js";
 const MAX_ENGINE_MATE_PLY = 99;
+const MATE_DISPLAY_CAP = 20;
 const MAX_ENGINE_CP = 3500;
 const APP_BOOT_AT = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
 const APP_MODULES = window.ReportModules || {};
@@ -685,7 +686,10 @@ function formatEval(evaluation) {
         }
 
         const sign = value > 0 ? "+" : "-";
-        return `${sign}M${Math.abs(value)}`;
+        const matePly = Math.abs(value);
+        return matePly >= MATE_DISPLAY_CAP
+            ? `${sign}M${MATE_DISPLAY_CAP}+`
+            : `${sign}M${matePly}`;
     }
 
     const cpValue = clamp(Math.trunc(Number(evaluation.value) || 0), -MAX_ENGINE_CP, MAX_ENGINE_CP);
@@ -807,7 +811,26 @@ function normalizeEngineLinesForFen(fen, lines) {
         }
     });
 
-    return Array.from(byId.values()).sort((a, b) => a.id - b.id);
+    const sortedById = Array.from(byId.values()).sort((a, b) => a.id - b.id);
+    const dedupedByTarget = new Map();
+    sortedById.forEach((line) => {
+        const baseKey = String(line.moveUCI || "").slice(0, 4);
+        if (!/^[a-h][1-8][a-h][1-8]$/.test(baseKey)) {
+            return;
+        }
+        const existing = dedupedByTarget.get(baseKey);
+        if (!existing || line.depth > existing.depth || evalToCp(line.evaluation) > evalToCp(existing.evaluation)) {
+            dedupedByTarget.set(baseKey, line);
+        }
+    });
+
+    return Array.from(dedupedByTarget.values())
+        .sort((a, b) => a.id - b.id)
+        .slice(0, 5)
+        .map((line, index) => ({
+            ...line,
+            id: index + 1
+        }));
 }
 
 function fenMapFromFen(fen) {
@@ -1072,8 +1095,8 @@ class BoardView {
             suggestionMarker.setAttribute("viewBox", "0 0 10 10");
             suggestionMarker.setAttribute("refX", "8");
             suggestionMarker.setAttribute("refY", "5");
-            suggestionMarker.setAttribute("markerWidth", "6");
-            suggestionMarker.setAttribute("markerHeight", "6");
+            suggestionMarker.setAttribute("markerWidth", "7.5");
+            suggestionMarker.setAttribute("markerHeight", "7.5");
             suggestionMarker.setAttribute("orient", "auto-start-reverse");
             const suggestionPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
             suggestionPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
@@ -1085,8 +1108,8 @@ class BoardView {
             threatMarker.setAttribute("viewBox", "0 0 10 10");
             threatMarker.setAttribute("refX", "8");
             threatMarker.setAttribute("refY", "5");
-            threatMarker.setAttribute("markerWidth", "6");
-            threatMarker.setAttribute("markerHeight", "6");
+            threatMarker.setAttribute("markerWidth", "7.5");
+            threatMarker.setAttribute("markerHeight", "7.5");
             threatMarker.setAttribute("orient", "auto-start-reverse");
             const threatPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
             threatPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
@@ -1155,23 +1178,28 @@ class BoardView {
         const shrink = Math.min(4, distance * 0.2);
         const targetX = to.x - (dx / distance) * shrink;
         const targetY = to.y - (dy / distance) * shrink;
+        const normalX = distance > 0 ? (-dy / distance) : 0;
+        const normalY = distance > 0 ? (dx / distance) : 0;
+        const bend = Math.min(6, Math.max(1.1, distance * 0.18));
+        const controlX = (from.x + targetX) / 2 + (normalX * bend);
+        const controlY = (from.y + targetY) / 2 + (normalY * bend);
         const colorKind = kind === "threat" ? "threat" : "suggestion";
 
-        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-        line.setAttribute("x1", from.x.toFixed(3));
-        line.setAttribute("y1", from.y.toFixed(3));
-        line.setAttribute("x2", targetX.toFixed(3));
-        line.setAttribute("y2", targetY.toFixed(3));
-        line.setAttribute("class", `board-arrow board-arrow-${colorKind}`);
-        line.setAttribute("marker-end", `url(#${this.arrowIdPrefix}-${colorKind})`);
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute(
+            "d",
+            `M ${from.x.toFixed(3)} ${from.y.toFixed(3)} Q ${controlX.toFixed(3)} ${controlY.toFixed(3)} ${targetX.toFixed(3)} ${targetY.toFixed(3)}`
+        );
+        path.setAttribute("class", `board-arrow board-arrow-${colorKind}`);
+        path.setAttribute("marker-end", `url(#${this.arrowIdPrefix}-${colorKind})`);
 
         const tail = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         tail.setAttribute("cx", from.x.toFixed(3));
         tail.setAttribute("cy", from.y.toFixed(3));
-        tail.setAttribute("r", "1.9");
+        tail.setAttribute("r", "2.2");
         tail.setAttribute("class", `board-arrow-tail board-arrow-tail-${colorKind}`);
 
-        this.arrowGroup.append(line, tail);
+        this.arrowGroup.append(path, tail);
     }
 
     setFen(fen) {
@@ -1737,6 +1765,7 @@ const playState = {
     playerColor: "white",
     botColor: "black",
     gameMode: PLAY_MODES.CASUAL,
+    gameType: "standard",
     botElo: 1200,
     selectedSquare: null,
     legalTargets: [],
@@ -1790,8 +1819,8 @@ const perfState = {
 const aiRuntimeState = {
     inFlight: false,
     lastSentAt: 0,
-    minIntervalMs: 10000,
-    minResponseDelayMs: 700
+    minIntervalMs: 3500,
+    minResponseDelayMs: 1100
 };
 
 const sessionRuntimeState = {
@@ -1832,6 +1861,14 @@ function normalizePlayMode(value) {
 
 function getSelectedPlayMode() {
     return normalizePlayMode(el.playMode ? el.playMode.value : PLAY_MODES.CASUAL);
+}
+
+function normalizeGameType(value) {
+    const normalized = String(value || "").toLowerCase();
+    if (normalized === "training" || normalized === "challenge") {
+        return normalized;
+    }
+    return "standard";
 }
 
 function isPlayGameOver() {
@@ -1921,7 +1958,10 @@ function refreshPlayModeUiState() {
         el.setTimeControl.disabled = activeGame;
     }
     if (el.setGameType) {
-        el.setGameType.disabled = activeGame;
+        if (rankedSelected || rankedLive) {
+            el.setGameType.value = "standard";
+        }
+        el.setGameType.disabled = activeGame || rankedSelected || rankedLive;
     }
 }
 
@@ -1956,7 +1996,7 @@ function getPlaySettings() {
         threatArrows: el.setThreatArrows ? el.setThreatArrows.checked : false,
         suggestionArrows: el.setSuggestionArrows ? el.setSuggestionArrows.checked : false,
         timeControlSeconds: Number.isFinite(rawTimeControl) ? clamp(rawTimeControl, 0, 1800) : 0,
-        gameType: el.setGameType ? String(el.setGameType.value || "standard") : "standard",
+        gameType: normalizeGameType(el.setGameType ? el.setGameType.value : "standard"),
         boardTheme: el.setBoardTheme ? el.setBoardTheme.value : "classic",
         pieceTheme: el.setPieceTheme ? el.setPieceTheme.value : "default"
     };
@@ -2168,6 +2208,9 @@ function formatEvalForPlayer(evaluation) {
     if (evaluation.type === "mate") {
         if (playerValue === 0) return "M0";
         const matePly = clamp(Math.trunc(Math.abs(playerValue)), 0, MAX_ENGINE_MATE_PLY);
+        if (matePly >= MATE_DISPLAY_CAP) {
+            return `${playerValue > 0 ? "+" : "-"}M${MATE_DISPLAY_CAP}+`;
+        }
         return `${playerValue > 0 ? "+" : "-"}M${matePly}`;
     }
     const cpValue = clamp(Math.trunc(playerValue), -MAX_ENGINE_CP, MAX_ENGINE_CP);
@@ -3687,6 +3730,7 @@ async function updateComputerLines(fen, localSession) {
     if (normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED) {
         clearComputerTopLines();
         renderComputerPanel();
+        renderPlayBoard();
         return;
     }
     if (!settings.computerEnabled) return;
@@ -3694,11 +3738,36 @@ async function updateComputerLines(fen, localSession) {
     if (turnFromFen !== playState.playerColor) {
         clearComputerTopLines();
         renderComputerPanel();
+        renderPlayBoard();
         return;
     }
 
+    const profile = getAdaptiveCoachEvalProfile(fen, "lines", 3);
+    const needsInstantLines = playState.computerTopLinesFen !== fen
+        || playState.computerTopLines.length === 0;
+    let hasRenderedLines = false;
+
+    if (needsInstantLines) {
+        try {
+            const quickResult = await evaluateWithStockfish({
+                fen,
+                depth: clamp(profile.depth - 3, 8, 14),
+                multipv: 1,
+                movetime: clamp(Math.round(profile.movetime * 0.35), 180, 520)
+            });
+            if (localSession !== playState.sessionId) return;
+            if (Array.isArray(quickResult.lines) && quickResult.lines.length > 0) {
+                setComputerTopLines(quickResult.lines, fen);
+                hasRenderedLines = true;
+                renderComputerPanel();
+                renderPlayBoard();
+            }
+        } catch {
+            // ignore quick-pass failures; deep pass may still succeed
+        }
+    }
+
     try {
-        const profile = getAdaptiveCoachEvalProfile(fen, "lines", 3);
         const result = await evaluateWithStockfish({
             fen,
             depth: profile.depth,
@@ -3707,34 +3776,56 @@ async function updateComputerLines(fen, localSession) {
         });
         if (localSession !== playState.sessionId) return;
 
-        setComputerTopLines(result.lines || [], fen);
+        if (Array.isArray(result.lines) && result.lines.length > 0) {
+            setComputerTopLines(result.lines, fen);
+            hasRenderedLines = true;
+        } else if (!hasRenderedLines) {
+            clearComputerTopLines();
+        }
         renderComputerPanel();
+        renderPlayBoard();
     } catch {
-        clearComputerTopLines();
+        if (!hasRenderedLines) {
+            clearComputerTopLines();
+        }
         renderComputerPanel();
+        renderPlayBoard();
     }
 }
 
 function currentBotElo() {
     const custom = parseInt(el.botCustomElo.value || "", 10);
+    const settings = getPlaySettings();
+    const gameType = normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED
+        ? "standard"
+        : normalizeGameType(settings.gameType);
+    const gameTypeOffset = gameType === "training"
+        ? -140
+        : (gameType === "challenge" ? 180 : 0);
+
     if (Number.isFinite(custom)) {
-        return clamp(custom, 400, 2800);
+        return clamp(custom + gameTypeOffset, 400, 2800);
     }
 
-    return clamp(parseInt(el.botPreset.value, 10), 400, 2800);
+    return clamp(parseInt(el.botPreset.value, 10) + gameTypeOffset, 400, 2800);
 }
 
-function getBotDecisionProfile(elo) {
+function getBotDecisionProfile(elo, gameType = "standard") {
     const bounded = clamp(Number(elo || 1200), 400, 2800);
     const strength = (bounded - 400) / 2400;
+    const normalizedGameType = normalizeGameType(gameType);
+    const depthBoost = normalizedGameType === "challenge" ? 2 : (normalizedGameType === "training" ? -1 : 0);
+    const timeScale = normalizedGameType === "challenge" ? 1.32 : (normalizedGameType === "training" ? 0.82 : 1);
+    const randomnessScale = normalizedGameType === "challenge" ? 0.78 : (normalizedGameType === "training" ? 1.2 : 1);
+    const candidateShift = normalizedGameType === "challenge" ? -1 : (normalizedGameType === "training" ? 1 : 0);
     return {
         multipv: strength < 0.2 ? 6 : strength < 0.35 ? 5 : strength < 0.6 ? 4 : 3,
-        depth: clamp(Math.round(6 + bounded / 280), 6, 14),
-        movetime: clamp(Math.round(170 + bounded / 3.6), 220, 1700),
-        maxCandidates: strength < 0.3 ? 5 : strength < 0.55 ? 4 : 3,
+        depth: clamp(Math.round(6 + bounded / 280) + depthBoost, 6, 16),
+        movetime: clamp(Math.round((170 + bounded / 3.6) * timeScale), 180, 2100),
+        maxCandidates: clamp((strength < 0.3 ? 5 : strength < 0.55 ? 4 : 3) + candidateShift, 2, 6),
         temperatureCp: clamp(Math.round(260 - strength * 205), 55, 260),
         rankPenalty: 0.28 + (strength * 0.55),
-        randomMoveChance: clamp(0.26 - strength * 0.23, 0.02, 0.26)
+        randomMoveChance: clamp((0.26 - strength * 0.23) * randomnessScale, 0.01, 0.3)
     };
 }
 
@@ -3912,7 +4003,7 @@ async function playBotMove() {
     renderPlayStatus();
 
     try {
-        const botProfile = getBotDecisionProfile(playState.botElo);
+        const botProfile = getBotDecisionProfile(playState.botElo, playState.gameType);
         const fenBeforeMove = playState.game.fen();
 
         const result = await evaluateWithStockfish({
@@ -4266,6 +4357,7 @@ function goToPlaySetup(message = coachNotice("setup", "Configura una nueva parti
     playState.sessionId += 1;
     playState.game = new Chess();
     playState.gameMode = getSelectedPlayMode();
+    playState.gameType = normalizeGameType(getPlaySettings().gameType);
     playState.lastMove = null;
     playState.hintMove = null;
     playState.thinking = false;
@@ -4326,9 +4418,13 @@ function startNewGame() {
     playState.game = new Chess();
     playState.gameMode = getSelectedPlayMode();
     const rankedMode = normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED;
+    playState.gameType = rankedMode ? "standard" : normalizeGameType(getPlaySettings().gameType);
 
     if (rankedMode) {
         enforceRankedSettings();
+        if (el.setGameType) {
+            el.setGameType.value = "standard";
+        }
     }
 
     const chosenColor = rankedMode
@@ -5456,6 +5552,36 @@ async function refreshAnalysisSummaryIfCurrent(localRunId, report, pgn) {
     }
 }
 
+function getAutomaticAnalysisProfile(totalPositions) {
+    const hw = typeof navigator !== "undefined"
+        ? Number(navigator.hardwareConcurrency || 4)
+        : 4;
+    const memory = typeof navigator !== "undefined"
+        ? Number(navigator.deviceMemory || 4)
+        : 4;
+
+    let depth = 13;
+    if (Number.isFinite(hw) && hw >= 12) {
+        depth += 2;
+    } else if (Number.isFinite(hw) && hw >= 8) {
+        depth += 1;
+    }
+    if (Number.isFinite(memory) && memory >= 8) {
+        depth += 1;
+    }
+
+    if (totalPositions >= 120) {
+        depth -= 2;
+    } else if (totalPositions >= 80) {
+        depth -= 1;
+    }
+
+    depth = clamp(depth, 10, 19);
+    const movetime = clamp(Math.round(320 + depth * 62 + (hw >= 8 ? 80 : 0)), 520, 1700);
+    const multipv = totalPositions >= 90 ? 1 : 2;
+    return { depth, movetime, multipv };
+}
+
 async function runAnalysis() {
     const pgn = el.analysisPgn.value.trim();
     if (!pgn) {
@@ -5497,9 +5623,8 @@ async function runAnalysis() {
             throw new Error("No se detectaron posiciones v\u00e1lidas en el PGN.");
         }
 
-        const depth = clamp(parseInt(el.analysisDepth.value, 10), 8, 20);
-        const targetMoveTime = clamp(280 + depth * 55, 420, 1500);
         const totalPositions = positions.length;
+        const autoProfile = getAutomaticAnalysisProfile(totalPositions);
 
         for (let i = 0; i < totalPositions; i += 1) {
             if (localRunId !== analysisState.runId) {
@@ -5508,16 +5633,16 @@ async function runAnalysis() {
 
             const progress = Math.round((i / totalPositions) * 92);
             el.analysisProgress.value = progress;
-            setAnalysisStatus(`Evaluando posici\u00f3n ${i + 1} de ${totalPositions}...`);
+            setAnalysisStatus(`Evaluando posici\u00f3n ${i + 1} de ${totalPositions} (auto D${autoProfile.depth})...`);
             await yieldToUi();
 
             let evaluation;
             try {
                 evaluation = await evaluateWithStockfish({
                     fen: positions[i].fen,
-                    depth,
-                    multipv: 2,
-                    movetime: targetMoveTime,
+                    depth: autoProfile.depth,
+                    multipv: autoProfile.multipv,
+                    movetime: autoProfile.movetime,
                     timeoutMs: 14_000
                 });
             } catch {
@@ -5540,7 +5665,7 @@ async function runAnalysis() {
                 ? evaluation.lines
                 : [{
                     id: 1,
-                    depth,
+                    depth: autoProfile.depth,
                     moveUCI: evaluation.bestMove || "",
                     evaluation: { type: "cp", value: 0 }
                 }];
@@ -7377,7 +7502,6 @@ async function initOpeningExplorer() {
         el.ecoLoadPlayBtn.addEventListener("click", () => {
             const node = openingExplorerState.selectedNode;
             if (!node) return;
-            if (!window.confirm(`Cargar la linea ${node.name} en el tablero principal?`)) return;
 
             try {
                 playState.game.load(node.fen);
@@ -7419,9 +7543,7 @@ function bindGlobalShortcuts() {
     uiModule.registerKeyboardShortcuts({
         h: () => requestCoachHint(false),
         u: () => undoPlayMove(),
-        n: () => {
-            if (window.confirm("Iniciar una nueva partida?")) startNewGame();
-        },
+        n: () => startNewGame(),
         f: () => {
             if (el.playFlipBtn) el.playFlipBtn.click();
         },
@@ -7836,10 +7958,6 @@ function bindEvents() {
         });
     });
 
-    el.analysisDepth.addEventListener("input", () => {
-        el.analysisDepthValue.textContent = el.analysisDepth.value;
-    });
-
     el.analysisRunBtn.addEventListener("click", runAnalysis);
 
     el.analysisStartBtn.addEventListener("click", () => {
@@ -8101,16 +8219,23 @@ function addAiMessage(text, type) {
     if (!aiChatMessages) return;
     const div = document.createElement("div");
     div.className = `ai-msg ${type}`;
+    const isUser = String(type || "").includes("user");
+    const sender = document.createElement("span");
+    sender.className = "ai-msg-sender";
+    sender.textContent = isUser ? "Tu" : "Asistente IA";
 
-    // Simple markdown parsing for bold and newlines
-    let htmlText = text
+    const body = document.createElement("span");
+    body.className = "ai-msg-body";
+
+    // Simple markdown parsing for bold and newlines in message body
+    let htmlText = String(text || "")
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
         .replace(/\n/g, '<br>');
-
-    div.innerHTML = htmlText;
+    body.innerHTML = htmlText;
+    div.append(sender, body);
 
     aiChatMessages.appendChild(div);
     aiChatMessages.scrollTop = aiChatMessages.scrollHeight;
@@ -8203,16 +8328,13 @@ function replaceMatchesInTextNodes(root, regex, createNodeFromMatch) {
 }
 
 function confirmAiActionAndRun(action, description, execute) {
-    const approved = window.confirm(`${description}\n\nConfirma con Si/No.`);
-    if (!approved) {
-        logAiActionEvent(action, "rejected");
-        return;
-    }
-
     logAiActionEvent(action, "approved");
-
-    execute();
-    scheduleSessionSnapshotSave();
+    try {
+        execute();
+        setCoachMessage(coachNotice("info", `${description}.`));
+    } finally {
+        scheduleSessionSnapshotSave();
+    }
 }
 
 function runAiAction(actionId, argument) {
@@ -8414,12 +8536,7 @@ function makeMovesClickable(msgEl) {
                 const move = game.move(san);
                 if (move) {
                     showMoveConfirmation(move.from, move.to, move.san, move.promotion);
-                    const approved = window.confirm(`Jugar ${sanToSpanish(move.san)} (${move.san}) ahora?`);
-                    if (approved) {
-                        confirmSuggestedMove();
-                    } else {
-                        cancelMoveConfirmation();
-                    }
+                    setCoachMessage(coachNotice("info", `Vista previa cargada: ${sanToSpanish(move.san)}. Confirma con Si/No.`));
                 } else {
                     addAiMessage(`No puedo jugar ${san} en esta posicion actual.`, "ai-bot");
                 }
@@ -8460,6 +8577,15 @@ function getGamePhaseAI(game) {
     return "medio juego";
 }
 
+function getAiMessageNodeText(node) {
+    if (!node) {
+        return "";
+    }
+    const body = node.querySelector ? node.querySelector(".ai-msg-body") : null;
+    const raw = body && body.textContent ? body.textContent : node.textContent;
+    return String(raw || "").trim();
+}
+
 function collectRecentAiChatContext(maxEntries = 6) {
     if (!aiChatMessages || maxEntries <= 0) {
         return [];
@@ -8467,7 +8593,7 @@ function collectRecentAiChatContext(maxEntries = 6) {
 
     return Array.from(aiChatMessages.children)
         .map((node) => {
-            const text = node && node.textContent ? String(node.textContent).trim() : "";
+            const text = getAiMessageNodeText(node);
             if (!text) {
                 return null;
             }
@@ -8661,7 +8787,10 @@ async function handleAiChat() {
             thinkingMsg.remove();
             addAiCountdownMessage(aiResponse.retryAfterSeconds);
         } else {
-            thinkingMsg.textContent = aiResponse.text;
+            const textTarget = thinkingMsg.querySelector
+                ? (thinkingMsg.querySelector(".ai-msg-body") || thinkingMsg)
+                : thinkingMsg;
+            textTarget.textContent = aiResponse.text;
             thinkingMsg.classList.remove("ai-thinking");
             appendStructuredAiActions(thinkingMsg, aiResponse.actions);
             makeAiActionsClickable(thinkingMsg);
@@ -8669,7 +8798,10 @@ async function handleAiChat() {
             makeOpeningMentionsClickable(thinkingMsg);
         }
     } catch {
-        thinkingMsg.textContent = "Lo siento, no pude procesar tu pregunta. Int\u00e9ntalo de nuevo.";
+        const textTarget = thinkingMsg.querySelector
+            ? (thinkingMsg.querySelector(".ai-msg-body") || thinkingMsg)
+            : thinkingMsg;
+        textTarget.textContent = "Lo siento, no pude procesar tu pregunta. Int\u00e9ntalo de nuevo.";
         thinkingMsg.classList.remove("ai-thinking");
     } finally {
         aiRuntimeState.inFlight = false;
@@ -8825,6 +8957,7 @@ function buildSessionSnapshot() {
             pgn: playState.game.pgn(),
             history: playState.game.history(),
             gameMode: playState.gameMode,
+            gameType: playState.gameType,
             startTime: playState.startTime,
             playerColor: playState.playerColor,
             botColor: playState.botColor,
@@ -8963,6 +9096,9 @@ function restorePlayFromSnapshot(snapshot) {
     playState.botColor = playState.playerColor === "white" ? "black" : "white";
     playState.botElo = Number.isFinite(play.botElo) ? clamp(Number(play.botElo), 400, 2800) : playState.botElo;
     playState.gameMode = normalizePlayMode(play.gameMode);
+    playState.gameType = playState.gameMode === PLAY_MODES.RANKED
+        ? "standard"
+        : normalizeGameType(play.gameType);
     playState.startTime = Number.isFinite(Number(play.startTime)) ? Number(play.startTime) : null;
     playState.manualGameOver = play && typeof play.manualGameOver === "object" && play.manualGameOver
         ? {
@@ -8998,6 +9134,9 @@ function restorePlayFromSnapshot(snapshot) {
     }
     if (el.playMode) {
         el.playMode.value = playState.gameMode;
+    }
+    if (el.setGameType) {
+        el.setGameType.value = playState.gameType;
     }
     if (el.botPreset) {
         el.botPreset.value = String(playState.botElo);
@@ -9222,8 +9361,8 @@ async function init() {
     if (el.coachDepth && el.coachDepthValue) {
         el.coachDepthValue.textContent = el.coachDepth.value;
     }
-    if (el.analysisDepth && el.analysisDepthValue) {
-        el.analysisDepthValue.textContent = el.analysisDepth.value;
+    if (el.analysisDepthValue) {
+        el.analysisDepthValue.textContent = "Ajuste automatico";
     }
 
     renderPlayBoard();

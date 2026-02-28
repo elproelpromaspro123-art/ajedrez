@@ -272,15 +272,13 @@
             <div id="analysis-input" class="analysis-detail" style="display:none;">
                 <button class="study-back-btn" data-analysis-back>&larr; Volver al Centro de An&aacute;lisis</button>
                 <h2>&#9654; Analizar Partida</h2>
-                <p class="study-intro">Pega tu PGN, ajusta la profundidad y obt&eacute;n un an&aacute;lisis completo de tu partida.</p>
+                <p class="study-intro">Pega tu PGN y obt&eacute;n un an&aacute;lisis completo con profundidad autom&aacute;tica en su punto dulce.</p>
                 <article class="card control-card">
                     <label for="analysis-pgn">PGN</label>
                     <textarea id="analysis-pgn" rows="8" spellcheck="false"
                         placeholder="Pega aqui tu PGN..."></textarea>
 
-                    <label for="analysis-depth">Profundidad de analisis</label>
-                    <input id="analysis-depth" type="range" min="8" max="18" value="12" />
-                    <p id="analysis-depth-value" class="muted">12</p>
+                    <p id="analysis-depth-value" class="muted">Profundidad autom&aacute;tica (punto dulce).</p>
 
                     <button id="analysis-run-btn" class="primary-btn" type="button">&#9654; Analizar partida</button>
                     <progress id="analysis-progress" value="0" max="100"></progress>
@@ -1125,7 +1123,9 @@
             <div class="settings-row">
                 <label>Tipo</label>
                 <select class="chess-select" id="set-game-type">
-                    <option value="standard">Est&aacute;ndar</option>
+                    <option value="standard" selected>Est&aacute;ndar</option>
+                    <option value="training">Entrenamiento (m&aacute;s guiado)</option>
+                    <option value="challenge">Desaf&iacute;o (bot m&aacute;s duro)</option>
                 </select>
             </div>
         </div>
