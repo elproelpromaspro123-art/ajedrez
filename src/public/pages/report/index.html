@@ -63,7 +63,7 @@
                     <div id="play-setup-panel">
                         <h3>♚ Configurar Partida</h3>
 
-                        <div class="setup-group auth-group">
+                        <div class="setup-group auth-group setup-group-account">
                             <p class="setup-group-title">🔐 Cuenta</p>
                             <p id="auth-status" class="muted auth-status">No has iniciado sesion. Inicia para guardar todo en base de datos.</p>
                             <div id="auth-guest-panel" class="auth-guest-panel">
@@ -85,7 +85,7 @@
                             </div>
                         </div>
 
-                        <div class="setup-group">
+                        <div class="setup-group setup-group-rival">
                             <p class="setup-group-title">🤖 Rival</p>
                             <label for="bot-preset">Nivel del bot</label>
                             <select id="bot-preset">
@@ -101,7 +101,7 @@
                                 placeholder="Opcional" />
                         </div>
 
-                        <div class="setup-group">
+                        <div class="setup-group setup-group-preferences">
                             <p class="setup-group-title">⚙️ Preferencias</p>
                             <label for="player-color">Tu color</label>
                             <select id="player-color">
@@ -115,12 +115,11 @@
                                 <option value="ranked">Clasificatoria (cuenta perfil)</option>
                             </select>
                             <p id="play-mode-note" class="muted">Solo Clasificatoria suma estadisticas, sin ayudas y con color aleatorio.</p>
-                            <label for="coach-depth">Profundidad del entrenador</label>
-                            <input id="coach-depth" type="range" min="8" max="18" value="12" />
-                            <p id="coach-depth-value" class="muted">12</p>
+                            <input id="coach-depth" type="range" min="8" max="18" value="12" hidden aria-hidden="true" />
+                            <p id="coach-depth-value" class="muted" hidden>Auto</p>
                         </div>
 
-                        <div class="stack-buttons">
+                        <div class="stack-buttons setup-actions">
                             <button id="play-start-btn" class="primary-btn" type="button">&#9654; Jugar</button>
                             <button id="play-settings-btn" class="ghost-btn settings-launch-btn"
                                 type="button">&#9881;&#65039; Ajustes avanzados</button>

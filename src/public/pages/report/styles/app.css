@@ -337,7 +337,7 @@ a:hover {
 
 .panel-grid.setup-mode {
     grid-template-columns: 1fr;
-    max-width: 500px;
+    max-width: min(1080px, 96vw);
     margin: 0 auto;
 }
 
@@ -1534,21 +1534,41 @@ button:disabled {
 
 #play-setup-panel {
     display: grid;
-    gap: 10px;
+    gap: 12px;
+    grid-template-columns: minmax(360px, 1.25fr) minmax(280px, 1fr);
+    align-items: start;
 }
 
 #play-setup-panel h3 {
     font-size: 1.04rem;
     letter-spacing: 0.01em;
+    grid-column: 1 / -1;
 }
 
 #play-setup-panel .muted {
-    text-align: right;
+    text-align: left;
     font-weight: 600;
 }
 
-#play-setup-panel .stack-buttons {
-    margin-top: 8px;
+.setup-group-account {
+    grid-column: 1;
+    grid-row: 2 / span 2;
+}
+
+.setup-group-rival {
+    grid-column: 2;
+    grid-row: 2;
+}
+
+.setup-group-preferences {
+    grid-column: 2;
+    grid-row: 3;
+}
+
+.setup-actions {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 4px;
 }
 
 /* ===== Setup Panel Groups ===== */
@@ -1574,7 +1594,7 @@ button:disabled {
 .settings-launch-btn {
     width: 100%;
     border: 1px solid var(--border);
-    margin-top: 4px;
+    margin-top: 0;
 }
 
 /* Classification dot beside moves */
@@ -2919,6 +2939,17 @@ textarea:focus-visible {
     .board-wrap {
         max-width: 620px;
     }
+
+    #play-setup-panel {
+        grid-template-columns: 1fr;
+    }
+
+    .setup-group-account,
+    .setup-group-rival,
+    .setup-group-preferences {
+        grid-column: 1;
+        grid-row: auto;
+    }
 }
 
 @keyframes premovePulse {
@@ -3003,6 +3034,10 @@ textarea:focus-visible {
 
     .panel-grid {
         max-height: none;
+    }
+
+    .setup-actions {
+        grid-template-columns: 1fr;
     }
 
     .sidebar-card {

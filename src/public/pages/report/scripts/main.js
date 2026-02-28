@@ -1672,10 +1672,14 @@ function getPlaySettings() {
     };
 }
 
-function getEvalValueForPlayer(evaluation) {
+function getEvalValueForSide(evaluation, side) {
     if (!evaluation) return 0;
-    const flip = playState.playerColor === "black" ? -1 : 1;
-    return evaluation.value * flip;
+    const flip = side === "black" ? -1 : 1;
+    return evalToCp(evaluation) * flip;
+}
+
+function getEvalValueForPlayer(evaluation) {
+    return getEvalValueForSide(evaluation, playState.playerColor);
 }
 
 function formatEvalForPlayer(evaluation) {
@@ -1776,6 +1780,7 @@ const MOVE_CLASSES = [
     { key: "brilliant", label: "\u00a1Brillante!", icon: "\u2b50", maxLoss: -30 },  // gained >30 cp unexpectedly
     { key: "great", label: "\u00a1Gran jugada!", icon: "\ud83d\udd25", maxLoss: 0 },
     { key: "best", label: "Mejor jugada", icon: "\u2705", maxLoss: 10 },
+    { key: "excellent", label: "Excelente", icon: "\ud83d\udfe2", maxLoss: 18 },
     { key: "good", label: "Buena jugada", icon: "\ud83d\udc4d", maxLoss: 30 },
     { key: "book", label: "Jugada te\u00f3rica", icon: "\ud83d\udcda", maxLoss: 0 }, // special
     { key: "inaccuracy", label: "Imprecisi\u00f3n", icon: "\u26a0\ufe0f", maxLoss: 100 },
@@ -1783,27 +1788,63 @@ const MOVE_CLASSES = [
     { key: "blunder", label: "\u00a1Desastre!", icon: "\ud83d\udca5", maxLoss: Infinity }
 ];
 
-function getDynamicCpThresholds(previousEvalCp) {
-    const prev = Math.abs(Number(previousEvalCp || 0));
-    return {
-        best: Math.max(8, (0.0001 * prev * prev) + (0.0236 * prev) - 3.7143),
-        good: Math.max(30, (0.0002 * prev * prev) + (0.2643 * prev) + 60.5455),
-        inaccuracy: Math.max(100, (0.0002 * prev * prev) + (0.3624 * prev) + 108.0909),
-        mistake: Math.max(240, (0.0003 * prev * prev) + (0.4027 * prev) + 225.8182)
-    };
+function cpToExpectedPointsForWhite(cp) {
+    const safe = clamp(Number(cp || 0), -2000, 2000);
+    return 1 / (1 + Math.exp(-safe / 220));
 }
 
-function classifyMove(cpLoss, isBookMove, previousEvalCp = 0) {
-    if (isBookMove) return MOVE_CLASSES.find(c => c.key === "book");
-    if (cpLoss <= -35) return MOVE_CLASSES.find(c => c.key === "brilliant");
-    if (cpLoss <= -10) return MOVE_CLASSES.find(c => c.key === "great");
+function getExpectedPointsForMover(cp, moverIsWhite) {
+    const whitePoints = cpToExpectedPointsForWhite(cp);
+    return moverIsWhite ? whitePoints : (1 - whitePoints);
+}
 
-    const thresholds = getDynamicCpThresholds(previousEvalCp);
-    if (cpLoss <= thresholds.best) return MOVE_CLASSES.find(c => c.key === "best");
-    if (cpLoss <= thresholds.good) return MOVE_CLASSES.find(c => c.key === "good");
-    if (cpLoss <= thresholds.inaccuracy) return MOVE_CLASSES.find(c => c.key === "inaccuracy");
-    if (cpLoss <= thresholds.mistake) return MOVE_CLASSES.find(c => c.key === "mistake");
+function classifyMove(cpLoss, isBookMove, previousEvalCp = 0, currentEvalCp = 0, moverIsWhite = true) {
+    if (isBookMove) return MOVE_CLASSES.find(c => c.key === "book");
+    const beforePoints = getExpectedPointsForMover(previousEvalCp, moverIsWhite);
+    const afterPoints = getExpectedPointsForMover(currentEvalCp, moverIsWhite);
+    const expectedLoss = Math.max(0, beforePoints - afterPoints);
+    const expectedGain = Math.max(0, afterPoints - beforePoints);
+
+    // Chess.com style: classify by expected points lost/won.
+    if (expectedGain >= 0.18 && cpLoss <= -120) return MOVE_CLASSES.find(c => c.key === "brilliant");
+    if (expectedGain >= 0.08 && cpLoss <= -45) return MOVE_CLASSES.find(c => c.key === "great");
+    if (expectedLoss <= 0.004) return MOVE_CLASSES.find(c => c.key === "best");
+    if (expectedLoss <= 0.012) return MOVE_CLASSES.find(c => c.key === "excellent");
+    if (expectedLoss < 0.02) return MOVE_CLASSES.find(c => c.key === "good");
+    if (expectedLoss < 0.05) return MOVE_CLASSES.find(c => c.key === "inaccuracy");
+    if (expectedLoss < 0.10) return MOVE_CLASSES.find(c => c.key === "mistake");
     return MOVE_CLASSES.find(c => c.key === "blunder");
+}
+
+function normalizeCpLossNoise(cpLoss, cpBefore, cpAfter, historyPly, hasOpeningContext) {
+    const raw = Number(cpLoss);
+    const before = Number(cpBefore);
+    const after = Number(cpAfter);
+    if (!Number.isFinite(raw) || !Number.isFinite(before) || !Number.isFinite(after)) {
+        return raw;
+    }
+
+    const delta = Math.abs(after - before);
+    const inOpeningWindow = Number.isFinite(historyPly) && historyPly <= 20;
+    const neutralBand = Math.abs(before) <= 140 && Math.abs(after) <= 140;
+
+    // Very small swings are mostly engine noise at fast depth.
+    if (delta <= 24) {
+        return 0;
+    }
+
+    // Opening positions fluctuate naturally; soften penalties for low-impact choices.
+    if (inOpeningWindow && neutralBand && delta <= 70) {
+        if (raw > 0) return Math.min(raw, 24);
+        return Math.max(raw, -24);
+    }
+
+    // If the move is still in an identified opening family, avoid over-penalizing.
+    if (hasOpeningContext && raw > 0 && delta <= 90) {
+        return Math.min(raw, 30);
+    }
+
+    return raw;
 }
 
 function evalToCp(evaluation) {
@@ -1977,6 +2018,8 @@ function buildCoachComment(classification, move, evalAfter, openingName) {
             return `${classification.icon} \u25b8 ${descStr} (${sanStr}) \u2014 \u00a1Gran jugada! Mejoraste tu posici\u00f3n. \u2022 Eval: ${evalText}`;
         case "best":
             return `${classification.icon} \u2713 ${descStr} (${sanStr}) \u2014 La mejor jugada aqu\u00ed. \u2022 Eval: ${evalText}`;
+        case "excellent":
+            return `${classification.icon} ${descStr} (${sanStr}) \u2014 Excelente jugada, muy precisa. \u2022 Eval: ${evalText}`;
         case "good":
             return `\ud83d\udc4d ${descStr} (${sanStr}) \u2014 Buena jugada. \u2022 Eval: ${evalText}`;
         case "book":
@@ -2271,7 +2314,7 @@ function detectOpeningByManualHistory(history) {
     return null;
 }
 
-function detectOpeningByBestPrefix(history) {
+function getBestOpeningPrefixMatch(history) {
     const normalizedHistory = Array.isArray(history)
         ? history.map((move) => normalizeSanForBookMove(move))
         : [];
@@ -2292,7 +2335,16 @@ function detectOpeningByBestPrefix(history) {
         }
     }
 
-    return bestLen >= 2 ? bestName : null;
+    if (!bestName) {
+        return null;
+    }
+
+    return { name: bestName, len: bestLen };
+}
+
+function detectOpeningByBestPrefix(history) {
+    const best = getBestOpeningPrefixMatch(history);
+    return best && best.len >= 2 ? best.name : null;
 }
 
 function detectOpeningByFen(fen) {
@@ -2332,9 +2384,19 @@ function historyToDisplayLine(history, maxPly = 20) {
 }
 
 function isLikelyBookMove(history, _san, fenAfter) {
-    const openingName = detectOpening(history, fenAfter);
-    const withinOpeningWindow = Array.isArray(history) && history.length <= 24;
-    const isBook = withinOpeningWindow && Boolean(openingName);
+    const plyCount = Array.isArray(history) ? history.length : 0;
+    const openingFromFen = detectOpeningByFen(fenAfter);
+    const openingFromManual = detectOpeningByManualHistory(history);
+    const prefixMatch = getBestOpeningPrefixMatch(history);
+    const openingName = openingFromFen
+        || openingFromManual
+        || (prefixMatch && prefixMatch.len >= 2 ? prefixMatch.name : null);
+    const matchedPrefixLen = prefixMatch ? prefixMatch.len : 0;
+
+    const withinOpeningWindow = plyCount > 0 && plyCount <= 20;
+    const reliableManualMatch = matchedPrefixLen >= 6;
+    const reliableFenMatch = Boolean(openingFromFen) && plyCount <= 24;
+    const isBook = Boolean(openingName) && withinOpeningWindow && (reliableManualMatch || reliableFenMatch);
 
     return {
         isBook,
@@ -2380,14 +2442,75 @@ function resolveOpeningByName(openingName) {
     };
 }
 
+function getFenMaterialProfile(fen) {
+    const placement = normalizeFenPlacement(fen);
+    if (!placement) {
+        return { pawns: 0, majorsMinors: 0 };
+    }
+
+    let pawns = 0;
+    let majorsMinors = 0;
+    for (const ch of placement) {
+        if (!/[a-z]/i.test(ch)) continue;
+        const piece = ch.toLowerCase();
+        if (piece === "p") {
+            pawns += 1;
+        } else if (piece !== "k") {
+            majorsMinors += 1;
+        }
+    }
+
+    return { pawns, majorsMinors };
+}
+
+function getAdaptiveCoachEvalProfile(fen, intent = "classify", multipv = 1) {
+    const history = playState && playState.game && typeof playState.game.history === "function"
+        ? playState.game.history()
+        : [];
+    const historyPly = Array.isArray(history) ? history.length : 0;
+    const material = getFenMaterialProfile(fen);
+    const opening = historyPly <= 16;
+    const endgame = historyPly >= 56 || material.majorsMinors <= 6 || material.pawns <= 8;
+
+    let depth = 14;
+    let movetime = 1100;
+
+    if (opening) {
+        depth = 14;
+        movetime = 1050;
+    } else if (endgame) {
+        depth = 16;
+        movetime = 1450;
+    } else {
+        depth = 15;
+        movetime = 1250;
+    }
+
+    if (intent === "hint") {
+        depth += 1;
+        movetime += 220;
+    } else if (intent === "lines") {
+        movetime += 120;
+    } else if (intent === "classify") {
+        movetime += 160;
+    }
+
+    return {
+        depth: clamp(depth, 10, 20),
+        movetime: clamp(movetime, 700, 2400),
+        multipv: clamp(Number(multipv || 1), 1, 6)
+    };
+}
+
 /** Evaluate position BEFORE player move to get baseline eval */
 async function getPositionEval(fen, localSession) {
     try {
+        const profile = getAdaptiveCoachEvalProfile(fen, "classify", 1);
         const result = await evaluateWithStockfish({
             fen,
-            depth: 14,
-            multipv: 1,
-            movetime: 1200
+            depth: profile.depth,
+            multipv: profile.multipv,
+            movetime: profile.movetime
         });
         if (localSession !== playState.sessionId) return null;
         return result.lines[0] ? result.lines[0].evaluation : null;
@@ -2434,14 +2557,24 @@ async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveInd
         const moverIsWhite = move.color === "w";
 
         // Positive cpLoss means the move was worse
-        const cpLoss = moverIsWhite ? (cpBefore - cpAfter) : (cpAfter - cpBefore);
+        const cpLossRaw = moverIsWhite ? (cpBefore - cpAfter) : (cpAfter - cpBefore);
 
         // Check book move with a snapshot of move history at evaluation time
         const bookResult = isLikelyBookMove(historyAtMove, move.san, fenAfter);
-        const bookMove = bookResult.isBook && cpLoss < 50;
+        const cpLoss = normalizeCpLossNoise(
+            cpLossRaw,
+            cpBefore,
+            cpAfter,
+            Array.isArray(historyAtMove) ? historyAtMove.length : 0,
+            Boolean(bookResult.name)
+        );
+        const cpAfterAdjusted = moverIsWhite
+            ? (cpBefore - cpLoss)
+            : (cpBefore + cpLoss);
+        const bookMove = bookResult.isBook && cpLoss < 90;
 
         // Classify and save to the exact move index
-        const cls = classifyMove(cpLoss, bookMove, cpBefore);
+        const cls = classifyMove(cpLoss, bookMove, cpBefore, cpAfterAdjusted, moverIsWhite);
         playState.moveClassifications[moveIndex] = cls.key;
 
         if (cls.key === "book" && bookResult.name) {
@@ -3017,12 +3150,12 @@ async function updateComputerLines(fen, localSession) {
     }
 
     try {
-        const depth = clamp(parseInt(el.coachDepth.value, 10), 8, 18);
+        const profile = getAdaptiveCoachEvalProfile(fen, "lines", 3);
         const result = await evaluateWithStockfish({
             fen,
-            depth,
-            multipv: 3,
-            movetime: 1000
+            depth: profile.depth,
+            multipv: profile.multipv,
+            movetime: profile.movetime
         });
         if (localSession !== playState.sessionId) return;
 
@@ -3041,6 +3174,80 @@ function currentBotElo() {
     }
 
     return clamp(parseInt(el.botPreset.value, 10), 400, 2800);
+}
+
+function getBotDecisionProfile(elo) {
+    const bounded = clamp(Number(elo || 1200), 400, 2800);
+    const strength = (bounded - 400) / 2400;
+    return {
+        multipv: strength < 0.2 ? 6 : strength < 0.35 ? 5 : strength < 0.6 ? 4 : 3,
+        depth: clamp(Math.round(6 + bounded / 280), 6, 14),
+        movetime: clamp(Math.round(170 + bounded / 3.6), 220, 1700),
+        maxCandidates: strength < 0.3 ? 5 : strength < 0.55 ? 4 : 3,
+        temperatureCp: clamp(Math.round(260 - strength * 205), 55, 260),
+        rankPenalty: 0.28 + (strength * 0.55),
+        randomMoveChance: clamp(0.26 - strength * 0.23, 0.02, 0.26)
+    };
+}
+
+function chooseWeightedIndex(weights) {
+    const safeWeights = Array.isArray(weights) ? weights : [];
+    const total = safeWeights.reduce((sum, value) => sum + (Number(value) > 0 ? Number(value) : 0), 0);
+    if (total <= 0) {
+        return safeWeights.length > 0 ? 0 : -1;
+    }
+
+    let target = Math.random() * total;
+    for (let i = 0; i < safeWeights.length; i += 1) {
+        const weight = Number(safeWeights[i]) > 0 ? Number(safeWeights[i]) : 0;
+        target -= weight;
+        if (target <= 0) {
+            return i;
+        }
+    }
+
+    return safeWeights.length - 1;
+}
+
+function chooseBotMoveFromLines(lines, botSide, profile) {
+    const base = Array.isArray(lines)
+        ? lines.filter((line) => line && typeof line.moveUCI === "string" && line.moveUCI.length >= 4)
+        : [];
+    if (base.length === 0) {
+        return null;
+    }
+
+    const ranked = base
+        .map((line) => ({
+            line,
+            score: getEvalValueForSide(line.evaluation, botSide)
+        }))
+        .sort((a, b) => b.score - a.score);
+
+    const shortlist = ranked.slice(0, clamp(Number(profile && profile.maxCandidates), 2, 6));
+    if (shortlist.length === 0) {
+        return ranked[0] ? ranked[0].line : null;
+    }
+
+    if (Math.random() < Number(profile && profile.randomMoveChance || 0)) {
+        return shortlist[Math.floor(Math.random() * shortlist.length)].line;
+    }
+
+    const bestScore = shortlist[0].score;
+    const temperature = clamp(Number(profile && profile.temperatureCp || 120), 30, 300);
+    const rankPenalty = clamp(Number(profile && profile.rankPenalty || 0.4), 0.1, 1.2);
+    const weights = shortlist.map((entry, index) => {
+        const loss = Math.max(0, bestScore - entry.score);
+        const evalWeight = Math.exp(-loss / temperature);
+        const orderWeight = 1 / (1 + (index * rankPenalty));
+        return evalWeight * orderWeight;
+    });
+
+    const pick = chooseWeightedIndex(weights);
+    if (pick < 0 || !shortlist[pick]) {
+        return shortlist[0].line;
+    }
+    return shortlist[pick].line;
 }
 
 function clearPremove(showNotice = false) {
@@ -3147,15 +3354,14 @@ async function playBotMove() {
     renderPlayStatus();
 
     try {
-        const depth = clamp(Math.round(playState.botElo / 180), 8, 16);
-        const moveTime = clamp(Math.round(260 + playState.botElo / 2), 320, 2200);
+        const botProfile = getBotDecisionProfile(playState.botElo);
         const fenBeforeMove = playState.game.fen();
 
         const result = await evaluateWithStockfish({
             fen: fenBeforeMove,
-            depth,
-            multipv: 1,
-            movetime: moveTime,
+            depth: botProfile.depth,
+            multipv: botProfile.multipv,
+            movetime: botProfile.movetime,
             elo: playState.botElo
         });
 
@@ -3163,7 +3369,11 @@ async function playBotMove() {
             return;
         }
 
-        const parsed = parseUciMove(result.bestMove);
+        const selectedLine = chooseBotMoveFromLines(result.lines || [], playState.botColor, botProfile);
+        const selectedMoveUci = selectedLine && selectedLine.moveUCI
+            ? selectedLine.moveUCI
+            : result.bestMove;
+        const parsed = parseUciMove(selectedMoveUci);
         if (!parsed) {
             throw new Error("El motor devolvio una jugada invalida.");
         }
@@ -3254,13 +3464,13 @@ async function requestCoachHint(isAuto = false) {
     }
 
     try {
-        const depth = clamp(parseInt(el.coachDepth.value, 10), 8, 20);
+        const profile = getAdaptiveCoachEvalProfile(fen, "hint", 3);
 
         const result = await evaluateWithStockfish({
             fen,
-            depth,
-            multipv: 3,
-            movetime: 1200
+            depth: profile.depth,
+            multipv: profile.multipv,
+            movetime: profile.movetime
         });
 
         if (localSession !== playState.sessionId) {
@@ -6571,9 +6781,11 @@ function bindEvents() {
         }
     });
 
-    el.coachDepth.addEventListener("input", () => {
-        el.coachDepthValue.textContent = el.coachDepth.value;
-    });
+    if (el.coachDepth && el.coachDepthValue) {
+        el.coachDepth.addEventListener("input", () => {
+            el.coachDepthValue.textContent = el.coachDepth.value;
+        });
+    }
 
     /* Sidebar tabs (Coach / AI) */
     document.querySelectorAll("[data-sidebar-tab]").forEach(tab => {
@@ -7826,8 +8038,12 @@ async function init() {
     renderAiActionAudit();
     bindSessionPersistence();
 
-    el.coachDepthValue.textContent = el.coachDepth.value;
-    el.analysisDepthValue.textContent = el.analysisDepth.value;
+    if (el.coachDepth && el.coachDepthValue) {
+        el.coachDepthValue.textContent = el.coachDepth.value;
+    }
+    if (el.analysisDepth && el.analysisDepthValue) {
+        el.analysisDepthValue.textContent = el.analysisDepth.value;
+    }
 
     renderPlayBoard();
     resetAnalysisSummary();
