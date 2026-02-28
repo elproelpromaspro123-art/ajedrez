@@ -1522,7 +1522,8 @@ const perfState = {
 const aiRuntimeState = {
     inFlight: false,
     lastSentAt: 0,
-    minIntervalMs: 10000
+    minIntervalMs: 10000,
+    minResponseDelayMs: 700
 };
 
 const sessionRuntimeState = {
@@ -3094,6 +3095,14 @@ async function confirmSuggestedMove() {
     const pending = playState.pendingConfirmMove;
     if (!pending) return;
 
+    const playerTurn = !playState.thinking && sideFromTurn(playState.game.turn()) === playState.playerColor;
+    if (!playerTurn) {
+        playErrorSound();
+        setCoachMessage(coachNotice("info", "Espera tu turno para jugar esa sugerencia."));
+        cancelMoveConfirmation();
+        return;
+    }
+
     playState.previewMove = null;
     playState.pendingConfirmMove = null;
     if (el.moveConfirmBar) {
@@ -3563,6 +3572,7 @@ async function onPlaySquareClick(square) {
     if (!playerTurn) {
         if (!settings.premoveEnabled) {
             playErrorSound();
+            setCoachMessage(coachNotice("info", "No es tu turno. Espera la jugada del rival o activa pre-move."));
             return;
         }
 
@@ -3757,6 +3767,7 @@ function goToPlaySetup(message = coachNotice("setup", "Configura una nueva parti
     if (el.playBoardCard) el.playBoardCard.style.display = "none";
     if (el.playMoveList) el.playMoveList.innerHTML = "";
     if (el.coachHistoryContainer) el.coachHistoryContainer.innerHTML = "";
+    clearAiChatHistory();
 
     if (el.endgameModal) {
         el.endgameModal.style.opacity = "0";
@@ -3839,6 +3850,7 @@ function startNewGame() {
     if (el.playPanelGrid) el.playPanelGrid.classList.remove("setup-mode");
     if (el.playBoardCard) el.playBoardCard.style.display = "";
     if (el.coachHistoryContainer) el.coachHistoryContainer.innerHTML = "";
+    clearAiChatHistory();
 
     if (el.playEvalBar) {
         el.playEvalBar.style.display = getPlaySettings().showEvalBar ? "" : "none";
@@ -7383,6 +7395,37 @@ const aiChatMessages = document.querySelector("#ai-chat-messages");
 const aiChatInput = document.querySelector("#ai-chat-input");
 const aiChatSend = document.querySelector("#ai-chat-send");
 
+function getDefaultAiGreeting() {
+    const base = String(t("ai.greeting") || "").trim();
+    const greeting = base && base !== "ai.greeting"
+        ? base
+        : "Hola, soy tu asistente de ajedrez con IA.";
+    return `${greeting} Preguntame lo que quieras.`;
+}
+
+function clearAiChatHistory(options = {}) {
+    const { includeGreeting = true } = options;
+    if (!aiChatMessages) {
+        return;
+    }
+
+    aiChatMessages.innerHTML = "";
+    if (includeGreeting) {
+        addAiMessage(getDefaultAiGreeting(), "ai-bot");
+    }
+}
+
+function isGreetingQuestion(question) {
+    const normalized = String(question || "")
+        .trim()
+        .toLowerCase()
+        .replace(/[!?.,;:]/g, " ");
+    if (!normalized) {
+        return false;
+    }
+    return /^(hola|buenas|buenos dias|buen dia|buenas tardes|buenas noches|hey|que tal|hi|hello)\s*$/.test(normalized);
+}
+
 function addAiMessage(text, type) {
     if (chatUiModule && chatUiModule.appendMessage) {
         const external = chatUiModule.appendMessage(aiChatMessages, text, type);
@@ -7694,13 +7737,25 @@ function makeMovesClickable(msgEl) {
         const span = document.createElement("span");
         span.className = "clickable-move";
         span.textContent = san;
-        span.title = `Clic para previsualizar: ${sanToSpanish(san)}`;
+        span.title = `Clic para jugar: ${sanToSpanish(san)}`;
         span.addEventListener("click", () => {
             try {
+                if (playState.thinking || sideFromTurn(playState.game.turn()) !== playState.playerColor) {
+                    addAiMessage("Ahora no puedes mover esa jugada. Espera tu turno.", "ai-bot");
+                    return;
+                }
                 const game = new Chess(playState.game.fen());
                 const move = game.move(san);
                 if (move) {
                     showMoveConfirmation(move.from, move.to, move.san, move.promotion);
+                    const approved = window.confirm(`Jugar ${sanToSpanish(move.san)} (${move.san}) ahora?`);
+                    if (approved) {
+                        confirmSuggestedMove();
+                    } else {
+                        cancelMoveConfirmation();
+                    }
+                } else {
+                    addAiMessage(`No puedo jugar ${san} en esta posicion actual.`, "ai-bot");
                 }
             } catch {}
         });
@@ -7761,6 +7816,14 @@ function collectRecentAiChatContext(maxEntries = 6) {
 }
 
 async function generateAiResponse(question, recentContext = []) {
+    const trimmedQuestion = String(question || "").trim();
+    if (isGreetingQuestion(trimmedQuestion)) {
+        return {
+            text: "Hola. Encantado de ayudarte. Cuando quieras, dime la jugada o posicion que te preocupa y la revisamos paso a paso.",
+            actions: []
+        };
+    }
+
     const game = playState.game;
     const fen = game.fen();
     const history = game.history();
@@ -7785,31 +7848,23 @@ async function generateAiResponse(question, recentContext = []) {
 
     const evalText = engineEval ? formatEval(engineEval) : "desconocida";
 
-    const systemPrompt = `Eres un entrenador de ajedrez claro, ordenado y didactico para Ajedrez Lab.
+    const systemPrompt = `Eres un entrenador de ajedrez humano, calmado y amable para Ajedrez Lab.
 
-OBJETIVO:
-- Responder de forma directa pero explicativa.
-- Responder SIEMPRE primero la pregunta exacta del usuario en una frase breve.
-- Explicar SIEMPRE: que jugar, por que funciona y cual es el riesgo.
+TONO:
+- Cercano, natural y suave. Evita sonar mandon o agresivo.
+- Comienza con una frase breve de empatia o saludo cuando tenga sentido.
+- No ignores la pregunta. Respondela directo primero.
 
-FORMATO OBLIGATORIO:
-1) Plan inmediato: una frase concreta.
-2) Por que funciona: 1-2 frases (tactica/estrategia).
-3) Riesgo principal: una frase.
-4) Linea sugerida: 2-4 jugadas en SAN.
-5) Apertura/tema: nombre teorico exacto si existe; si no, "Sin nombre teorico claro".
+ESTILO:
+- Respuesta corta y ligera (3-6 lineas), clara y util.
+- Si recomiendas jugadas, explica: idea, por que funciona y riesgo.
+- Si no hay datos suficientes, dilo con honestidad y da una alternativa prudente.
 
-REGLAS:
-1. Responde en espanol claro.
-2. Usa nombre de pieza + jugada SAN cuando recomiendes.
-3. Si preguntan por apertura o ataque, da 2-3 opciones con nombre teorico y en que contexto se usan.
-4. Texto maximo: 11 lineas.
-5. Si no hay suficiente informacion, dilo y da plan prudente.
-6. Devuelve SOLO JSON valido (sin markdown externo).
-7. Formato JSON: {"text":"...", "actions":[{"type":"hint|undo|new_game|analyze|study|flip|open_study|load_line","label":"...", "argument":"..."}]}
-8. Usa 0-3 acciones maximo.
-9. Si recomiendas estudio de apertura, agrega accion "study" con el nombre en "argument".
-10. No ignores la pregunta del usuario. Si pregunta si una jugada fue blunder, dilo explicitamente.
+SALIDA:
+- Devuelve SOLO JSON valido (sin markdown externo).
+- Formato JSON: {"text":"...", "actions":[{"type":"hint|undo|new_game|analyze|study|flip|open_study|load_line","label":"...", "argument":"..."}]}
+- Usa 0-3 acciones maximo.
+- Si recomiendas estudiar apertura, agrega accion "study" con el nombre en "argument".
 
 Contexto:
 - Fase: ${phase}
@@ -7825,7 +7880,7 @@ Contexto:
         : "Conversacion reciente: (sin historial previo)";
     const aiQuestion = [
         contextBlock,
-        `Pregunta actual del usuario: ${question}`
+        `Pregunta actual del usuario: ${trimmedQuestion}`
     ].join("\n\n");
 
     const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
@@ -7928,9 +7983,14 @@ async function handleAiChat() {
     const thinkingMsg = addAiMessage("Pensando...", "ai-bot ai-thinking");
     aiRuntimeState.inFlight = true;
     aiRuntimeState.lastSentAt = now;
+    const requestStartedAt = Date.now();
 
     try {
         const aiResponse = await generateAiResponse(question, recentContext);
+        const remainingDelay = aiRuntimeState.minResponseDelayMs - (Date.now() - requestStartedAt);
+        if (remainingDelay > 0) {
+            await new Promise((resolve) => setTimeout(resolve, remainingDelay));
+        }
         if (aiResponse.rateLimited) {
             thinkingMsg.remove();
             addAiCountdownMessage(aiResponse.retryAfterSeconds);
@@ -8067,24 +8127,8 @@ function getVisibleStudySectionId() {
 }
 
 function serializeAiChatForSession() {
-    if (!aiChatMessages) {
-        return [];
-    }
-
-    return Array.from(aiChatMessages.children)
-        .map((node) => {
-            const text = node.textContent ? node.textContent.trim() : "";
-            if (!text) {
-                return null;
-            }
-            const role = node.classList.contains("ai-user") ? "user" : "bot";
-            return {
-                role,
-                text: text.slice(0, 1200)
-            };
-        })
-        .filter(Boolean)
-        .slice(-24);
+    // User requested that AI chat must not persist across sessions/games.
+    return [];
 }
 
 function serializeCoachHistoryForSession() {
@@ -8099,18 +8143,8 @@ function serializeCoachHistoryForSession() {
 }
 
 function restoreAiChatFromSession(history) {
-    if (!aiChatMessages || !Array.isArray(history) || history.length === 0) {
-        return;
-    }
-
-    aiChatMessages.innerHTML = "";
-    history.forEach((entry) => {
-        if (!entry) return;
-        const role = String(entry.role || "bot");
-        const text = String(entry.text || "").trim();
-        if (!text) return;
-        addAiMessage(text, role === "user" ? "ai-user" : "ai-bot");
-    });
+    void history;
+    clearAiChatHistory();
 }
 
 function buildSessionSnapshot() {
@@ -8294,9 +8328,7 @@ function restoreSessionAfterInit() {
 
     restorePlayFromSnapshot(snapshot);
 
-    if (snapshot.ai && Array.isArray(snapshot.ai.chatHistory)) {
-        restoreAiChatFromSession(snapshot.ai.chatHistory);
-    }
+    restoreAiChatFromSession(snapshot.ai && snapshot.ai.chatHistory);
 
     if (snapshot.coach && Array.isArray(snapshot.coach.history) && el.coachHistoryContainer) {
         el.coachHistoryContainer.innerHTML = "";

@@ -226,7 +226,7 @@ test("flujo critico: jugar -> analizar -> estudio -> IA -> guardado", async ({ p
     expect(progressActivities).toBeGreaterThan(0);
 });
 
-test("recupera sesion: tablero, historial, filtros ECO y chat IA", async ({ page }) => {
+test("recupera sesion: tablero y filtros ECO; chat IA se reinicia", async ({ page }) => {
     await page.goto("/");
     await expect(page.locator("body")).not.toHaveClass(/auth-locked/);
     await disableComputerBeforeGame(page);
@@ -262,5 +262,6 @@ test("recupera sesion: tablero, historial, filtros ECO y chat IA", async ({ page
 
     await page.click('[data-tab-target="play-section"]');
     await page.click('[data-sidebar-tab="ai-tab"]');
-    await expect(page.locator("#ai-chat-messages")).toContainText("Guardame esta sesion");
+    await expect(page.locator("#ai-chat-messages")).toContainText("Hola, soy tu asistente de ajedrez con IA.");
+    await expect(page.locator("#ai-chat-messages")).not.toContainText("Guardame esta sesion");
 });
