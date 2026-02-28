@@ -270,9 +270,7 @@ const el = {
     studyDiagrams: Array.from(document.querySelectorAll(".study-diagram")),
     ecoFilterColor: document.querySelector("#eco-filter-color"),
     ecoFilterPopularity: document.querySelector("#eco-filter-popularity"),
-    ecoFilterPopularityValue: document.querySelector("#eco-filter-popularity-value"),
     ecoFilterSuccess: document.querySelector("#eco-filter-success"),
-    ecoFilterSuccessValue: document.querySelector("#eco-filter-success-value"),
     ecoSearch: document.querySelector("#eco-search"),
     ecoTree: document.querySelector("#eco-tree"),
     ecoDetailTitle: document.querySelector("#eco-detail-title"),
@@ -6332,6 +6330,82 @@ function computeExplorerRowMetrics(row, colorFilter, rootGames) {
     return { popularity, success };
 }
 
+function classifyExplorerFrequency(popularity) {
+    const value = Number(popularity || 0);
+    if (value >= 14) return "high";
+    if (value >= 6) return "medium";
+    return "low";
+}
+
+function classifyExplorerResult(success) {
+    const value = Number(success || 0);
+    if (value >= 56) return "favorable";
+    if (value >= 45) return "balanced";
+    return "risky";
+}
+
+function formatExplorerFrequencyLabel(tier) {
+    switch (String(tier || "all").toLowerCase()) {
+    case "high":
+        return "Muy jugada";
+    case "medium":
+        return "Intermedia";
+    case "low":
+        return "Poco jugada";
+    default:
+        return "Sin clasificar";
+    }
+}
+
+function formatExplorerResultLabel(tier) {
+    switch (String(tier || "all").toLowerCase()) {
+    case "favorable":
+        return "Favorable";
+    case "balanced":
+        return "Equilibrada";
+    case "risky":
+        return "Riesgosa";
+    default:
+        return "Sin clasificar";
+    }
+}
+
+function normalizeExplorerFrequencyFilter(value) {
+    const normalized = String(value || "all").trim().toLowerCase();
+    if (normalized === "high" || normalized === "medium" || normalized === "low") {
+        return normalized;
+    }
+    return "all";
+}
+
+function normalizeExplorerResultFilter(value) {
+    const normalized = String(value || "all").trim().toLowerCase();
+    if (normalized === "favorable" || normalized === "balanced" || normalized === "risky") {
+        return normalized;
+    }
+    return "all";
+}
+
+function mapLegacyPopularityToTier(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return "all";
+    }
+    if (numeric >= 14) return "high";
+    if (numeric >= 6) return "medium";
+    return "low";
+}
+
+function mapLegacySuccessToTier(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+        return "all";
+    }
+    if (numeric >= 56) return "favorable";
+    if (numeric >= 45) return "balanced";
+    return "risky";
+}
+
 function buildExplorerRowMap() {
     return new Map(openingExplorerState.rows.map((row) => [row.id, row]));
 }
@@ -6466,13 +6540,15 @@ async function applyExplorerFilters() {
         return {
             ...row,
             popularity: metrics.popularity,
-            success: metrics.success
+            success: metrics.success,
+            frequencyTier: classifyExplorerFrequency(metrics.popularity),
+            resultTier: classifyExplorerResult(metrics.success)
         };
     });
 
     const filters = {
-        minPopularity: el.ecoFilterPopularity ? Number(el.ecoFilterPopularity.value || 0) : 0,
-        minSuccess: el.ecoFilterSuccess ? Number(el.ecoFilterSuccess.value || 0) : 0,
+        frequencyTier: normalizeExplorerFrequencyFilter(el.ecoFilterPopularity ? el.ecoFilterPopularity.value : "all"),
+        resultTier: normalizeExplorerResultFilter(el.ecoFilterSuccess ? el.ecoFilterSuccess.value : "all"),
         query: el.ecoSearch ? el.ecoSearch.value : ""
     };
 
@@ -6529,9 +6605,9 @@ function renderExplorerDetail(node) {
     }
     if (el.ecoDetailMeta) {
         const total = Number(node.games || 0);
-        const success = Number(node.success || 0).toFixed(1);
-        const pop = Number(node.popularity || 0).toFixed(1);
-        el.ecoDetailMeta.textContent = `Linea: ${node.line} | Popularidad ${pop}% | Exito ${success}% | Muestra ${total}`;
+        const frequencyLabel = formatExplorerFrequencyLabel(node.frequencyTier);
+        const resultLabel = formatExplorerResultLabel(node.resultTier);
+        el.ecoDetailMeta.textContent = `Linea: ${node.line} | Frecuencia ${frequencyLabel} | Resultado ${resultLabel} | Muestra ${total}`;
     }
     if (el.ecoDetailPlan) {
         const plans = studyModule && studyModule.buildOpeningPlan
@@ -6566,11 +6642,11 @@ function renderExplorerTree() {
     const rows = openingExplorerState.visibleRows.slice(0, 220);
     if (rows.length === 0) {
         const hasQuery = Boolean(el.ecoSearch && String(el.ecoSearch.value || "").trim());
-        const minPopularity = el.ecoFilterPopularity ? Number(el.ecoFilterPopularity.value || 0) : 0;
-        const minSuccess = el.ecoFilterSuccess ? Number(el.ecoFilterSuccess.value || 0) : 0;
+        const frequency = formatExplorerFrequencyLabel(normalizeExplorerFrequencyFilter(el.ecoFilterPopularity ? el.ecoFilterPopularity.value : "all"));
+        const result = formatExplorerResultLabel(normalizeExplorerResultFilter(el.ecoFilterSuccess ? el.ecoFilterSuccess.value : "all"));
         const emptyMessage = hasQuery
             ? "No hay coincidencias con esa busqueda. Prueba con otro termino o codigo ECO."
-            : `Sin lineas con los filtros actuales (Popularidad ${minPopularity}% / Exito ${minSuccess}%).`;
+            : `Sin lineas para los filtros actuales (Frecuencia ${frequency} / Resultado ${result}).`;
         const emptyNote = document.createElement("p");
         emptyNote.className = "eco-empty-note";
         emptyNote.textContent = emptyMessage;
@@ -6592,15 +6668,15 @@ function renderExplorerTree() {
             item.classList.add("is-focus");
         }
 
-        const success = Number(row.success || 0).toFixed(1);
-        const pop = Number(row.popularity || 0).toFixed(1);
+        const frequencyLabel = formatExplorerFrequencyLabel(row.frequencyTier);
+        const resultLabel = formatExplorerResultLabel(row.resultTier);
         const main = document.createElement("span");
         main.className = "eco-row-main";
         main.textContent = `${row.eco} - ${row.san || "..."} \u2192 ${row.name}`;
 
         const meta = document.createElement("span");
         meta.className = "eco-row-meta";
-        meta.textContent = `P ${pop}% | E ${success}%`;
+        meta.textContent = `${frequencyLabel} | ${resultLabel}`;
 
         item.appendChild(main);
         item.appendChild(meta);
@@ -6611,7 +6687,7 @@ function renderExplorerTree() {
             item.setAttribute("aria-expanded", openingExplorerState.collapsedIds.has(row.id) ? "false" : "true");
         }
         item.tabIndex = openingExplorerState.focusedIndex === index ? 0 : -1;
-        item.setAttribute("aria-label", `${row.name}, popularidad ${pop} por ciento, exito ${success} por ciento`);
+        item.setAttribute("aria-label", `${row.name}, frecuencia ${frequencyLabel}, resultado ${resultLabel}`);
 
         item.addEventListener("click", async () => {
             openingExplorerState.focusedIndex = index;
@@ -6677,20 +6753,7 @@ async function initOpeningExplorer() {
         openingExplorerState.collapsedIds = new Set();
     }
 
-    if (el.ecoFilterPopularityValue && el.ecoFilterPopularity) {
-        el.ecoFilterPopularityValue.textContent = `${el.ecoFilterPopularity.value}%`;
-    }
-    if (el.ecoFilterSuccessValue && el.ecoFilterSuccess) {
-        el.ecoFilterSuccessValue.textContent = `${el.ecoFilterSuccess.value}%`;
-    }
-
     const onFilterChange = async () => {
-        if (el.ecoFilterPopularityValue && el.ecoFilterPopularity) {
-            el.ecoFilterPopularityValue.textContent = `${el.ecoFilterPopularity.value}%`;
-        }
-        if (el.ecoFilterSuccessValue && el.ecoFilterSuccess) {
-            el.ecoFilterSuccessValue.textContent = `${el.ecoFilterSuccess.value}%`;
-        }
         await applyExplorerFilters();
         scheduleSessionSnapshotSave();
     };
@@ -8167,8 +8230,8 @@ function buildSessionSnapshot() {
         },
         explorer: {
             color: el.ecoFilterColor ? el.ecoFilterColor.value : "white",
-            popularity: el.ecoFilterPopularity ? Number(el.ecoFilterPopularity.value || 0) : 0,
-            success: el.ecoFilterSuccess ? Number(el.ecoFilterSuccess.value || 0) : 0,
+            popularity: el.ecoFilterPopularity ? String(el.ecoFilterPopularity.value || "all") : "all",
+            success: el.ecoFilterSuccess ? String(el.ecoFilterSuccess.value || "all") : "all",
             query: el.ecoSearch ? el.ecoSearch.value : "",
             selectedId: openingExplorerState.selectedNode ? openingExplorerState.selectedNode.id : null,
             collapsedIds: Array.from(openingExplorerState.collapsedIds || [])
@@ -8216,11 +8279,19 @@ function restoreSessionPrefilters() {
     if (el.ecoFilterColor && explorer.color) {
         el.ecoFilterColor.value = explorer.color;
     }
-    if (el.ecoFilterPopularity && Number.isFinite(explorer.popularity)) {
-        el.ecoFilterPopularity.value = String(explorer.popularity);
+    if (el.ecoFilterPopularity) {
+        const rawPopularity = explorer.popularity;
+        const normalizedPopularity = typeof rawPopularity === "string"
+            ? normalizeExplorerFrequencyFilter(rawPopularity)
+            : mapLegacyPopularityToTier(rawPopularity);
+        el.ecoFilterPopularity.value = normalizedPopularity;
     }
-    if (el.ecoFilterSuccess && Number.isFinite(explorer.success)) {
-        el.ecoFilterSuccess.value = String(explorer.success);
+    if (el.ecoFilterSuccess) {
+        const rawSuccess = explorer.success;
+        const normalizedSuccess = typeof rawSuccess === "string"
+            ? normalizeExplorerResultFilter(rawSuccess)
+            : mapLegacySuccessToTier(rawSuccess);
+        el.ecoFilterSuccess.value = normalizedSuccess;
     }
     if (el.ecoSearch && typeof explorer.query === "string") {
         el.ecoSearch.value = explorer.query;

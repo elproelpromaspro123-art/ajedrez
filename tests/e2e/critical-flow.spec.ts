@@ -240,8 +240,8 @@ test("recupera sesion: tablero y filtros ECO; chat IA se reinicia", async ({ pag
     await page.click('[data-study-target="study-openings"]');
     await page.selectOption("#eco-filter-color", "black");
     await page.fill("#eco-search", "e4");
-    await page.fill("#eco-filter-popularity", "20");
-    await page.fill("#eco-filter-success", "40");
+    await page.selectOption("#eco-filter-popularity", "high");
+    await page.selectOption("#eco-filter-success", "balanced");
 
     await page.click('[data-tab-target="play-section"]');
     await page.click('[data-sidebar-tab="ai-tab"]');
@@ -257,8 +257,8 @@ test("recupera sesion: tablero y filtros ECO; chat IA se reinicia", async ({ pag
     await page.click('[data-tab-target="study-section"]');
     await expect(page.locator("#eco-filter-color")).toHaveValue("black");
     await expect(page.locator("#eco-search")).toHaveValue("e4");
-    await expect(page.locator("#eco-filter-popularity")).toHaveValue("20");
-    await expect(page.locator("#eco-filter-success")).toHaveValue("40");
+    await expect(page.locator("#eco-filter-popularity")).toHaveValue("high");
+    await expect(page.locator("#eco-filter-success")).toHaveValue("balanced");
 
     await page.click('[data-tab-target="play-section"]');
     await page.click('[data-sidebar-tab="ai-tab"]');

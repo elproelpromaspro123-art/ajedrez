@@ -539,7 +539,7 @@
                 <article class="card opening-explorer-card">
                     <div class="opening-explorer-header">
                         <h3>Explorador ECO</h3>
-                        <p>Vista en &aacute;rbol con filtros por color, popularidad y tasa de &eacute;xito.</p>
+                        <p>Vista en &aacute;rbol con filtros por color y clasificaci&oacute;n de l&iacute;neas.</p>
                     </div>
                     <div class="opening-explorer-filters">
                         <label for="eco-filter-color">Color</label>
@@ -549,13 +549,21 @@
                             <option value="both">Ambos</option>
                         </select>
 
-                        <label for="eco-filter-popularity">Popularidad m&iacute;nima</label>
-                        <input id="eco-filter-popularity" type="range" min="0" max="100" value="8" />
-                        <p id="eco-filter-popularity-value" class="muted">8%</p>
+                        <label for="eco-filter-popularity">Frecuencia</label>
+                        <select id="eco-filter-popularity">
+                            <option value="all" selected>Todas</option>
+                            <option value="high">Muy jugadas</option>
+                            <option value="medium">Intermedias</option>
+                            <option value="low">Poco jugadas</option>
+                        </select>
 
-                        <label for="eco-filter-success">&Eacute;xito m&iacute;nimo</label>
-                        <input id="eco-filter-success" type="range" min="0" max="75" value="0" />
-                        <p id="eco-filter-success-value" class="muted">0%</p>
+                        <label for="eco-filter-success">Resultado</label>
+                        <select id="eco-filter-success">
+                            <option value="all" selected>Cualquiera</option>
+                            <option value="favorable">Favorable</option>
+                            <option value="balanced">Equilibrada</option>
+                            <option value="risky">Riesgosa</option>
+                        </select>
 
                         <label for="eco-search">Buscar apertura/ECO</label>
                         <input id="eco-search" type="text" placeholder="Ej: Siciliana / Sicilian / C50 / Najdorf..." />
@@ -565,7 +573,7 @@
                         <div id="eco-tree" class="eco-tree" role="tree" aria-label="Arbol de aperturas ECO"></div>
                         <div class="eco-detail">
                             <h4 id="eco-detail-title">Selecciona una l&iacute;nea</h4>
-                            <p id="eco-detail-meta" class="muted">Se mostrar&aacute; eco, popularidad y &eacute;xito.</p>
+                            <p id="eco-detail-meta" class="muted">Se mostrar&aacute; ECO y su clasificaci&oacute;n.</p>
                             <div id="eco-detail-board" class="study-diagram"></div>
                             <p id="eco-detail-plan" class="study-note">Plan recomendado aparecer&aacute; aqu&iacute;.</p>
                             <button id="eco-load-play-btn" class="ghost-btn" type="button">Cargar l&iacute;nea en tablero de juego</button>
