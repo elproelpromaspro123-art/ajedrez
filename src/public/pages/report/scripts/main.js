@@ -106,6 +106,10 @@ const aiModule = APP_MODULES.ai || null;
 const playModule = APP_MODULES.play || null;
 const analysisModule = APP_MODULES.analysis || null;
 const engineModule = APP_MODULES.engine || null;
+const localeModule = APP_MODULES.locale || null;
+function t(key, params) {
+    return localeModule ? localeModule.t(key, params) : key;
+}
 
 const el = {
     tabs: Array.from(document.querySelectorAll(".tab-btn")),
@@ -895,6 +899,7 @@ class BoardView {
         this.root.innerHTML = "";
         this.squareMap.clear();
 
+        const fragment = document.createDocumentFragment();
         const squares = this.orderedSquares();
         squares.forEach((square, index) => {
             const squareEl = document.createElement("button");
@@ -917,9 +922,10 @@ class BoardView {
             }
 
             this.squareMap.set(square, squareEl);
-            this.root.appendChild(squareEl);
+            fragment.appendChild(squareEl);
         });
 
+        this.root.appendChild(fragment);
         this.root.classList.toggle("hide-coordinates", !this.showCoordinates);
         this.setFen(this.currentFen);
     }
@@ -3964,6 +3970,10 @@ function resetAnalysisSummary() {
 
 function fillClassificationTable(classifications) {
     el.analysisClassificationBody.innerHTML = "";
+    const safeClassifications = {
+        white: classifications && classifications.white ? classifications.white : {},
+        black: classifications && classifications.black ? classifications.black : {}
+    };
 
     CLASSIFICATION_ORDER.forEach((key) => {
         const row = document.createElement("tr");
@@ -3981,10 +3991,10 @@ function fillClassificationTable(classifications) {
         nameCell.appendChild(document.createTextNode(`${symbol ? symbol + " " : ""}${labelText}`));
 
         const whiteCell = document.createElement("td");
-        whiteCell.textContent = String(classifications.white[key] || 0);
+        whiteCell.textContent = String(safeClassifications.white[key] || 0);
 
         const blackCell = document.createElement("td");
-        blackCell.textContent = String(classifications.black[key] || 0);
+        blackCell.textContent = String(safeClassifications.black[key] || 0);
 
         row.append(nameCell, whiteCell, blackCell);
         el.analysisClassificationBody.appendChild(row);
@@ -4929,7 +4939,21 @@ async function runAnalysis() {
             throw new Error(reportPayload.message || "No se pudo generar el reporte.");
         }
 
-        analysisState.report = reportPayload.results;
+        const rawReport = reportPayload.results || {};
+        const rawAccuracies = rawReport && rawReport.accuracies ? rawReport.accuracies : {};
+        const rawClassifications = rawReport && rawReport.classifications ? rawReport.classifications : {};
+        analysisState.report = {
+            ...rawReport,
+            positions: Array.isArray(rawReport.positions) ? rawReport.positions : [],
+            accuracies: {
+                white: Number(rawAccuracies.white || 0),
+                black: Number(rawAccuracies.black || 0)
+            },
+            classifications: {
+                white: rawClassifications && rawClassifications.white ? rawClassifications.white : {},
+                black: rawClassifications && rawClassifications.black ? rawClassifications.black : {}
+            }
+        };
         analysisState.currentIndex = 0;
         analysisState.aiSummary = "";
         analysisState.aiSummaryLoading = false;
@@ -6671,20 +6695,61 @@ function bindGlobalShortcuts() {
 
 /* ===== Study Diagrams ===== */
 
+let studyDiagramObserver = null;
+
+function renderSingleStudyDiagram(container) {
+    if (!container || container.dataset.rendered === "1") {
+        return;
+    }
+    const fen = container.dataset.fen;
+    if (!fen) {
+        return;
+    }
+
+    const board = new BoardView(container, {
+        orientation: "white",
+        interactive: false,
+        showCoordinates: false
+    });
+
+    board.setFen(fen);
+    container.dataset.rendered = "1";
+}
+
 function renderStudyDiagrams() {
+    if (!Array.isArray(el.studyDiagrams) || el.studyDiagrams.length === 0) {
+        return;
+    }
+
+    if (!("IntersectionObserver" in window)) {
+        el.studyDiagrams.forEach(renderSingleStudyDiagram);
+        return;
+    }
+
+    if (studyDiagramObserver) {
+        studyDiagramObserver.disconnect();
+    }
+
+    studyDiagramObserver = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+            if (!entry.isIntersecting) {
+                return;
+            }
+            const target = entry.target;
+            if (target instanceof HTMLElement) {
+                renderSingleStudyDiagram(target);
+                studyDiagramObserver.unobserve(target);
+            }
+        });
+    }, {
+        rootMargin: "220px 0px"
+    });
+
     el.studyDiagrams.forEach((container) => {
-        const fen = container.dataset.fen;
-        if (!fen) {
+        if (container.dataset.rendered === "1") {
             return;
         }
-
-        const board = new BoardView(container, {
-            orientation: "white",
-            interactive: false,
-            showCoordinates: false
-        });
-
-        board.setFen(fen);
+        studyDiagramObserver.observe(container);
     });
 }
 
@@ -6932,25 +6997,48 @@ function bindEvents() {
     }
 
     /* Settings modal open/close */
+    let _settingsTrapHandler = null;
+    function openSettingsModal() {
+        if (!el.settingsModal) return;
+        el.settingsModal.classList.add("visible");
+        const focusable = el.settingsModal.querySelectorAll(
+            'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length) focusable[0].focus();
+        _settingsTrapHandler = (e) => {
+            if (e.key !== "Tab" || !focusable.length) return;
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+            if (e.shiftKey) {
+                if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+            } else {
+                if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+            }
+        };
+        el.settingsModal.addEventListener("keydown", _settingsTrapHandler);
+    }
+    function closeSettingsModal() {
+        if (!el.settingsModal) return;
+        el.settingsModal.classList.remove("visible");
+        if (_settingsTrapHandler) {
+            el.settingsModal.removeEventListener("keydown", _settingsTrapHandler);
+            _settingsTrapHandler = null;
+        }
+        if (el.settingsBtn) el.settingsBtn.focus();
+    }
     if (el.settingsBtn) {
-        el.settingsBtn.addEventListener("click", () => {
-            if (el.settingsModal) el.settingsModal.classList.add("visible");
-        });
+        el.settingsBtn.addEventListener("click", () => openSettingsModal());
     }
     if (el.settingsCloseBtn) {
-        el.settingsCloseBtn.addEventListener("click", () => {
-            if (el.settingsModal) el.settingsModal.classList.remove("visible");
-        });
+        el.settingsCloseBtn.addEventListener("click", () => closeSettingsModal());
     }
     if (el.settingsOverlay) {
-        el.settingsOverlay.addEventListener("click", () => {
-            if (el.settingsModal) el.settingsModal.classList.remove("visible");
-        });
+        el.settingsOverlay.addEventListener("click", () => closeSettingsModal());
     }
     document.addEventListener("keydown", (event) => {
         if (event.key !== "Escape") return;
         if (el.settingsModal && el.settingsModal.classList.contains("visible")) {
-            el.settingsModal.classList.remove("visible");
+            closeSettingsModal();
             return;
         }
         if (el.promotionModal && el.promotionModal.classList.contains("visible")) {
@@ -7213,9 +7301,13 @@ function bindEvents() {
         });
     }
 
+    let _resizeTimer = null;
     window.addEventListener("resize", () => {
-        renderAnalysisEvalGraph();
-        drawProfileEloGraph(profileState.eloTimeline);
+        clearTimeout(_resizeTimer);
+        _resizeTimer = setTimeout(() => {
+            renderAnalysisEvalGraph();
+            drawProfileEloGraph(profileState.eloTimeline);
+        }, 150);
     });
 }
 
@@ -7244,6 +7336,25 @@ function addAiMessage(text, type) {
     aiChatMessages.scrollTop = aiChatMessages.scrollHeight;
     scheduleSessionSnapshotSave();
     return div;
+}
+
+function addAiCountdownMessage(seconds) {
+    if (!aiChatMessages) return;
+    const div = document.createElement("div");
+    div.className = "ai-msg ai-bot ai-rate-limit";
+    let remaining = seconds;
+    function update() {
+        if (remaining <= 0) {
+            div.textContent = "✅ Ya puedes enviar otra pregunta.";
+            return;
+        }
+        div.textContent = "⏳ Límite de solicitudes. Puedes reintentar en " + remaining + "s...";
+        remaining--;
+        setTimeout(update, 1000);
+    }
+    update();
+    aiChatMessages.appendChild(div);
+    aiChatMessages.scrollTop = aiChatMessages.scrollHeight;
 }
 
 function shouldSkipInteractiveNode(textNode) {
@@ -7638,7 +7749,9 @@ Contexto:
                 : 10;
             return {
                 text: `Espera ${retryAfter}s antes de pedir otra respuesta de IA.`,
-                actions: []
+                actions: [],
+                rateLimited: true,
+                retryAfterSeconds: retryAfter
             };
         }
 
@@ -7712,12 +7825,17 @@ async function handleAiChat() {
 
     try {
         const aiResponse = await generateAiResponse(question);
-        thinkingMsg.textContent = aiResponse.text;
-        thinkingMsg.classList.remove("ai-thinking");
-        appendStructuredAiActions(thinkingMsg, aiResponse.actions);
-        makeAiActionsClickable(thinkingMsg);
-        makeMovesClickable(thinkingMsg);
-        makeOpeningMentionsClickable(thinkingMsg);
+        if (aiResponse.rateLimited) {
+            thinkingMsg.remove();
+            addAiCountdownMessage(aiResponse.retryAfterSeconds);
+        } else {
+            thinkingMsg.textContent = aiResponse.text;
+            thinkingMsg.classList.remove("ai-thinking");
+            appendStructuredAiActions(thinkingMsg, aiResponse.actions);
+            makeAiActionsClickable(thinkingMsg);
+            makeMovesClickable(thinkingMsg);
+            makeOpeningMentionsClickable(thinkingMsg);
+        }
     } catch {
         thinkingMsg.textContent = "Lo siento, no pude procesar tu pregunta. Int\u00e9ntalo de nuevo.";
         thinkingMsg.classList.remove("ai-thinking");

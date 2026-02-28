@@ -192,7 +192,8 @@ test("flujo critico: jugar -> analizar -> estudio -> IA -> guardado", async ({ p
     await expect(page.locator("#play-move-list")).toContainText("e4");
 
     await page.click('[data-tab-target="analysis-section"]');
-    await page.fill("#analysis-pgn", "1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0");
+    await page.click('[data-analysis-target="analysis-input"]');
+    await page.locator("#analysis-pgn:visible").fill("1. e4 e5 2. Nf3 Nc6 3. Bb5 a6 1-0");
     await page.click("#analysis-run-btn");
     await expect(page.locator("#analysis-status")).toContainText("Analisis completado");
 

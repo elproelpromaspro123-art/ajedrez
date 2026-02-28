@@ -104,37 +104,12 @@ const USERNAME_MIN = 3;
 const USERNAME_MAX = 24;
 const PASSWORD_MIN = 8;
 const PASSWORD_MAX = 120;
-const aiRateLimiter = new Map<string, number[]>();
-const loginRateLimiter = new Map<string, number[]>();
-const registerRateLimiter = new Map<string, number[]>();
-const parseRateLimiter = new Map<string, number[]>();
-const reportRateLimiter = new Map<string, number[]>();
-
-function pruneRateLimiter(
-    limiter: Map<string, number[]>,
-    windowMs: number,
-    now: number
-) {
-    for (const [clientId, timestamps] of limiter) {
-        const active = timestamps.filter((timestamp) => now - timestamp < windowMs);
-        if (active.length === 0) {
-            limiter.delete(clientId);
-        } else {
-            limiter.set(clientId, active);
-        }
-    }
-}
-
-// Prune stale rate-limiter entries every 60 seconds
-const rateLimiterPruneTimer = setInterval(() => {
-    const now = Date.now();
-    pruneRateLimiter(aiRateLimiter, AI_RATE_WINDOW_MS, now);
-    pruneRateLimiter(loginRateLimiter, AUTH_LOGIN_RATE_WINDOW_MS, now);
-    pruneRateLimiter(registerRateLimiter, AUTH_REGISTER_RATE_WINDOW_MS, now);
-    pruneRateLimiter(parseRateLimiter, PARSE_RATE_WINDOW_MS, now);
-    pruneRateLimiter(reportRateLimiter, REPORT_RATE_WINDOW_MS, now);
-}, 60_000);
-rateLimiterPruneTimer.unref?.();
+const RATE_LIMIT_CLIENT_BUCKET_MAX = 2000;
+const fallbackAiRateLimiter = new Map<string, number[]>();
+const fallbackLoginRateLimiter = new Map<string, number[]>();
+const fallbackRegisterRateLimiter = new Map<string, number[]>();
+const fallbackParseRateLimiter = new Map<string, number[]>();
+const fallbackReportRateLimiter = new Map<string, number[]>();
 
 function isNonEmptyString(value: unknown): value is string {
     return typeof value == "string" && value.trim().length > 0;
@@ -316,7 +291,7 @@ function getClientIdentifier(req: Request): string {
     return String(req.ip || "unknown");
 }
 
-function checkRateLimit(
+function checkRateLimitInMemory(
     limiter: Map<string, number[]>,
     clientId: string,
     windowMs: number,
@@ -334,28 +309,135 @@ function checkRateLimit(
 
     active.push(now);
     limiter.set(clientId, active);
-
     return { limited: false, retryAfterMs: 0 };
 }
 
+function sanitizeRateHistory(
+    value: unknown,
+    now: number,
+    windowMs: number
+): number[] {
+    if (!Array.isArray(value)) {
+        return [];
+    }
+
+    return value
+        .map((timestamp) => Number(timestamp))
+        .filter((timestamp) => Number.isFinite(timestamp) && now - timestamp < windowMs)
+        .sort((left, right) => left - right);
+}
+
+async function checkPersistentRateLimit(
+    scope: "ai" | "login" | "register" | "parse" | "report",
+    fallbackLimiter: Map<string, number[]>,
+    clientId: string,
+    windowMs: number,
+    maxRequests: number
+) {
+    const now = Date.now();
+
+    try {
+        const scopedData = await readScopedData();
+        const rootRateLimits = asObject(scopedData.rateLimits) || {};
+        const scopeRateLimits = asObject(rootRateLimits[scope]) || {};
+        const active = sanitizeRateHistory(scopeRateLimits[clientId], now, windowMs);
+
+        if (active.length >= maxRequests) {
+            const retryAfterMs = Math.max(1, windowMs - (now - active[0]));
+            const nextScopeRateLimits: Record<string, unknown> = {
+                ...scopeRateLimits,
+                [clientId]: active
+            };
+            await replaceScopedData({
+                ...scopedData,
+                rateLimits: {
+                    ...rootRateLimits,
+                    [scope]: nextScopeRateLimits
+                }
+            });
+            return { limited: true, retryAfterMs };
+        }
+
+        active.push(now);
+
+        const nextScopeRateLimits: Record<string, unknown> = {
+            ...scopeRateLimits,
+            [clientId]: active
+        };
+
+        const keys = Object.keys(nextScopeRateLimits);
+        if (keys.length > RATE_LIMIT_CLIENT_BUCKET_MAX) {
+            keys
+                .sort((left, right) => {
+                    const leftArr = sanitizeRateHistory(nextScopeRateLimits[left], now, windowMs);
+                    const rightArr = sanitizeRateHistory(nextScopeRateLimits[right], now, windowMs);
+                    const leftLast = leftArr[leftArr.length - 1] || 0;
+                    const rightLast = rightArr[rightArr.length - 1] || 0;
+                    return leftLast - rightLast;
+                })
+                .slice(0, keys.length - RATE_LIMIT_CLIENT_BUCKET_MAX)
+                .forEach((key) => {
+                    delete nextScopeRateLimits[key];
+                });
+        }
+
+        await replaceScopedData({
+            ...scopedData,
+            rateLimits: {
+                ...rootRateLimits,
+                [scope]: nextScopeRateLimits
+            }
+        });
+
+        return { limited: false, retryAfterMs: 0 };
+    } catch (err) {
+        console.error(`Persistent rate limiter fallback for ${scope}:`, err);
+        return checkRateLimitInMemory(fallbackLimiter, clientId, windowMs, maxRequests);
+    }
+}
+
 function checkAIRateLimit(clientId: string) {
-    return checkRateLimit(aiRateLimiter, clientId, AI_RATE_WINDOW_MS, AI_RATE_MAX_REQUESTS);
+    return checkPersistentRateLimit("ai", fallbackAiRateLimiter, clientId, AI_RATE_WINDOW_MS, AI_RATE_MAX_REQUESTS);
 }
 
 function checkLoginRateLimit(clientId: string) {
-    return checkRateLimit(loginRateLimiter, clientId, AUTH_LOGIN_RATE_WINDOW_MS, AUTH_LOGIN_RATE_MAX_ATTEMPTS);
+    return checkPersistentRateLimit(
+        "login",
+        fallbackLoginRateLimiter,
+        clientId,
+        AUTH_LOGIN_RATE_WINDOW_MS,
+        AUTH_LOGIN_RATE_MAX_ATTEMPTS
+    );
 }
 
 function checkRegisterRateLimit(clientId: string) {
-    return checkRateLimit(registerRateLimiter, clientId, AUTH_REGISTER_RATE_WINDOW_MS, AUTH_REGISTER_RATE_MAX_ATTEMPTS);
+    return checkPersistentRateLimit(
+        "register",
+        fallbackRegisterRateLimiter,
+        clientId,
+        AUTH_REGISTER_RATE_WINDOW_MS,
+        AUTH_REGISTER_RATE_MAX_ATTEMPTS
+    );
 }
 
 function checkParseRateLimit(clientId: string) {
-    return checkRateLimit(parseRateLimiter, clientId, PARSE_RATE_WINDOW_MS, PARSE_RATE_MAX_REQUESTS);
+    return checkPersistentRateLimit(
+        "parse",
+        fallbackParseRateLimiter,
+        clientId,
+        PARSE_RATE_WINDOW_MS,
+        PARSE_RATE_MAX_REQUESTS
+    );
 }
 
 function checkReportRateLimit(clientId: string) {
-    return checkRateLimit(reportRateLimiter, clientId, REPORT_RATE_WINDOW_MS, REPORT_RATE_MAX_REQUESTS);
+    return checkPersistentRateLimit(
+        "report",
+        fallbackReportRateLimiter,
+        clientId,
+        REPORT_RATE_WINDOW_MS,
+        REPORT_RATE_MAX_REQUESTS
+    );
 }
 
 function normalizeUsername(value: unknown): string | null {
@@ -762,7 +844,7 @@ async function requestGroqChatCompletion(systemPrompt: string, question: string)
 
 router.post("/auth/register", async (req, res) => {
     const clientId = getClientIdentifier(req);
-    const registerLimit = checkRegisterRateLimit(clientId);
+    const registerLimit = await checkRegisterRateLimit(clientId);
     if (registerLimit.limited) {
         res.setHeader("Retry-After", String(Math.ceil(registerLimit.retryAfterMs / 1000)));
         return res.status(429).json({
@@ -824,7 +906,7 @@ router.post("/auth/register", async (req, res) => {
 
 router.post("/auth/login", async (req, res) => {
     const clientId = getClientIdentifier(req);
-    const loginLimit = checkLoginRateLimit(clientId);
+    const loginLimit = await checkLoginRateLimit(clientId);
     if (loginLimit.limited) {
         res.setHeader("Retry-After", String(Math.ceil(loginLimit.retryAfterMs / 1000)));
         return res.status(429).json({
@@ -1008,7 +1090,7 @@ router.post("/profile-store/sync", async (req, res) => {
 
 router.post("/parse", async (req, res) => {
     const clientId = getClientIdentifier(req);
-    const parseLimit = checkParseRateLimit(clientId);
+    const parseLimit = await checkParseRateLimit(clientId);
     if (parseLimit.limited) {
         res.setHeader("Retry-After", String(Math.ceil(parseLimit.retryAfterMs / 1000)));
         return res.status(429).json({
@@ -1223,7 +1305,7 @@ router.get("/opening-explorer", async (req, res) => {
 
 router.post("/report", async (req, res) => {
     const clientId = getClientIdentifier(req);
-    const reportLimit = checkReportRateLimit(clientId);
+    const reportLimit = await checkReportRateLimit(clientId);
     if (reportLimit.limited) {
         res.setHeader("Retry-After", String(Math.ceil(reportLimit.retryAfterMs / 1000)));
         return res.status(429).json({
@@ -1293,7 +1375,7 @@ router.post("/ai-chat", async (req, res) => {
     }
 
     const clientId = getClientIdentifier(req);
-    const limit = checkAIRateLimit(clientId);
+    const limit = await checkAIRateLimit(clientId);
     if (limit.limited) {
         res.setHeader("Retry-After", String(Math.ceil(limit.retryAfterMs / 1000)));
         return res.status(429).json({

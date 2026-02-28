@@ -1,10 +1,22 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="es">
 
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Webapp personal para jugar, analizar y estudiar ajedrez con cuenta de usuario." />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Ajedrez Lab - Juega, Analiza y Estudia Ajedrez" />
+    <meta property="og:description" content="Tu laboratorio personal de ajedrez: juega contra bots, analiza partidas con Stockfish y estudia aperturas, tacticas y finales." />
+    <meta property="og:image" content="__OG_IMAGE__" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:url" content="__OG_URL__" />
+    <meta property="og:locale" content="es_ES" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Ajedrez Lab - Juega, Analiza y Estudia Ajedrez" />
+    <meta name="twitter:description" content="Tu laboratorio personal de ajedrez: juega, analiza y estudia con IA y Stockfish." />
+    <meta name="twitter:image" content="__OG_IMAGE__" />
     <meta name="theme-color" content="#0f1117" />
     <title>Ajedrez Lab</title>
 
@@ -13,33 +25,44 @@
     <link
         href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap"
         rel="stylesheet" />
-    <link rel="stylesheet" href="/static/pages/report/styles/app.css?v=20260225_ux1" />
+    <link rel="stylesheet" href="/static/pages/report/styles/app.css" />
     <link rel="shortcut icon" href="/static/media/favicon-freechess.ico" type="image/x-icon" />
+    <link rel="apple-touch-icon" href="/static/media/icon-192.png" />
+    <link rel="manifest" href="/static/manifest.json" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Ajedrez Lab" />
 </head>
 
 <body>
+    <a href="#play-section" class="skip-to-content">Saltar al contenido</a>
+    <noscript>
+        <div class="noscript-warning">
+            Esta aplicacion requiere JavaScript para funcionar. Activalo y recarga la pagina.
+        </div>
+    </noscript>
     <header class="topbar">
         <div class="brand">
             <p class="kicker">Uso personal</p>
             <h1>Ajedrez Lab</h1>
-            <p class="subtitle">Tu laboratorio personal de ajedrez — juega, analiza y mejora.</p>
+            <p class="subtitle">Tu laboratorio personal de ajedrez â€” juega, analiza y mejora.</p>
         </div>
         <details class="topbar-meta">
-            <summary>ℹ️ Métricas del sistema</summary>
+            <summary>â„¹ï¸ MÃ©tricas del sistema</summary>
             <p id="last-update-label">Actualizado: 27 de febrero de 2026</p>
             <p id="perf-metric-load">Carga inicial: --</p>
-            <p id="perf-metric-first-eval">1ª eval motor: --</p>
+            <p id="perf-metric-first-eval">1Âª eval motor: --</p>
             <p id="perf-metric-explorer">Latencia ECO: --</p>
-            <p id="perf-metric-memory">Memoria sesión: --</p>
-            <a href="https://www.fide.com/FIDE/handbook/LawsOfChess.pdf" target="_blank" rel="noopener noreferrer">📜 Reglas FIDE</a>
+            <p id="perf-metric-memory">Memoria sesiÃ³n: --</p>
+            <a href="https://www.fide.com/FIDE/handbook/LawsOfChess.pdf" target="_blank" rel="noopener noreferrer">ðŸ“œ Reglas FIDE</a>
         </details>
     </header>
 
     <nav class="tabs" role="tablist" aria-label="Secciones">
-        <button class="tab-btn is-active" data-tab-target="play-section" role="tab" aria-selected="true" aria-controls="play-section" id="tab-play">&#9823; Jugar</button>
-        <button class="tab-btn" data-tab-target="analysis-section" role="tab" aria-selected="false" aria-controls="analysis-section" id="tab-analysis">&#128300; Analizar</button>
-        <button class="tab-btn" data-tab-target="study-section" role="tab" aria-selected="false" aria-controls="study-section" id="tab-study">&#128214; Estudio</button>
-        <button class="tab-btn" data-tab-target="profile-section" role="tab" aria-selected="false" aria-controls="profile-section" id="tab-profile">&#128202; Perfil</button>
+        <button class="tab-btn is-active" data-tab-target="play-section" role="tab" aria-selected="true" aria-controls="play-section" id="tab-play" aria-label="Ir a la seccion Jugar">&#9823; Jugar</button>
+        <button class="tab-btn" data-tab-target="analysis-section" role="tab" aria-selected="false" aria-controls="analysis-section" id="tab-analysis" aria-label="Ir a la seccion Analizar">&#128300; Analizar</button>
+        <button class="tab-btn" data-tab-target="study-section" role="tab" aria-selected="false" aria-controls="study-section" id="tab-study" aria-label="Ir a la seccion Estudio">&#128214; Estudio</button>
+        <button class="tab-btn" data-tab-target="profile-section" role="tab" aria-selected="false" aria-controls="profile-section" id="tab-profile" aria-label="Ir a la seccion Perfil">&#128202; Perfil</button>
     </nav>
 
     <main class="content">
@@ -47,7 +70,7 @@
             <div id="play-panel-grid" class="panel-grid setup-mode">
                 <article id="play-board-card" class="card board-card" style="display: none;">
                     <div class="board-with-eval">
-                        <div id="play-eval-bar" class="eval-bar">
+                        <div id="play-eval-bar" class="eval-bar" aria-label="Barra de evaluaciÃ³n del motor">
                             <div id="play-eval-fill" class="eval-fill"></div>
                             <span id="play-eval-label-white" class="eval-label eval-label-white"></span>
                             <span id="play-eval-label-black" class="eval-label eval-label-black"></span>
@@ -61,23 +84,23 @@
                 <aside class="card control-card sidebar-card">
                     <!-- Setup Panel (Shown before game starts) -->
                     <div id="play-setup-panel">
-                        <h3>♚ Configurar Partida</h3>
+                        <h3>â™š Configurar Partida</h3>
 
                         <div class="setup-group auth-group setup-group-account">
-                            <p class="setup-group-title">🔐 Cuenta</p>
+                            <p class="setup-group-title">ðŸ” Cuenta</p>
                             <p id="auth-status" class="muted auth-status">No has iniciado sesion. Inicia para guardar todo en base de datos.</p>
                             <div id="auth-guest-panel" class="auth-guest-panel">
                                 <p class="auth-modal-title">Inicia sesion o registrate para continuar</p>
                                 <p class="auth-modal-subtitle">Sin sesion iniciada no se guarda informacion en tu perfil.</p>
                                 <label for="auth-username">Usuario</label>
                                 <input id="auth-username" type="text" maxlength="24" autocomplete="username" placeholder="Tu usuario" />
-                                <label for="auth-password">Contraseña</label>
-                                <input id="auth-password" type="password" maxlength="120" autocomplete="current-password" placeholder="Tu contraseña" />
+                                <label for="auth-password">ContraseÃ±a</label>
+                                <input id="auth-password" type="password" maxlength="120" autocomplete="current-password" placeholder="Tu contraseÃ±a" />
                                 <div class="auth-actions">
                                     <button id="auth-login-btn" class="ghost-btn" type="button">Iniciar sesion</button>
                                     <button id="auth-register-btn" class="primary-btn" type="button">Crear cuenta</button>
                                 </div>
-                                <p id="auth-warning" class="auth-warning">&#9888; Advertencia: no hay recuperacion de contraseña. Guardala bien.</p>
+                                <p id="auth-warning" class="auth-warning">&#9888; Advertencia: no hay recuperacion de contraseÃ±a. Guardala bien.</p>
                             </div>
                             <div id="auth-user-panel" class="auth-user-panel" style="display:none;">
                                 <p class="muted">Sesion activa como <strong id="auth-user-label">--</strong>.</p>
@@ -86,7 +109,7 @@
                         </div>
 
                         <div class="setup-group setup-group-rival">
-                            <p class="setup-group-title">🤖 Rival</p>
+                            <p class="setup-group-title">ðŸ¤– Rival</p>
                             <label for="bot-preset">Nivel del bot</label>
                             <select id="bot-preset">
                                 <option value="600">Principiante &mdash; 600 ELO</option>
@@ -102,7 +125,7 @@
                         </div>
 
                         <div class="setup-group setup-group-preferences">
-                            <p class="setup-group-title">⚙️ Preferencias</p>
+                            <p class="setup-group-title">âš™ï¸ Preferencias</p>
                             <label for="player-color">Tu color</label>
                             <select id="player-color">
                                 <option value="white" selected>&#9812; Blancas</option>
@@ -230,7 +253,7 @@
                     <button class="study-cat-card" data-analysis-target="analysis-dashboard">
                         <span class="study-cat-icon">&#128200;</span>
                         <span class="study-cat-title">Dashboard de Progreso</span>
-                        <span class="study-cat-desc">Visualiza tu evoluci&oacute;n — racha de estudio, precisi&oacute;n semanal y patrones de error recurrentes.</span>
+                        <span class="study-cat-desc">Visualiza tu evoluci&oacute;n â€” racha de estudio, precisi&oacute;n semanal y patrones de error recurrentes.</span>
                     </button>
                     <button class="study-cat-card" data-analysis-target="analysis-classifications">
                         <span class="study-cat-icon">&#128202;</span>
@@ -296,7 +319,7 @@
                     </div>
                     <div class="analysis-review-layout">
                         <div class="analysis-board-wrap">
-                            <div id="eval-bar" class="eval-bar-wrap">
+                            <div id="eval-bar" class="eval-bar-wrap" aria-label="Barra de evaluaciÃ³n del anÃ¡lisis">
                                 <div id="eval-fill" class="eval-fill"></div>
                                 <span id="eval-label-white" class="eval-label white-label"></span>
                                 <span id="eval-label-black" class="eval-label black-label"></span>
@@ -408,9 +431,9 @@
                 <div class="study-roadmap">
                     <h3>Plan rapido de mejora (20-30 min)</h3>
                     <ol>
-                        <li><strong>5 min</strong> — Aperturas: repasa principios fundamentales y una l&iacute;nea principal.</li>
-                        <li><strong>10–15 min</strong> — T&aacute;cticas: identifica amenazas, piezas colgando y mates en pocos movimientos.</li>
-                        <li><strong>10 min</strong> — Finales: practica rey y pe&oacute;n, oposici&oacute;n y actividad de torre.</li>
+                        <li><strong>5 min</strong> â€” Aperturas: repasa principios fundamentales y una l&iacute;nea principal.</li>
+                        <li><strong>10â€“15 min</strong> â€” T&aacute;cticas: identifica amenazas, piezas colgando y mates en pocos movimientos.</li>
+                        <li><strong>10 min</strong> â€” Finales: practica rey y pe&oacute;n, oposici&oacute;n y actividad de torre.</li>
                     </ol>
                     <p class="muted">&#128161; Consejo: analiza tus partidas justo al terminar para fijar errores y aciertos. Usa la pesta&ntilde;a &ldquo;Analizar&rdquo; para ver clasificaciones tipo chess.com.</p>
                 </div>
@@ -455,7 +478,7 @@
             <!-- INTERACTIVE LESSONS SECTION -->
             <div id="study-lessons" class="study-detail" style="display:none;">
                 <button class="study-back-btn" data-study-back>&larr; Volver al Centro de Estudio</button>
-                <h2>🎓 Lecciones Interactivas</h2>
+                <h2>ðŸŽ“ Lecciones Interactivas</h2>
                 <p class="study-intro">Cursos guiados para practicar conceptos clave con decisiones inmediatas y feedback corto.</p>
 
                 <div class="lesson-course-grid">
@@ -551,7 +574,7 @@
 
                 <div class="study-grid">
                     <article class="card study-card">
-                        <h3>♟ Principios de Apertura</h3>
+                        <h3>â™Ÿ Principios de Apertura</h3>
                         <p>Reglas fundamentales que todo jugador debe conocer desde el primer movimiento.</p>
                         <div class="study-diagram"
                             data-fen="r1bqkbnr/pppp1ppp/2n5/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 2 4"></div>
@@ -566,7 +589,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>♗ Apertura Espa&ntilde;ola (Ruy L&oacute;pez)</h3>
+                        <h3>â™— Apertura Espa&ntilde;ola (Ruy L&oacute;pez)</h3>
                         <p>1.e4 e5 2.Cf3 Cc6 3.Ab5 &mdash; Presi&oacute;n indirecta sobre el centro. Una de las
                             m&aacute;s estudiadas en la historia.</p>
                         <div class="study-diagram"
@@ -579,7 +602,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>♗ Apertura Italiana</h3>
+                        <h3>â™— Apertura Italiana</h3>
                         <p>1.e4 e5 2.Cf3 Cc6 3.Ac4 &mdash; El alfil apunta a f7. Juego natural, t&aacute;ctico y
                             din&aacute;mico.</p>
                         <div class="study-diagram"
@@ -592,7 +615,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>♞ Defensa Siciliana</h3>
+                        <h3>â™ž Defensa Siciliana</h3>
                         <p>1.e4 c5 &mdash; La respuesta m&aacute;s popular y agresiva contra 1.e4. Juego
                             asim&eacute;trico y combativo.</p>
                         <div class="study-diagram"
@@ -607,7 +630,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>♜ Defensa Francesa</h3>
+                        <h3>â™œ Defensa Francesa</h3>
                         <p>1.e4 e6 2.d4 d5 &mdash; S&oacute;lida y estrat&eacute;gica. Las negras aceptan un alfil
                             &ldquo;malo&rdquo; a cambio de contra-ataque.</p>
                         <div class="study-diagram"
@@ -620,7 +643,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>♜ Caro-Kann</h3>
+                        <h3>â™œ Caro-Kann</h3>
                         <p>1.e4 c6 &mdash; S&oacute;lida como la Francesa pero sin encerrar el alfil. Ideal para juego
                             posicional.</p>
                         <div class="study-diagram"
@@ -633,7 +656,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>♛ Gambito de Dama</h3>
+                        <h3>â™› Gambito de Dama</h3>
                         <p>1.d4 d5 2.c4 &mdash; La apertura m&aacute;s jugada a nivel profesional. El blanco lucha por
                             ventaja de espacio.</p>
                         <div class="study-diagram"
@@ -647,7 +670,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>♗ Sistema Londres</h3>
+                        <h3>â™— Sistema Londres</h3>
                         <p>1.d4 d5 2.Af4 &mdash; Sistema universal f&aacute;cil de aprender. El blanco juega los mismos
                             movimientos contra casi todo.</p>
                         <div class="study-diagram"
@@ -660,7 +683,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>⚔ Gambitos Populares</h3>
+                        <h3>âš” Gambitos Populares</h3>
                         <p>Sacrificar material en la apertura por actividad e iniciativa.</p>
                         <div class="study-diagram" data-fen="rnbqkbnr/pppp1ppp/8/4p3/4PP2/8/PPPP2PP/RNBQKBNR b KQkq - 0 2"></div>
                         <ul class="compact-list">
@@ -672,7 +695,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>⚡ Trampas de Apertura</h3>
+                        <h3>âš¡ Trampas de Apertura</h3>
                         <p>Trampas cl&aacute;sicas que debes conocer para no caer (ni para usarlas).</p>
                         <div class="study-diagram" data-fen="r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4"></div>
                         <ul class="compact-list">
@@ -694,7 +717,7 @@
 
                 <div class="study-grid">
                     <article class="card study-card">
-                        <h3>💀 Mate del Pastor</h3>
+                        <h3>ðŸ’€ Mate del Pastor</h3>
                         <p>Un patr&oacute;n de mate en 4 jugadas: 1.e4 e5 2.Ac4 Cc6 3.Dh5 Cf6?? 4.Dxf7#. Ataca f7.</p>
                         <div class="study-diagram"
                             data-fen="r1bqkb1r/pppp1Qpp/2n5/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 0 4"></div>
@@ -706,8 +729,8 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>📌 Clavadas</h3>
-                        <p>Una pieza no puede moverse porque expondría una pieza m&aacute;s valiosa detr&aacute;s de
+                        <h3>ðŸ“Œ Clavadas</h3>
+                        <p>Una pieza no puede moverse porque expondrÃ­a una pieza m&aacute;s valiosa detr&aacute;s de
                             ella (o el rey).</p>
                         <div class="study-diagram"
                             data-fen="r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4"></div>
@@ -720,7 +743,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>⚔ Horquillas (Tenedores)</h3>
+                        <h3>âš” Horquillas (Tenedores)</h3>
                         <p>Una pieza ataca a dos o m&aacute;s piezas enemigas simult&aacute;neamente. Ganas material
                             inevitablemente.</p>
                         <div class="study-diagram"
@@ -733,7 +756,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>💫 Descubiertas y Doble Jaque</h3>
+                        <h3>ðŸ’« Descubiertas y Doble Jaque</h3>
                         <p>Al mover una pieza, se &ldquo;descubre&rdquo; un ataque de otra pieza detr&aacute;s.
                             Devastador cuando ambas atacan.</p>
                         <div class="study-diagram"
@@ -747,7 +770,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>🔥 Sacrificios T&aacute;cticos</h3>
+                        <h3>ðŸ”¥ Sacrificios T&aacute;cticos</h3>
                         <p>Entregar material a cambio de un ataque imparable o mate. El arte supremo del ajedrez.</p>
                         <div class="study-diagram"
                             data-fen="r2q1bnr/ppp1kBpp/2np4/3NN3/4P3/7P/PPPP1PP1/R1BbK2R b KQ - 2 8"></div>
@@ -761,7 +784,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>♚ Mates B&aacute;sicos</h3>
+                        <h3>â™š Mates B&aacute;sicos</h3>
                         <p>Patrones de mate que todo jugador debe reconocer en milisegundos.</p>
                         <div class="study-diagram" data-fen="6k1/5ppp/8/8/8/8/5PPP/4R1K1 w - - 0 1"></div>
                         <ul class="compact-list">
@@ -773,7 +796,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>⚡ Ataques al Rey</h3>
+                        <h3>âš¡ Ataques al Rey</h3>
                         <p>Patrones de ataque que surgen cuando el rey rival est&aacute; expuesto.</p>
                         <div class="study-diagram" data-fen="r1b1k2r/ppppqppp/2n2n2/2b1p3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R w KQkq - 4 5"></div>
                         <ul class="compact-list">
@@ -785,7 +808,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>🧠 Patrones T&aacute;cticos Avanzados</h3>
+                        <h3>ðŸ§  Patrones T&aacute;cticos Avanzados</h3>
                         <p>Combinaciones que requieren c&aacute;lculo preciso y visi&oacute;n t&aacute;ctica.</p>
                         <div class="study-diagram" data-fen="r2qkb1r/ppp2ppp/2np1n2/4p1B1/2B1P1b1/2NP1N2/PPP2PPP/R2QK2R w KQkq - 0 6"></div>
                         <ul class="compact-list">
@@ -807,7 +830,7 @@
 
                 <div class="study-grid">
                     <article class="card study-card">
-                        <h3>♔ Rey y Pe&oacute;n vs Rey</h3>
+                        <h3>â™” Rey y Pe&oacute;n vs Rey</h3>
                         <p>El final m&aacute;s b&aacute;sico y esencial. La regla de la oposici&oacute;n decide
                             qui&eacute;n gana.</p>
                         <div class="study-diagram" data-fen="8/8/8/8/8/4k3/4P3/4K3 w - - 0 1"></div>
@@ -822,7 +845,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>📐 Cuadrado del Pe&oacute;n</h3>
+                        <h3>ðŸ“ Cuadrado del Pe&oacute;n</h3>
                         <p>Regla visual para saber si el rey rival puede alcanzar un pe&oacute;n pasado antes de que
                             corone.</p>
                         <div class="study-diagram" data-fen="8/8/8/8/4P3/8/k7/4K3 w - - 0 1"></div>
@@ -836,7 +859,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>♜ Finales de Torres</h3>
+                        <h3>â™œ Finales de Torres</h3>
                         <p>El 50% de los finales involucran torres. Dominar estos principios es cr&iacute;tico.</p>
                         <div class="study-diagram" data-fen="8/8/8/4k3/R7/4PK2/8/4r3 w - - 0 1"></div>
                         <ul class="compact-list">
@@ -850,7 +873,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>♖ Mate con Torre y Rey</h3>
+                        <h3>â™– Mate con Torre y Rey</h3>
                         <p>T&eacute;cnica b&aacute;sica que debes dominar: forzar al rey rival a la orilla.</p>
                         <div class="study-diagram" data-fen="8/8/8/4k3/8/8/R7/4K3 w - - 0 1"></div>
                         <ul class="compact-list">
@@ -862,7 +885,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>⭐ Peones Pasados</h3>
+                        <h3>â­ Peones Pasados</h3>
                         <p>Un pe&oacute;n pasado es aquel que no tiene peones enemigos que lo bloqueen. Son
                             extremadamente poderosos.</p>
                         <div class="study-diagram" data-fen="8/5pk1/8/3P4/8/8/5PK1/8 w - - 0 1"></div>
@@ -875,7 +898,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>🔒 Zugzwang</h3>
+                        <h3>ðŸ”’ Zugzwang</h3>
                         <p>Situaci&oacute;n donde cualquier movimiento empeora la posici&oacute;n. Domina esta idea y
                             ganar&aacute;s finales &ldquo;imposibles&rdquo;.</p>
                         <div class="study-diagram" data-fen="8/8/1p6/1P2k3/1K6/8/8/8 b - - 0 1"></div>
@@ -888,7 +911,7 @@
                     </article>
 
                     <article class="card study-card">
-                        <h3>♗ Finales de Alfiles</h3>
+                        <h3>â™— Finales de Alfiles</h3>
                         <p>Los finales con alfiles tienen reglas propias seg&uacute;n sean del mismo color o diferente.</p>
                         <div class="study-diagram" data-fen="8/5k2/4b3/8/8/3B4/5K2/8 w - - 0 1"></div>
                         <ul class="compact-list">
@@ -906,7 +929,7 @@
         <section id="profile-section" class="panel" role="tabpanel" aria-labelledby="tab-profile">
             <div class="panel-grid profile-grid">
                 <article class="card control-card">
-                    <h3>📊 Perfil y Estad&iacute;sticas</h3>
+                    <h3>ðŸ“Š Perfil y Estad&iacute;sticas</h3>
                     <p class="muted">Solo partidas en modo Clasificatoria contra bots cuentan para este perfil y se sincronizan en DATA_BASE.</p>
 
                     <div class="summary-grid profile-summary-grid">
@@ -978,41 +1001,41 @@
 
             <p class="settings-section-title">Asistencia</p>
             <div class="settings-row has-border">
-                <label>Comentarios autom&aacute;ticos</label>
+                <label for="set-coach-auto">Comentarios autom&aacute;ticos</label>
                 <input type="checkbox" class="chess-toggle" id="set-coach-auto" checked>
             </div>
             <div class="settings-row has-border">
-                <label>Pistas</label>
+                <label for="set-hints">Pistas</label>
                 <input type="checkbox" class="chess-toggle" id="set-hints" checked>
             </div>
             <div class="settings-row has-border">
-                <label>Comentarios de movimientos</label>
+                <label for="set-move-comments">Comentarios de movimientos</label>
                 <input type="checkbox" class="chess-toggle" id="set-move-comments" checked>
             </div>
             <div class="settings-row has-border">
-                <label>Ordenador (motor)</label>
+                <label for="set-computer">Ordenador (motor)</label>
                 <input type="checkbox" class="chess-toggle" id="set-computer" checked>
             </div>
             <div class="settings-row has-border">
-                <label>Retrocesos</label>
+                <label for="set-takebacks">Retrocesos</label>
                 <input type="checkbox" class="chess-toggle" id="set-takebacks" checked>
             </div>
 
             <p class="settings-section-title">Tablero</p>
             <div class="settings-row has-border">
-                <label>Barra de evaluaci&oacute;n</label>
+                <label for="set-eval-bar">Barra de evaluaci&oacute;n</label>
                 <input type="checkbox" class="chess-toggle" id="set-eval-bar" checked>
             </div>
             <div class="settings-row has-border">
-                <label>Mostrar jugadas legales</label>
+                <label for="set-legal">Mostrar jugadas legales</label>
                 <input type="checkbox" class="chess-toggle" id="set-legal" checked>
             </div>
             <div class="settings-row has-border">
-                <label>Resaltar &uacute;ltima jugada</label>
+                <label for="set-lastmove">Resaltar &uacute;ltima jugada</label>
                 <input type="checkbox" class="chess-toggle" id="set-lastmove" checked>
             </div>
             <div class="settings-row has-border">
-                <label>Mostrar coordenadas</label>
+                <label for="set-coordinates">Mostrar coordenadas</label>
                 <input type="checkbox" class="chess-toggle" id="set-coordinates" checked>
             </div>
             <div class="settings-row has-border">
@@ -1037,21 +1060,21 @@
                 </select>
             </div>
             <div class="settings-row has-border">
-                <label>Flechas de amenazas</label>
+                <label for="set-threat-arrows">Flechas de amenazas</label>
                 <input type="checkbox" class="chess-toggle" id="set-threat-arrows">
             </div>
             <div class="settings-row has-border">
-                <label>Flechas de sugerencias</label>
+                <label for="set-suggestion-arrows">Flechas de sugerencias</label>
                 <input type="checkbox" class="chess-toggle" id="set-suggestion-arrows">
             </div>
 
             <p class="settings-section-title">General</p>
             <div class="settings-row has-border">
-                <label>Sonidos de piezas</label>
+                <label for="set-sound">Sonidos de piezas</label>
                 <input type="checkbox" class="chess-toggle" id="set-sound" checked>
             </div>
             <div class="settings-row has-border">
-                <label>Sonido de error</label>
+                <label for="set-error-sound">Sonido de error</label>
                 <input type="checkbox" class="chess-toggle" id="set-error-sound" checked>
             </div>
             <div class="settings-row has-border">
@@ -1063,15 +1086,15 @@
                 </select>
             </div>
             <div class="settings-row has-border">
-                <label>Animacion de piezas</label>
+                <label for="set-piece-anim">Animacion de piezas</label>
                 <input type="checkbox" class="chess-toggle" id="set-piece-anim" checked>
             </div>
             <div class="settings-row has-border">
-                <label>Permitir pre-moves</label>
+                <label for="set-premove">Permitir pre-moves</label>
                 <input type="checkbox" class="chess-toggle" id="set-premove" checked>
             </div>
             <div class="settings-row has-border">
-                <label>Auto promoci&oacute;n a dama</label>
+                <label for="set-autopromo">Auto promoci&oacute;n a dama</label>
                 <input type="checkbox" class="chess-toggle" id="set-autopromo" checked>
             </div>
             <div class="settings-row has-border">
@@ -1095,7 +1118,7 @@
         </div>
     </div>
 
-    <div id="promotion-modal" class="promotion-modal" role="dialog" aria-modal="true" aria-label="Elegir pieza de promoción">
+    <div id="promotion-modal" class="promotion-modal" role="dialog" aria-modal="true" aria-label="Elegir pieza de promociÃ³n">
         <div class="promo-overlay"></div>
         <div class="promo-content">
             <button class="promo-piece" data-piece="q"><img src="/static/media/white_queen.svg" alt="Dama" /></button>
@@ -1159,16 +1182,23 @@
     <audio id="fx-promote" src="/static/media/promote.mp3"></audio>
     <audio id="fx-end" src="/static/media/game_end.mp3"></audio>
 
-    <script src="/static/scripts/vendor/chess.global.js?v=20260223"></script>
-    <script src="/static/pages/report/scripts/modules/engine.js?v=20260225_polish6"></script>
-    <script src="/static/pages/report/scripts/modules/storage.js?v=20260225_polish6"></script>
-    <script src="/static/pages/report/scripts/modules/ui.js?v=20260225_polish6"></script>
-    <script src="/static/pages/report/scripts/modules/openings.js?v=20260225_polish6"></script>
-    <script src="/static/pages/report/scripts/modules/study.js?v=20260225_polish6"></script>
-    <script src="/static/pages/report/scripts/modules/ai.js?v=20260225_polish6"></script>
-    <script src="/static/pages/report/scripts/modules/play.js?v=20260225_polish6"></script>
-    <script src="/static/pages/report/scripts/modules/analysis.js?v=20260225_polish6"></script>
-    <script src="/static/pages/report/scripts/main.js?v=20260225_polish6"></script>
+    <script src="/static/scripts/vendor/chess.global.js"></script>
+    <script src="/static/pages/report/scripts/modules/locale.js"></script>
+    <script src="/static/pages/report/scripts/modules/engine.js"></script>
+    <script src="/static/pages/report/scripts/modules/storage.js"></script>
+    <script src="/static/pages/report/scripts/modules/ui.js"></script>
+    <script src="/static/pages/report/scripts/modules/openings.js"></script>
+    <script src="/static/pages/report/scripts/modules/study.js"></script>
+    <script src="/static/pages/report/scripts/modules/ai.js"></script>
+    <script src="/static/pages/report/scripts/modules/play.js"></script>
+    <script src="/static/pages/report/scripts/modules/analysis.js"></script>
+    <script src="/static/pages/report/scripts/main.js"></script>
+    <script>
+        if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.register("/static/sw.js").catch(() => {});
+        }
+    </script>
 </body>
 
 </html>
+
