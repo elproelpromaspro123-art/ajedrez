@@ -634,6 +634,21 @@ a:hover {
     line-height: 1.55;
     max-width: 95%;
     word-break: break-word;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.ai-msg .ai-msg-sender {
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    opacity: 0.74;
+    font-weight: 700;
+}
+
+.ai-msg .ai-msg-body {
+    white-space: pre-wrap;
 }
 
 .ai-msg.ai-user {

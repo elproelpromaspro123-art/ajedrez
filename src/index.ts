@@ -81,7 +81,7 @@ function renderIndexHtml(req: express.Request): string {
 app.use((_req, res, next) => {
     res.setHeader("Content-Security-Policy", [
         "default-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'",
-        "script-src 'self' blob: 'wasm-unsafe-eval' 'unsafe-eval'",
+        "script-src 'self' blob: 'wasm-unsafe-eval' 'unsafe-eval' 'unsafe-inline'",
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' https://fonts.gstatic.com",
         "img-src 'self' data:",

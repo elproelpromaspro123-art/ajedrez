@@ -93,8 +93,8 @@ const CLASSIFICATION_DOT_COLOR = {
     blunder: "#ca3431"
 };
 
-const ENGINE_PRIMARY = "/static/scripts/stockfish-nnue-16.js";
-const ENGINE_FALLBACK = "/static/scripts/stockfish.js";
+const ENGINE_PRIMARY = "/static/scripts/stockfish-18-standard-worker.js";
+const ENGINE_FALLBACK = "/static/scripts/stockfish-nnue-16.js";
 const MAX_ENGINE_MATE_PLY = 99;
 const MATE_DISPLAY_CAP = 20;
 const MAX_ENGINE_CP = 3500;
@@ -1469,6 +1469,15 @@ function getEngineHashMb() {
     return 64;
 }
 
+function createStockfishWorker(enginePath) {
+    const normalizedPath = String(enginePath || "").toLowerCase();
+    const moduleWorker = normalizedPath.includes("stockfish-18-standard-worker.js");
+    if (moduleWorker) {
+        return new Worker(enginePath, { type: "module" });
+    }
+    return new Worker(enginePath);
+}
+
 function runStockfishInternal(options, enginePath) {
     const {
         fen,
@@ -1494,7 +1503,7 @@ function runStockfishInternal(options, enginePath) {
         };
 
         try {
-            worker = new Worker(enginePath);
+            worker = createStockfishWorker(enginePath);
         } catch (error) {
             reject(error);
             return;

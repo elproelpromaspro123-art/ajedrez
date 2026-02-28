@@ -20,9 +20,21 @@
 
     function appendMessage(messagesEl, text, type) {
         if (!messagesEl) return null;
+        const tokens = String(type || "")
+            .toLowerCase()
+            .split(/\s+/)
+            .map((token) => token.trim())
+            .filter(Boolean);
+        const isUser = tokens.includes("user") || tokens.includes("ai-user");
         const div = document.createElement("div");
         div.className = resolveMessageClasses(type);
-        div.textContent = text;
+        const sender = document.createElement("span");
+        sender.className = "ai-msg-sender";
+        sender.textContent = isUser ? "Tu" : "Asistente IA";
+        const body = document.createElement("span");
+        body.className = "ai-msg-body";
+        body.textContent = text;
+        div.append(sender, body);
         messagesEl.appendChild(div);
         messagesEl.scrollTop = messagesEl.scrollHeight;
         return div;
