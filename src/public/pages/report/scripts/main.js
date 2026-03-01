@@ -3538,12 +3538,50 @@ function clearPlaySelection() {
     playState.legalTargets = [];
 }
 
-function canPlayerDragFrom(square) {
-    if (playState.thinking || isPlayGameOver()) {
-        return false;
+function fenForPreviewTurn(fen, side) {
+    const source = String(fen || "").trim();
+    if (!source) {
+        return null;
     }
 
-    if (sideFromTurn(playState.game.turn()) !== playState.playerColor) {
+    const fields = source.split(/\s+/);
+    if (fields.length < 2) {
+        return null;
+    }
+
+    const turn = turnFromSide(side);
+    if (!turn) {
+        return null;
+    }
+
+    fields[1] = turn;
+    if (fields.length > 3) {
+        // En passant square belongs to the side-to-move window; clear it when forcing preview turn.
+        fields[3] = "-";
+    }
+    return fields.join(" ");
+}
+
+function getPremoveCandidates(square) {
+    if (!square) {
+        return [];
+    }
+
+    const fen = fenForPreviewTurn(playState.game.fen(), playState.playerColor);
+    if (!fen) {
+        return [];
+    }
+
+    try {
+        const previewGame = new Chess(fen);
+        return previewGame.moves({ square, verbose: true });
+    } catch {
+        return [];
+    }
+}
+
+function canPlayerDragFrom(square) {
+    if (isPlayGameOver()) {
         return false;
     }
 
@@ -3552,7 +3590,16 @@ function canPlayerDragFrom(square) {
         return false;
     }
 
-    return piece.color === turnFromSide(playState.playerColor);
+    if (piece.color !== turnFromSide(playState.playerColor)) {
+        return false;
+    }
+
+    const playerTurn = !playState.thinking && sideFromTurn(playState.game.turn()) === playState.playerColor;
+    if (playerTurn) {
+        return true;
+    }
+
+    return Boolean(getPlaySettings().premoveEnabled);
 }
 
 /* ===== Computer Panel (Stockfish best lines like chess.com) ===== */
@@ -4210,7 +4257,12 @@ async function onPlaySquareClick(square) {
             }
 
             playState.selectedSquare = square;
-            playState.legalTargets = playState.game.moves({ square, verbose: true }).map((move) => move.to);
+            playState.legalTargets = getPremoveCandidates(square).map((move) => move.to);
+            if (playState.legalTargets.length > 0) {
+                setCoachMessage(coachNotice("tip", "Pre-move: selecciona ahora la casilla destino."));
+            } else {
+                setCoachMessage(coachNotice("info", "Esa pieza no tiene pre-move valido en esta posicion."));
+            }
             renderPlayBoard();
             return;
         }
@@ -4221,13 +4273,16 @@ async function onPlaySquareClick(square) {
             return;
         }
 
-        const premoveCandidates = playState.game.moves({ square: playState.selectedSquare, verbose: true });
+        const premoveCandidates = getPremoveCandidates(playState.selectedSquare);
         const premove = premoveCandidates.find((move) => move.to === square);
 
         if (!premove) {
             if (ownPiece) {
                 playState.selectedSquare = square;
-                playState.legalTargets = playState.game.moves({ square, verbose: true }).map((move) => move.to);
+                playState.legalTargets = getPremoveCandidates(square).map((move) => move.to);
+                if (playState.legalTargets.length === 0) {
+                    setCoachMessage(coachNotice("info", "Esa pieza no tiene pre-move valido en esta posicion."));
+                }
                 renderPlayBoard();
                 return;
             }
@@ -4347,15 +4402,6 @@ async function handleBoardDrop(from, to) {
     const currentTurn = sideFromTurn(playState.game.turn());
     const playerTurn = !playState.thinking && currentTurn === playState.playerColor;
     if (!playerTurn && !getPlaySettings().premoveEnabled) return;
-
-    const legalMoves = playState.game.moves({ square: from, verbose: true });
-    const intendedMove = legalMoves.find((move) => move.to === to);
-
-    if (!intendedMove) {
-        clearPlaySelection();
-        renderPlayBoard();
-        return;
-    }
 
     // Set selection manually to the dropped square so variables are matched
     playState.selectedSquare = from;
