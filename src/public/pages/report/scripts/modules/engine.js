@@ -8,9 +8,317 @@
     const ENGINE_EVAL_CACHE = new Map();
     const CACHE_TTL_MS = 2200;
     let engineAssetWarm = false;
+    const tinyWasmProbe = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+    const engineRuntime = {
+        wasmChecked: false,
+        wasmAllowed: true,
+        cspBlocked: false,
+        reason: "",
+        warned: false
+    };
 
     function clamp(value, min, max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    function errorText(errorOrMessage) {
+        if (typeof errorOrMessage === "string") {
+            return errorOrMessage;
+        }
+        if (errorOrMessage && typeof errorOrMessage.message === "string") {
+            return errorOrMessage.message;
+        }
+        try {
+            return String(errorOrMessage || "");
+        } catch {
+            return "";
+        }
+    }
+
+    function isCspWasmBlockError(errorOrMessage) {
+        const text = errorText(errorOrMessage).toLowerCase();
+        if (!text) return false;
+        return (
+            text.includes("content security policy")
+            || text.includes("unsafe-eval")
+            || text.includes("wasm streaming compile failed")
+            || text.includes("failed to asynchronously prepare wasm")
+        );
+    }
+
+    function markCspBlocked(reason) {
+        engineRuntime.cspBlocked = true;
+        engineRuntime.wasmAllowed = false;
+        engineRuntime.reason = errorText(reason) || "WASM bloqueado por CSP";
+    }
+
+    async function ensureWasmAllowed() {
+        if (engineRuntime.wasmChecked) {
+            return engineRuntime.wasmAllowed;
+        }
+        engineRuntime.wasmChecked = true;
+
+        if (typeof WebAssembly !== "object" || typeof WebAssembly.compile !== "function") {
+            engineRuntime.wasmAllowed = false;
+            engineRuntime.reason = "WebAssembly no disponible";
+            return false;
+        }
+
+        try {
+            await WebAssembly.compile(tinyWasmProbe);
+            engineRuntime.wasmAllowed = true;
+            return true;
+        } catch (error) {
+            if (isCspWasmBlockError(error)) {
+                markCspBlocked(error);
+                return false;
+            }
+            engineRuntime.wasmAllowed = true;
+            return true;
+        }
+    }
+
+    function safeIsCheckmate(game) {
+        if (!game) return false;
+        if (typeof game.isCheckmate === "function") return game.isCheckmate();
+        if (typeof game.in_checkmate === "function") return game.in_checkmate();
+        return false;
+    }
+
+    function safeIsDraw(game) {
+        if (!game) return false;
+        if (typeof game.isDraw === "function" && game.isDraw()) return true;
+        if (typeof game.isStalemate === "function" && game.isStalemate()) return true;
+        if (typeof game.isThreefoldRepetition === "function" && game.isThreefoldRepetition()) return true;
+        if (typeof game.isInsufficientMaterial === "function" && game.isInsufficientMaterial()) return true;
+        if (typeof game.in_draw === "function" && game.in_draw()) return true;
+        return false;
+    }
+
+    function pieceValue(pieceType) {
+        switch (pieceType) {
+        case "p": return 100;
+        case "n": return 320;
+        case "b": return 330;
+        case "r": return 500;
+        case "q": return 900;
+        default: return 0;
+        }
+    }
+
+    function materialEvalCp(game) {
+        const board = game && typeof game.board === "function" ? game.board() : null;
+        if (!Array.isArray(board)) {
+            return 0;
+        }
+
+        let white = 0;
+        let black = 0;
+        for (let r = 0; r < board.length; r += 1) {
+            const row = board[r];
+            if (!Array.isArray(row)) continue;
+            for (let c = 0; c < row.length; c += 1) {
+                const piece = row[c];
+                if (!piece || !piece.type || !piece.color) continue;
+                const value = pieceValue(piece.type);
+                if (piece.color === "w") white += value;
+                else black += value;
+            }
+        }
+        return white - black;
+    }
+
+    function fenWithTurn(fen, turn) {
+        const fields = String(fen || "").trim().split(/\s+/);
+        if (fields.length < 2) {
+            return "";
+        }
+        fields[1] = turn === "b" ? "b" : "w";
+        if (fields.length > 3) {
+            fields[3] = "-";
+        }
+        return fields.join(" ");
+    }
+
+    function mobilityEvalCp(game) {
+        try {
+            const fen = game.fen();
+            const whiteGame = new Chess(fenWithTurn(fen, "w"));
+            const blackGame = new Chess(fenWithTurn(fen, "b"));
+            const whiteMoves = whiteGame.moves().length;
+            const blackMoves = blackGame.moves().length;
+            return (whiteMoves - blackMoves) * 2;
+        } catch {
+            return 0;
+        }
+    }
+
+    function evaluatePositionCp(game) {
+        if (safeIsCheckmate(game)) {
+            // If it's checkmate and side-to-move is white, white is mated (very bad for white).
+            return game.turn() === "w" ? -MAX_ENGINE_CP : MAX_ENGINE_CP;
+        }
+        if (safeIsDraw(game)) {
+            return 0;
+        }
+
+        const material = materialEvalCp(game);
+        const mobility = mobilityEvalCp(game);
+        return clamp(Math.trunc(material + mobility), -MAX_ENGINE_CP, MAX_ENGINE_CP);
+    }
+
+    function evalToNumeric(evalObj) {
+        if (!evalObj) return 0;
+        if (evalObj.type === "mate") {
+            const mate = clamp(Number(evalObj.value || 0), -MAX_ENGINE_MATE_PLY, MAX_ENGINE_MATE_PLY);
+            if (mate > 0) return MAX_ENGINE_CP + (MAX_ENGINE_MATE_PLY - mate);
+            if (mate < 0) return -MAX_ENGINE_CP - (MAX_ENGINE_MATE_PLY - Math.abs(mate));
+            return 0;
+        }
+        return clamp(Number(evalObj.value || 0), -MAX_ENGINE_CP, MAX_ENGINE_CP);
+    }
+
+    function evaluationFromCp(cp) {
+        return sanitizeEngineEvaluation({ type: "cp", value: clamp(Math.trunc(cp), -MAX_ENGINE_CP, MAX_ENGINE_CP) });
+    }
+
+    function evaluateFallback(options) {
+        const fen = String(options && options.fen ? options.fen : "");
+        const requestedPv = clamp(parseInt(options && options.multipv, 10) || 1, 1, 5);
+        const depth = clamp(parseInt(options && options.depth, 10) || 10, 1, 99);
+
+        let game;
+        try {
+            game = new Chess(fen);
+        } catch {
+            return {
+                bestMove: "",
+                lines: []
+            };
+        }
+
+        const legalMoves = game.moves({ verbose: true });
+        if (!Array.isArray(legalMoves) || legalMoves.length === 0) {
+            const terminalEval = safeIsCheckmate(game)
+                ? sanitizeEngineEvaluation({ type: "mate", value: game.turn() === "w" ? -1 : 1 })
+                : evaluationFromCp(0);
+            return {
+                bestMove: "",
+                lines: [{
+                    id: 1,
+                    depth,
+                    moveUCI: "",
+                    moveSAN: "",
+                    evaluation: terminalEval
+                }]
+            };
+        }
+
+        const rootTurn = game.turn();
+        const rootIsWhite = rootTurn === "w";
+
+        const scored = legalMoves.map((candidate) => {
+            let evalObj = null;
+            try {
+                const after = new Chess(fen);
+                const applied = after.move({
+                    from: candidate.from,
+                    to: candidate.to,
+                    promotion: candidate.promotion || undefined
+                });
+                if (!applied) {
+                    return null;
+                }
+
+                if (safeIsCheckmate(after)) {
+                    // If black to move and checkmated after white move -> white mates.
+                    evalObj = sanitizeEngineEvaluation({ type: "mate", value: after.turn() === "b" ? 1 : -1 });
+                } else if (safeIsDraw(after)) {
+                    evalObj = evaluationFromCp(0);
+                } else {
+                    // One-reply minimax to avoid random-looking choices when WASM is blocked.
+                    const replies = after.moves({ verbose: true });
+                    if (!replies.length) {
+                        evalObj = evaluationFromCp(evaluatePositionCp(after));
+                    } else {
+                        let bestReplyCp = rootIsWhite ? Infinity : -Infinity;
+                        for (let i = 0; i < replies.length; i += 1) {
+                            const reply = replies[i];
+                            const replyGame = new Chess(after.fen());
+                            const appliedReply = replyGame.move({
+                                from: reply.from,
+                                to: reply.to,
+                                promotion: reply.promotion || undefined
+                            });
+                            if (!appliedReply) {
+                                continue;
+                            }
+                            const cp = evaluatePositionCp(replyGame);
+                            if (rootIsWhite) {
+                                if (cp < bestReplyCp) bestReplyCp = cp;
+                            } else if (cp > bestReplyCp) {
+                                bestReplyCp = cp;
+                            }
+                        }
+                        if (!Number.isFinite(bestReplyCp)) {
+                            bestReplyCp = evaluatePositionCp(after);
+                        }
+                        evalObj = evaluationFromCp(bestReplyCp);
+                    }
+                }
+            } catch {
+                evalObj = null;
+            }
+
+            if (!evalObj) {
+                return null;
+            }
+
+            return {
+                moveUCI: `${candidate.from}${candidate.to}${candidate.promotion || ""}`,
+                moveSAN: candidate.san || "",
+                evaluation: evalObj,
+                depth
+            };
+        }).filter(Boolean);
+
+        if (scored.length === 0) {
+            return {
+                bestMove: "",
+                lines: []
+            };
+        }
+
+        scored.sort((a, b) => {
+            const aScore = evalToNumeric(a.evaluation);
+            const bScore = evalToNumeric(b.evaluation);
+            return rootIsWhite ? (bScore - aScore) : (aScore - bScore);
+        });
+
+        const lines = scored.slice(0, requestedPv).map((entry, index) => ({
+            id: index + 1,
+            depth: entry.depth,
+            moveUCI: entry.moveUCI,
+            moveSAN: entry.moveSAN,
+            evaluation: entry.evaluation
+        }));
+
+        return {
+            bestMove: lines[0] ? lines[0].moveUCI : "",
+            lines
+        };
+    }
+
+    function maybeWarnEngineFallback() {
+        if (engineRuntime.warned || !engineRuntime.cspBlocked) {
+            return;
+        }
+        engineRuntime.warned = true;
+        try {
+            console.warn("[engine] WASM bloqueado por CSP. Se activa fallback JS para mantener respuesta del motor.");
+        } catch {
+            // no-op
+        }
     }
 
     function parseUciMove(uci) {
@@ -197,10 +505,17 @@
     function createStockfishWorker(enginePath) {
         const normalizedPath = String(enginePath || "").toLowerCase();
         const moduleWorker = normalizedPath.includes("stockfish-18-standard-worker.js");
-        if (moduleWorker) {
-            return new Worker(enginePath, { type: "module" });
+        try {
+            if (moduleWorker) {
+                return new Worker(enginePath, { type: "module" });
+            }
+            return new Worker(enginePath);
+        } catch (error) {
+            if (isCspWasmBlockError(error)) {
+                markCspBlocked(error);
+            }
+            throw error;
         }
-        return new Worker(enginePath);
     }
 
     function runStockfishInternal(options, enginePath) {
@@ -254,6 +569,12 @@
 
             worker.onmessage = (event) => {
                 const message = String(event.data || "");
+                if (isCspWasmBlockError(message)) {
+                    markCspBlocked(message);
+                    cleanup();
+                    reject(new Error("WASM bloqueado por CSP"));
+                    return;
+                }
 
                 if (message === "uciok") {
                     worker.postMessage("setoption name Threads value " + getEngineThreads());
@@ -320,6 +641,9 @@
             };
 
             worker.onerror = (error) => {
+                if (isCspWasmBlockError(error)) {
+                    markCspBlocked(error);
+                }
                 cleanup();
                 reject(error);
             };
@@ -356,6 +680,14 @@
             return cached.value;
         }
 
+        const wasmAllowed = await ensureWasmAllowed();
+        if (!wasmAllowed) {
+            const fallback = evaluateFallback(options);
+            ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value: fallback });
+            maybeWarnEngineFallback();
+            return fallback;
+        }
+
         // Prune cache if too large
         if (ENGINE_EVAL_CACHE.size > 200) {
             const now = Date.now();
@@ -372,12 +704,26 @@
             const value = await runStockfishInternal(options, ENGINE_PRIMARY);
             ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
             return value;
-        } catch {
+        } catch (primaryError) {
+            if (isCspWasmBlockError(primaryError) || engineRuntime.cspBlocked) {
+                markCspBlocked(primaryError);
+                const fallback = evaluateFallback(options);
+                ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value: fallback });
+                maybeWarnEngineFallback();
+                return fallback;
+            }
             try {
                 const value = await runStockfishInternal(options, ENGINE_FALLBACK);
                 ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
                 return value;
-            } catch {
+            } catch (fallbackError) {
+                if (isCspWasmBlockError(fallbackError) || engineRuntime.cspBlocked) {
+                    markCspBlocked(fallbackError);
+                    const fallback = evaluateFallback(options);
+                    ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value: fallback });
+                    maybeWarnEngineFallback();
+                    return fallback;
+                }
                 const emergencyOptions = {
                     ...options,
                     multipv: 1,
@@ -385,9 +731,19 @@
                     depth: clamp(Number(options.depth || 10), 8, 14),
                     timeoutMs: 30000
                 };
-                const value = await runStockfishInternal(emergencyOptions, ENGINE_FALLBACK);
-                ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
-                return value;
+                try {
+                    const value = await runStockfishInternal(emergencyOptions, ENGINE_FALLBACK);
+                    ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
+                    return value;
+                } catch (finalError) {
+                    if (isCspWasmBlockError(finalError)) {
+                        markCspBlocked(finalError);
+                    }
+                    const fallback = evaluateFallback(options);
+                    ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value: fallback });
+                    maybeWarnEngineFallback();
+                    return fallback;
+                }
             }
         }
     }
@@ -409,6 +765,7 @@
         evaluateWithStockfish,
         uciToSanFromFen,
         warmEngineAsset,
-        clearEvalCache
+        clearEvalCache,
+        getRuntimeStatus: () => ({ ...engineRuntime })
     };
 })(window);

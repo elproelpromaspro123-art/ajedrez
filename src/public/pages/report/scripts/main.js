@@ -1630,9 +1630,13 @@ async function warmEngineAsset() {
 async function evaluateWithStockfish(options) {
     const startedAt = nowMs();
     if (engineModule && engineModule.evaluateWithStockfish) {
-        const value = await engineModule.evaluateWithStockfish(options);
-        markFirstEvalMetric(nowMs() - startedAt);
-        return value;
+        try {
+            const value = await engineModule.evaluateWithStockfish(options);
+            markFirstEvalMetric(nowMs() - startedAt);
+            return value;
+        } catch {
+            // Continue with inline fallback path below.
+        }
     }
 
     // Fallback to inline implementation
@@ -1803,7 +1807,8 @@ const playState = {
     clockRemainingMs: { white: 0, black: 0 },
     clockActiveSide: null,
     clockLastTickAt: 0,
-    clockTimerId: null
+    clockTimerId: null,
+    engineFallbackNotified: false
 };
 
 const progressState = {
@@ -4047,6 +4052,29 @@ async function maybeAutoCoach() {
     }
 }
 
+function notifyEngineFallbackIfNeeded() {
+    if (playState.engineFallbackNotified || !engineModule || typeof engineModule.getRuntimeStatus !== "function") {
+        return;
+    }
+
+    let status = null;
+    try {
+        status = engineModule.getRuntimeStatus();
+    } catch {
+        status = null;
+    }
+
+    if (!status || !status.cspBlocked) {
+        return;
+    }
+
+    playState.engineFallbackNotified = true;
+    setCoachMessage(coachNotice(
+        "info",
+        "Tu navegador o una extension esta bloqueando WASM por CSP. Se activo un motor compatible para que la partida siga respondiendo."
+    ));
+}
+
 async function playBotMove() {
     const turn = sideFromTurn(playState.game.turn());
     if (turn !== playState.botColor || isPlayGameOver()) {
@@ -4073,6 +4101,7 @@ async function playBotMove() {
         if (localSession !== playState.sessionId) {
             return;
         }
+        notifyEngineFallbackIfNeeded();
 
         const normalizedLines = normalizeEngineLinesForFen(fenBeforeMove, result.lines || []);
         const selectedLine = chooseBotMoveFromLines(normalizedLines, playState.botColor, botProfile);
@@ -4188,6 +4217,7 @@ async function requestCoachHint(isAuto = false) {
         if (localSession !== playState.sessionId) {
             return;
         }
+        notifyEngineFallbackIfNeeded();
 
         // Update computer panel with engine lines
         const normalizedLines = normalizeEngineLinesForFen(fen, result.lines || []);
@@ -4436,6 +4466,7 @@ function goToPlaySetup(message = coachNotice("setup", "Configura una nueva parti
     playState.clockRemainingMs = { white: 0, black: 0 };
     playState.clockActiveSide = null;
     playState.clockLastTickAt = 0;
+    playState.engineFallbackNotified = false;
     stopPlayClockTimer();
     progressState.persistedGameSession = null;
     clearPlaySelection();
@@ -4514,6 +4545,7 @@ function startNewGame() {
     playState.manualGameOver = null;
     playState.lastRankedProfileDelta = null;
     playState.lastAnimatedMoveKey = "";
+    playState.engineFallbackNotified = false;
     progressState.persistedGameSession = null;
     clearPlaySelection();
     cancelMoveConfirmation();
@@ -7309,28 +7341,33 @@ async function applyExplorerFilters() {
     openingExplorerState.filterRunId += 1;
     const currentRunId = openingExplorerState.filterRunId;
 
-    const rows = openingExplorerState.rows.filter((row) => row.parentId !== null);
-    const rootGames = rows
-        .filter((row) => row.depth === 1)
-        .reduce((sum, row) => sum + Number(row.games || 0), 0);
-    const colorFilter = el.ecoFilterColor ? el.ecoFilterColor.value : "white";
-
-    const enrichedRows = rows.map((row) => {
-        const metrics = computeExplorerRowMetrics(row, colorFilter, rootGames);
-        return {
-            ...row,
-            popularity: metrics.popularity,
-            success: metrics.success,
-            frequencyTier: classifyExplorerFrequency(metrics.popularity),
-            resultTier: classifyExplorerResult(metrics.success)
-        };
-    });
-
     const filters = {
         frequencyTier: normalizeExplorerFrequencyFilter(el.ecoFilterPopularity ? el.ecoFilterPopularity.value : "all"),
         resultTier: normalizeExplorerResultFilter(el.ecoFilterSuccess ? el.ecoFilterSuccess.value : "all"),
         query: el.ecoSearch ? el.ecoSearch.value : ""
     };
+    const queryText = String(filters.query || "").trim();
+
+    const buildEnrichedRows = () => {
+        const rows = openingExplorerState.rows.filter((row) => row.parentId !== null);
+        const rootGames = rows
+            .filter((row) => row.depth === 1)
+            .reduce((sum, row) => sum + Number(row.games || 0), 0);
+        const colorFilter = el.ecoFilterColor ? el.ecoFilterColor.value : "white";
+
+        return rows.map((row) => {
+            const metrics = computeExplorerRowMetrics(row, colorFilter, rootGames);
+            return {
+                ...row,
+                popularity: metrics.popularity,
+                success: metrics.success,
+                frequencyTier: classifyExplorerFrequency(metrics.popularity),
+                resultTier: classifyExplorerResult(metrics.success)
+            };
+        });
+    };
+
+    let enrichedRows = buildEnrichedRows();
 
     let filteredRows = enrichedRows;
     if (openingsModule && openingsModule.filterTreeRows) {
@@ -7343,6 +7380,35 @@ async function applyExplorerFilters() {
 
     if (currentRunId !== openingExplorerState.filterRunId) {
         return;
+    }
+
+    if (queryText && (!Array.isArray(filteredRows) || filteredRows.length === 0)) {
+        const firstDepthUnloaded = openingExplorerState.rows
+            .filter((row) => row && row.depth === 1 && !row.loaded)
+            .slice(0, 14);
+
+        if (firstDepthUnloaded.length > 0) {
+            for (let i = 0; i < firstDepthUnloaded.length; i += 1) {
+                // Load one level deeper while searching so terms like "Defensa" return matches.
+                await ensureExplorerNodeChildren(firstDepthUnloaded[i]);
+                if (currentRunId !== openingExplorerState.filterRunId) {
+                    return;
+                }
+            }
+
+            enrichedRows = buildEnrichedRows();
+            filteredRows = enrichedRows;
+            if (openingsModule && openingsModule.filterTreeRows) {
+                try {
+                    filteredRows = await openingsModule.filterTreeRows(enrichedRows, filters);
+                } catch {
+                    filteredRows = enrichedRows;
+                }
+            }
+            if (currentRunId !== openingExplorerState.filterRunId) {
+                return;
+            }
+        }
     }
 
     openingExplorerState.filteredRows = Array.isArray(filteredRows)
