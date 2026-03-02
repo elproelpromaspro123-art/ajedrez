@@ -3293,21 +3293,7 @@ async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveInd
         const bookMove = bookResult.isBook && cpLoss < 90;
 
         // Classify and save to the exact move index
-        let cls = classifyMove(cpLoss, bookMove, cpBefore, cpAfterAdjusted, moverIsWhite);
-
-        // Cap bot move classification for low-ELO bots - a 1200 bot shouldn't be getting "brilliant"
-        if (!isPlayerMove && playState.botElo <= 1600) {
-            const botClsCap = playState.botElo <= 1000 ? "good"
-                : playState.botElo <= 1400 ? "best"
-                    : "great";
-            const clsRank = { brilliant: 6, great: 5, best: 4, excellent: 3, good: 2, book: 2, inaccuracy: 1, mistake: 0, blunder: 0 };
-            const capRank = clsRank[botClsCap] || 2;
-            const moveRank = clsRank[cls.key] || 0;
-            if (moveRank > capRank) {
-                const downgrade = botClsCap === "good" ? "good" : (botClsCap === "best" ? "best" : "excellent");
-                cls = MOVE_CLASSES.find(c => c.key === downgrade) || cls;
-            }
-        }
+        const cls = classifyMove(cpLoss, bookMove, cpBefore, cpAfterAdjusted, moverIsWhite);
 
         playState.moveClassifications[moveIndex] = cls.key;
 
@@ -4092,6 +4078,8 @@ function getBotDecisionProfile(elo, gameType = "standard") {
     const candidateShift = normalizedGameType === "challenge" ? -1 : (normalizedGameType === "training" ? 1 : 0);
     const isLowElo = bounded <= 1400;
     const isVeryLowElo = bounded <= 1000;
+    // Blunder injection: a real low-ELO player makes genuine bad moves regularly
+    const blunderChance = isVeryLowElo ? 0.18 : (isLowElo ? 0.12 - strength * 0.08 : 0);
     const humanLikeRandom = isVeryLowElo ? 0.42 : (isLowElo ? 0.30 + (1 - strength) * 0.22 : 0);
     const humanLikeRankPenalty = isVeryLowElo ? 0.3 : (isLowElo ? 0.4 + (1 - strength) * 0.3 : 0);
     return {
@@ -4102,6 +4090,7 @@ function getBotDecisionProfile(elo, gameType = "standard") {
         temperatureCp: clamp(Math.round(290 - strength * 220) + (isLowElo ? 100 : 0), 55, 380),
         rankPenalty: isVeryLowElo ? 0.18 : (0.22 + (strength * 0.45) + humanLikeRankPenalty),
         randomMoveChance: clamp((0.32 - strength * 0.26) * randomnessScale + humanLikeRandom, 0.06, 0.55),
+        blunderChance: clamp(blunderChance, 0, 0.25),
         isLowElo,
         isVeryLowElo
     };
@@ -4149,6 +4138,15 @@ function chooseBotMoveFromLines(lines, botSide, profile) {
     const randomChance = Number(profile && profile.randomMoveChance || 0);
     if (Math.random() < randomChance) {
         return shortlist[Math.floor(Math.random() * shortlist.length)].line;
+    }
+
+    // Blunder injection: genuine bad move like a real low-ELO player
+    const blunderChance = Number(profile && profile.blunderChance || 0);
+    if (blunderChance > 0 && shortlist.length >= 3 && Math.random() < blunderChance) {
+        // Pick one of the worst moves from the full candidate list
+        const worstIndex = shortlist.length - 1;
+        const badIndex = Math.random() < 0.5 ? worstIndex : Math.max(worstIndex - 1, 1);
+        return shortlist[badIndex].line;
     }
 
     const isLowElo = Boolean(profile && profile.isLowElo);
