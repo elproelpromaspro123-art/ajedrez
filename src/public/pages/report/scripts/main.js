@@ -156,6 +156,14 @@ const el = {
     playGamePanel: document.querySelector("#play-game-panel"),
     playPanelGrid: document.querySelector("#play-panel-grid"),
     playBoardCard: document.querySelector("#play-board-card"),
+    coachSpotlight: document.querySelector("#coach-spotlight"),
+    coachSpotlightName: document.querySelector("#coach-spotlight-name"),
+    coachSpotlightRole: document.querySelector("#coach-spotlight-role"),
+    coachSpotlightText: document.querySelector("#coach-spotlight-text"),
+    coachDecisionBar: document.querySelector("#coach-decision-bar"),
+    coachDecisionText: document.querySelector("#coach-decision-text"),
+    coachUndoBtn: document.querySelector("#coach-undo-btn"),
+    coachContinueBtn: document.querySelector("#coach-continue-btn"),
     coachHistoryContainer: document.querySelector("#coach-history-container"),
 
     /* Computer panel */
@@ -1871,14 +1879,22 @@ const playState = {
     clockActiveSide: null,
     clockLastTickAt: 0,
     clockTimerId: null,
-    engineFallbackNotified: false
+    engineFallbackNotified: false,
+    coachDecisionPending: null
+};
+
+const coachNarrationState = {
+    inFlight: false,
+    lastAt: 0,
+    minIntervalMs: 14000
 };
 
 const progressState = {
     persistedGameSession: null,
     remoteHydrated: false,
     remoteSyncTimer: null,
-    remoteSyncInFlight: false
+    remoteSyncInFlight: false,
+    lastProfileSyncHash: ""
 };
 
 const authState = {
@@ -2315,8 +2331,8 @@ const COACH_PREFIX = {
     setup: "\u2726"
 };
 
-const COACH_SPEECH_RATE = 0.92;
-const COACH_SPEECH_PITCH = 1.06;
+const COACH_SPEECH_RATE = 0.95;
+const COACH_SPEECH_PITCH = 1.02;
 const COACH_SPEECH_VOLUME = 1;
 const COACH_SPEECH_MIN_INTERVAL_MS = 1200;
 const COACH_SPEECH_MAX_LENGTH = 280;
@@ -2339,12 +2355,12 @@ function stripCoachSpeechText(value) {
     const noEmojis = raw.replace(/[\u{1F300}-\u{1FAFF}]/gu, "");
     const cleaned = noEmojis
         .replace(/[\u2600-\u27BF]/g, " ")
-        .replace(/[•·]/g, " ")
+        .replace(/[\u2022\u00B7]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
     if (!cleaned) return "";
     if (cleaned.length <= COACH_SPEECH_MAX_LENGTH) return cleaned;
-    return `${cleaned.slice(0, COACH_SPEECH_MAX_LENGTH - 1)}…`;
+    return `${cleaned.slice(0, COACH_SPEECH_MAX_LENGTH - 1)}...`;
 }
 
 function loadCoachVoice() {
@@ -2356,8 +2372,9 @@ function loadCoachVoice() {
         return;
     }
     const esVoices = voices.filter((v) => /^es(-|$)/i.test(v.lang || ""));
-    const preferNatural = esVoices.find((v) => /Google|Microsoft|Natural|Premium|Daniel|Paulina|Sabina|Monica/i.test(v.name || ""));
-    const preferEs = preferNatural || esVoices[0] || voices.find((v) => /^es(-|$)/i.test(v.lang || ""));
+    const naturalByName = esVoices.find((v) => /Google|Microsoft|Neural|Natural|Premium|Paulina|Sabina|Helena|Alvaro|Dalia/i.test(v.name || ""));
+    const naturalByCloud = esVoices.find((v) => v.localService === false);
+    const preferEs = naturalByName || naturalByCloud || esVoices[0] || voices.find((v) => /^es(-|$)/i.test(v.lang || ""));
     const preferEn = voices.find((v) => /^en(-|$)/i.test(v.lang || ""));
     coachSpeechState.voice = preferEs || preferEn || voices[0] || null;
     coachSpeechState.loaded = true;
@@ -2409,8 +2426,10 @@ function speakCoachText(message, options = {}) {
     } else {
         utterance.lang = "es-ES";
     }
-    utterance.rate = COACH_SPEECH_RATE;
-    utterance.pitch = COACH_SPEECH_PITCH;
+    const adaptiveRate = clamp(COACH_SPEECH_RATE - (text.length > 160 ? 0.07 : text.length > 110 ? 0.04 : 0), 0.82, 1.05);
+    const adaptivePitch = clamp(COACH_SPEECH_PITCH + (/\?/.test(text) ? 0.04 : 0), 0.9, 1.2);
+    utterance.rate = adaptiveRate;
+    utterance.pitch = adaptivePitch;
     utterance.volume = COACH_SPEECH_VOLUME;
 
     stopCoachSpeech();
@@ -2458,6 +2477,47 @@ function setTextWithOptionalOpeningLink(container, message, openingContext) {
     }
 }
 
+function normalizeCoachBubbleText(message) {
+    return String(message || "")
+        .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
+        .replace(/[•·]/g, " ")
+        .replace(/\b(Eval|Evaluacion):[^.]*\.?/gi, "")
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
+function activateCoachSidebarTab() {
+    if (!isCoachMode()) return;
+    const coachTab = document.querySelector('[data-sidebar-tab="coach-tab"]');
+    if (coachTab && !coachTab.classList.contains("is-active")) {
+        coachTab.click();
+    }
+}
+
+function setCoachSpotlightVisible(visible) {
+    if (!el.coachSpotlight) return;
+    el.coachSpotlight.style.display = visible ? "grid" : "none";
+}
+
+function hideCoachDecisionPrompt() {
+    playState.coachDecisionPending = null;
+    if (el.coachDecisionBar) {
+        el.coachDecisionBar.style.display = "none";
+    }
+}
+
+function showCoachDecisionPrompt(payload) {
+    if (!isCoachMode()) return;
+    if (!payload || !payload.move || !payload.fenBefore || !payload.fenAfter) return;
+    playState.coachDecisionPending = payload;
+    if (el.coachDecisionText) {
+        el.coachDecisionText.textContent = payload.text || "Hubo un error aqui. ¿Quieres deshacer para corregirlo?";
+    }
+    if (el.coachDecisionBar) {
+        el.coachDecisionBar.style.display = "grid";
+    }
+}
+
 function setCoachMessage(message, options = {}) {
     const openingContext = options && options.openingName
         ? {
@@ -2469,6 +2529,17 @@ function setCoachMessage(message, options = {}) {
 
     if (el.coachMessage) {
         setTextWithOptionalOpeningLink(el.coachMessage, message, openingContext);
+    }
+
+    if (el.coachSpotlightText) {
+        const bubbleText = normalizeCoachBubbleText(message);
+        el.coachSpotlightText.textContent = bubbleText || "Te escucho. Vamos por la mejor jugada.";
+    }
+    if (el.coachSpotlightRole) {
+        el.coachSpotlightRole.textContent = isCoachMode() ? "Rival y Entrenador" : "Entrenador";
+    }
+    if (el.coachSpotlightName) {
+        el.coachSpotlightName.textContent = "Maestro Leo";
     }
 
     if (!el.coachHistoryContainer) {
@@ -2489,6 +2560,10 @@ function setCoachMessage(message, options = {}) {
         && !isPlayGameOver();
     if (forceSpeech || shouldSpeakByMode) {
         speakCoachText(message, { force: forceSpeech });
+    }
+
+    if (isCoachMode()) {
+        activateCoachSidebarTab();
     }
 }
 
@@ -2524,8 +2599,8 @@ function classifyMove(cpLoss, isBookMove, previousEvalCp = 0, currentEvalCp = 0,
     const expectedGain = Math.max(0, afterPoints - beforePoints);
 
     // Chess.com style: classify by expected points lost/won.
-    if (expectedGain >= 0.18 && cpLoss <= -120) return MOVE_CLASSES.find(c => c.key === "brilliant");
-    if (expectedGain >= 0.08 && cpLoss <= -45) return MOVE_CLASSES.find(c => c.key === "great");
+    if (expectedGain >= 0.24 && cpLoss <= -180) return MOVE_CLASSES.find(c => c.key === "brilliant");
+    if (expectedGain >= 0.12 && cpLoss <= -85) return MOVE_CLASSES.find(c => c.key === "great");
     if (expectedLoss <= 0.004) return MOVE_CLASSES.find(c => c.key === "best");
     if (expectedLoss <= 0.012) return MOVE_CLASSES.find(c => c.key === "excellent");
     if (expectedLoss < 0.02) return MOVE_CLASSES.find(c => c.key === "good");
@@ -2732,25 +2807,84 @@ function buildCoachComment(classification, move, evalAfter, openingName) {
 
     switch (classification.key) {
         case "brilliant":
-            return `${classification.icon} \u2726 ${descStr} (${sanStr}) \u2014 \u00a1Brillante! Jugada excepcional. \u2022 Eval: ${evalText}`;
+            return `Excelente golpe con ${descStr} (${sanStr}). Fue una jugada brillante y subio mucho la evaluacion (${evalText}).`;
         case "great":
-            return `${classification.icon} \u25b8 ${descStr} (${sanStr}) \u2014 \u00a1Gran jugada! Mejoraste tu posici\u00f3n. \u2022 Eval: ${evalText}`;
+            return `Muy buena decision con ${descStr} (${sanStr}). Mejoraste la posicion de forma clara (${evalText}).`;
         case "best":
-            return `${classification.icon} \u2713 ${descStr} (${sanStr}) \u2014 La mejor jugada aqu\u00ed. \u2022 Eval: ${evalText}`;
+            return `${descStr} (${sanStr}) fue la mejor opcion practica en esta posicion (${evalText}).`;
         case "excellent":
-            return `${classification.icon} ${descStr} (${sanStr}) \u2014 Excelente jugada, muy precisa. \u2022 Eval: ${evalText}`;
+            return `${descStr} (${sanStr}) fue muy precisa y mantiene el plan correcto (${evalText}).`;
         case "good":
-            return `\ud83d\udc4d ${descStr} (${sanStr}) \u2014 Buena jugada. \u2022 Eval: ${evalText}`;
+            return `${descStr} (${sanStr}) es una jugada solida. Hay alternativas un poco mas activas (${evalText}).`;
         case "book":
-            return `\ud83d\udcda \u2726 ${descStr} (${sanStr}) \u2014 Jugada te\u00f3rica: ${openingName || "Apertura no catalogada"}. \u2022 Eval: ${evalText}`;
+            return `${descStr} (${sanStr}) es teoria de apertura: ${openingName || "Apertura no catalogada"}.`;
         case "inaccuracy":
-            return `\u26a0\ufe0f ${descStr} (${sanStr}) \u2014 Imprecisi\u00f3n, hab\u00eda algo mejor. \u2022 Eval: ${evalText}`;
+            return `${descStr} (${sanStr}) fue una imprecision. Perdiste parte de la ventaja (${evalText}).`;
         case "mistake":
-            return `\u274c ${descStr} (${sanStr}) \u2014 Error. Perdiste ventaja. \u2022 Eval: ${evalText}`;
+            return `${descStr} (${sanStr}) fue un error. La posicion empeoro de forma importante (${evalText}).`;
         case "blunder":
-            return `\ud83d\udca5 ${descStr} (${sanStr}) \u2014 \u00a1Desastre! Pierde material o posici\u00f3n cr\u00edtica. \u2022 Eval: ${evalText}`;
+            return `${descStr} (${sanStr}) fue un error grave. Quedo una desventaja grande (${evalText}).`;
         default:
-            return `${descStr} \u2022 Eval: ${evalText}`;
+            return `${descStr}. Evaluacion actual: ${evalText}.`;
+    }
+}
+
+function shouldOfferCoachRetry(classificationKey) {
+    return classificationKey === "inaccuracy" || classificationKey === "mistake" || classificationKey === "blunder";
+}
+
+function buildCoachRetryText(move, classificationKey) {
+    const moveText = move ? sanToSpanish(move.san) : "esa jugada";
+    if (classificationKey === "blunder") {
+        return `Hubo un error grave en ${moveText}. Puedo deshacerla para que la replantees o seguimos jugando.`;
+    }
+    if (classificationKey === "mistake") {
+        return `Aqui hubo un error con ${moveText}. ¿Quieres deshacer para encontrar una mejor linea?`;
+    }
+    return `Aqui hubo una imprecision con ${moveText}. ¿Deshacemos para mejorarla o continuamos?`;
+}
+
+async function requestCoachNarration(context) {
+    if (!isCoachMode()) return null;
+    if (coachNarrationState.inFlight) return null;
+    if ((Date.now() - coachNarrationState.lastAt) < coachNarrationState.minIntervalMs) return null;
+
+    const cls = String(context && context.classificationKey || "");
+    if (!(cls === "inaccuracy" || cls === "mistake" || cls === "blunder")) {
+        return null;
+    }
+
+    coachNarrationState.inFlight = true;
+    coachNarrationState.lastAt = Date.now();
+    try {
+        const moveSan = context && context.move ? context.move.san : "";
+        const systemPrompt = [
+            "Eres Maestro Leo, entrenador carismatico de ajedrez en espanol.",
+            "Habla corto (maximo 2 frases), natural y competitivo, sin emojis.",
+            "Debes explicar por que la jugada fue mala y dar una recomendacion concreta."
+        ].join(" ");
+        const question = [
+            `Jugador color: ${playState.playerColor}.`,
+            `Jugada: ${moveSan}.`,
+            `Clasificacion: ${cls}.`,
+            `Eval antes: ${context.cpBefore} cp.`,
+            `Eval despues: ${context.cpAfter} cp.`,
+            `Describe el error y el plan inmediato para corregirlo.`
+        ].join(" ");
+
+        const response = await fetch("/api/ai-chat", withAuthFetchOptions({
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ question, systemPrompt, structured: false })
+        }));
+        if (!response.ok) return null;
+        const payload = await readJsonResponseSafe(response);
+        const content = payload && payload.content ? String(payload.content).trim() : "";
+        return content || null;
+    } catch {
+        return null;
+    } finally {
+        coachNarrationState.inFlight = false;
     }
 }
 
@@ -3320,22 +3454,55 @@ async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveInd
 
         if (isPlayerMove && commentsEnabled) {
             showMoveBadge(cls, "Tu jugada", bookDetail, openingContext);
+            hideCoachDecisionPrompt();
             if (isCoachMode()) {
                 const coachTip = getCoachTurnComment(move, cls, evalAfter);
+                const fallbackComment = buildCoachComment(cls, move, evalAfter, bookResult.name);
+                const firstComment = coachTip || fallbackComment;
                 if (coachTip) {
-                    setCoachMessage(coachTip, openingContext || undefined);
+                    setCoachMessage(firstComment, { ...(openingContext || {}), forceSpeech: true });
                 } else {
-                    setCoachMessage(buildCoachComment(cls, move, evalAfter, bookResult.name), openingContext || undefined);
+                    setCoachMessage(firstComment, { ...(openingContext || {}), forceSpeech: true });
+                }
+
+                if (shouldOfferCoachRetry(cls.key) && !isPlayGameOver()) {
+                    showCoachDecisionPrompt({
+                        text: buildCoachRetryText(move, cls.key),
+                        move,
+                        fenBefore,
+                        fenAfter
+                    });
+
+                    requestCoachNarration({
+                        move,
+                        classificationKey: cls.key,
+                        cpBefore,
+                        cpAfter
+                    }).then((dynamicComment) => {
+                        if (!dynamicComment || localSession !== playState.sessionId) {
+                            return;
+                        }
+                        if ((playState.game.history().length - 1) !== moveIndex) {
+                            return;
+                        }
+                        setCoachMessage(dynamicComment, { forceSpeech: true });
+                    }).catch(() => {});
                 }
             } else {
                 setCoachMessage(buildCoachComment(cls, move, evalAfter, bookResult.name), openingContext || undefined);
             }
         } else if (!isPlayerMove && commentsEnabled) {
             showMoveBadge(cls, "Rival", bookDetail, openingContext);
-            const baseComment = buildCoachComment(cls, move, evalAfter, bookResult.name);
+            hideCoachDecisionPrompt();
             if (isCoachMode()) {
-                setCoachMessage(`\ud83e\udd16 El rival jugo ${sanToSpanish(move.san)}. ${baseComment.split(' \u2022 ')[0]} \u2022 \u00a1Tu turno! \u00bfQu\u00e9 plan tienes?`, openingContext || undefined);
+                const rivalMoveText = sanToSpanish(move.san);
+                const rivalSummary = buildCoachComment(cls, move, evalAfter, bookResult.name);
+                setCoachMessage(`Mi jugada fue ${rivalMoveText}. ${rivalSummary} Tu turno: busca una respuesta activa.`, {
+                    ...(openingContext || {}),
+                    forceSpeech: true
+                });
             } else {
+                const baseComment = buildCoachComment(cls, move, evalAfter, bookResult.name);
                 setCoachMessage(`\ud83e\udd16 Rival \u2022 ${baseComment} \u2022 Tu turno.`, openingContext || undefined);
             }
         }
@@ -3343,6 +3510,7 @@ async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveInd
         if (!commentsEnabled) {
             return;
         }
+        hideCoachDecisionPrompt();
         if (isPlayerMove) {
             setCoachMessage(coachNotice("warn", "Jugaste " + move.san + ". No se pudo evaluar."));
         } else {
@@ -3449,9 +3617,7 @@ function renderEndgameRankedImpact(winner) {
     }
 
     const delta = playState.lastRankedProfileDelta;
-    const playerResult = getPlayerResultLabel(winner);
     const shouldShow = normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED
-        && playerResult === "loss"
         && delta
         && delta.before
         && delta.after;
@@ -3484,6 +3650,7 @@ function showEndgameSummary(title, reason, winner) {
         return;
     }
     playState.endgameShown = true;
+    hideCoachDecisionPrompt();
 
     const opening = detectOpening(playState.game.history(), playState.game.fen()) || "Sin apertura detectada";
     const totalPly = playState.game.history().length;
@@ -3631,7 +3798,7 @@ function renderPlayStatus() {
     const turn = sideFromTurn(playState.game.turn());
     const modePrefix = normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED && playState.startTime
         ? "Clasificatoria | "
-        : "";
+        : (isCoachMode() && playState.startTime ? "Coach Duel | " : "");
 
     if (playState.thinking) {
         el.playStatus.textContent = `${modePrefix}Bot (${playState.botElo}) pensando...`;
@@ -3652,11 +3819,17 @@ function renderPlayBoard() {
     const moveKey = playState.lastMove
         ? `${playState.game.history().length}:${playState.lastMove.from}${playState.lastMove.to}${playState.lastMove.san}`
         : "";
+    const lastMoveSide = playState.lastMove
+        ? (playState.lastMove.color === "w" ? "white" : "black")
+        : "";
+    const shouldAnimateGlide = settings.pieceAnimation && lastMoveSide === playState.botColor;
     if (!moveKey) {
         playState.lastAnimatedMoveKey = "";
-    } else if (settings.pieceAnimation && moveKey !== playState.lastAnimatedMoveKey) {
+    } else if (shouldAnimateGlide && moveKey !== playState.lastAnimatedMoveKey) {
         playState.lastAnimatedMoveKey = moveKey;
-        playState.board.animateMove(playState.lastMove, { durationMs: 220 });
+        playState.board.animateMove(playState.lastMove, { durationMs: 170 });
+    } else if (!shouldAnimateGlide) {
+        playState.lastAnimatedMoveKey = moveKey;
     }
     playState.board.clearHighlights();
 
@@ -4073,26 +4246,17 @@ function getBotDecisionProfile(elo, gameType = "standard") {
     const strength = (bounded - 400) / 2400;
     const normalizedGameType = normalizeGameType(gameType);
     const depthBoost = normalizedGameType === "challenge" ? 2 : (normalizedGameType === "training" ? -1 : 0);
-    const timeScale = normalizedGameType === "challenge" ? 1.32 : (normalizedGameType === "training" ? 0.82 : 1);
-    const randomnessScale = normalizedGameType === "challenge" ? 0.78 : (normalizedGameType === "training" ? 1.2 : 1);
-    const candidateShift = normalizedGameType === "challenge" ? -1 : (normalizedGameType === "training" ? 1 : 0);
-    const isLowElo = bounded <= 1400;
-    const isVeryLowElo = bounded <= 1000;
-    // Blunder injection: a real low-ELO player makes genuine bad moves regularly
-    const blunderChance = isVeryLowElo ? 0.18 : (isLowElo ? 0.12 - strength * 0.08 : 0);
-    const humanLikeRandom = isVeryLowElo ? 0.42 : (isLowElo ? 0.30 + (1 - strength) * 0.22 : 0);
-    const humanLikeRankPenalty = isVeryLowElo ? 0.3 : (isLowElo ? 0.4 + (1 - strength) * 0.3 : 0);
+    const timeScale = normalizedGameType === "challenge" ? 1.16 : (normalizedGameType === "training" ? 0.86 : 1);
     return {
-        multipv: strength < 0.2 ? 6 : strength < 0.35 ? 5 : strength < 0.6 ? 4 : 3,
-        depth: clamp(Math.round(6 + bounded / 280) + depthBoost - (isLowElo ? 2 : 0), 5, 16),
-        movetime: clamp(Math.round((170 + bounded / 3.6) * timeScale), 180, 2100),
-        maxCandidates: clamp((strength < 0.3 ? 6 : strength < 0.55 ? 5 : 3) + candidateShift, 2, 6),
-        temperatureCp: clamp(Math.round(290 - strength * 220) + (isLowElo ? 100 : 0), 55, 380),
-        rankPenalty: isVeryLowElo ? 0.18 : (0.22 + (strength * 0.45) + humanLikeRankPenalty),
-        randomMoveChance: clamp((0.32 - strength * 0.26) * randomnessScale + humanLikeRandom, 0.06, 0.55),
-        blunderChance: clamp(blunderChance, 0, 0.25),
-        isLowElo,
-        isVeryLowElo
+        // Keep behaviour tied to actual UCI_Elo, without manual blunder injection/caps.
+        multipv: 2,
+        depth: clamp(Math.round(8 + (strength * 6)) + depthBoost, 8, 18),
+        movetime: clamp(Math.round((260 + strength * 980) * timeScale), 220, 2100),
+        maxCandidates: 2,
+        temperatureCp: clamp(Math.round(135 - strength * 48), 70, 160),
+        rankPenalty: 0.62,
+        randomMoveChance: normalizedGameType === "training" ? 0.05 : 0.015,
+        strictElo: true
     };
 }
 
@@ -4135,34 +4299,18 @@ function chooseBotMoveFromLines(lines, botSide, profile) {
         return ranked[0] ? ranked[0].line : null;
     }
 
+    if (profile && profile.strictElo) {
+        return shortlist[0].line;
+    }
+
     const randomChance = Number(profile && profile.randomMoveChance || 0);
     if (Math.random() < randomChance) {
         return shortlist[Math.floor(Math.random() * shortlist.length)].line;
     }
 
-    // Blunder injection: genuine bad move like a real low-ELO player
-    const blunderChance = Number(profile && profile.blunderChance || 0);
-    if (blunderChance > 0 && shortlist.length >= 3 && Math.random() < blunderChance) {
-        // Pick one of the worst moves from the full candidate list
-        const worstIndex = shortlist.length - 1;
-        const badIndex = Math.random() < 0.5 ? worstIndex : Math.max(worstIndex - 1, 1);
-        return shortlist[badIndex].line;
-    }
-
-    const isLowElo = Boolean(profile && profile.isLowElo);
-    const isVeryLowElo = Boolean(profile && profile.isVeryLowElo);
-    if (isVeryLowElo && shortlist.length >= 2 && Math.random() < 0.55) {
-        const suboptimalIndex = Math.min(shortlist.length - 1, 1 + Math.floor(Math.random() * (shortlist.length - 1)));
-        return shortlist[suboptimalIndex].line;
-    }
-    if (isLowElo && shortlist.length >= 2 && Math.random() < 0.42) {
-        const suboptimalIndex = Math.random() < 0.55 ? 1 : (shortlist.length >= 3 ? 2 : 1);
-        return shortlist[suboptimalIndex].line;
-    }
-
     const bestScore = shortlist[0].score;
-    const temperature = clamp(Number(profile && profile.temperatureCp || 120), 30, 320);
-    const rankPenalty = clamp(Number(profile && profile.rankPenalty || 0.4), 0.1, 1.5);
+    const temperature = clamp(Number(profile && profile.temperatureCp || 120), 30, 260);
+    const rankPenalty = clamp(Number(profile && profile.rankPenalty || 0.4), 0.1, 1.2);
     const weights = shortlist.map((entry, index) => {
         const loss = Math.max(0, bestScore - entry.score);
         const evalWeight = Math.exp(-loss / temperature);
@@ -4332,9 +4480,10 @@ async function playBotMove() {
 
         const normalizedLines = normalizeEngineLinesForFen(fenBeforeMove, result.lines || []);
         const selectedLine = chooseBotMoveFromLines(normalizedLines, playState.botColor, botProfile);
-        const selectedMoveUci = selectedLine && selectedLine.moveUCI
-            ? selectedLine.moveUCI
-            : result.bestMove;
+        const selectedMoveUci = result.bestMove
+            || (selectedLine && selectedLine.moveUCI)
+            || (normalizedLines[0] && normalizedLines[0].moveUCI)
+            || "";
         const normalizedBestMove = normalizeUciMoveForFen(fenBeforeMove, selectedMoveUci);
         if (!normalizedBestMove) {
             throw new Error("El motor devolvio una jugada invalida.");
@@ -4704,6 +4853,8 @@ function goToPlaySetup(message = coachNotice("setup", "Configura una nueva parti
     if (el.playGamePanel) el.playGamePanel.style.display = "none";
     if (el.playPanelGrid) el.playPanelGrid.classList.add("setup-mode");
     if (el.playBoardCard) el.playBoardCard.style.display = "none";
+    setCoachSpotlightVisible(false);
+    hideCoachDecisionPrompt();
     if (el.playMoveList) el.playMoveList.innerHTML = "";
     if (el.coachHistoryContainer) el.coachHistoryContainer.innerHTML = "";
     clearAiChatHistory();
@@ -4805,6 +4956,8 @@ function startNewGame() {
     if (el.playGamePanel) el.playGamePanel.style.display = "flex";
     if (el.playPanelGrid) el.playPanelGrid.classList.remove("setup-mode");
     if (el.playBoardCard) el.playBoardCard.style.display = "";
+    setCoachSpotlightVisible(coachMode);
+    hideCoachDecisionPrompt();
     if (el.coachHistoryContainer) el.coachHistoryContainer.innerHTML = "";
     clearAiChatHistory();
 
@@ -4820,7 +4973,7 @@ function startNewGame() {
         ? " Tipo: estandar."
         : ` Tipo: ${settings.gameType}.`;
     const eloMsg = coachMode
-        ? `\ud83c\udf93 \u00a1Hola! Soy tu entrenador. Vamos a jugar juntos contra el bot (${playState.botElo} ELO). Te guiar\u00e9 en cada jugada. \u00a1Juegas con ${chosenColor === "white" ? "blancas" : "negras"}!`
+        ? `Maestro Leo listo. Hoy soy tu rival y tu entrenador en modo competitivo (${playState.botElo} ELO). Juegas con ${chosenColor === "white" ? "blancas" : "negras"}.`
         : rankedMode
             ? `Clasificatoria iniciada contra bot ${playState.botElo} ELO. Color asignado al azar: juegas con ${chosenColor === "white" ? "blancas" : "negras"}.`
             : (settings.computerEnabled
@@ -4870,6 +5023,7 @@ function undoPlayMove() {
     playState.pendingEvaluations = 0;
     playState.lastAnimatedMoveKey = "";
     clearComputerTopLines();
+    hideCoachDecisionPrompt();
     switchPlayClockTo(sideFromTurn(playState.game.turn()));
     clearPlaySelection();
     setCoachMessage(coachNotice("ok", "Jugada deshecha. Es tu turno."));
@@ -4889,6 +5043,7 @@ function resignCurrentGame() {
     playState.hintMove = null;
     playState.premove = null;
     clearComputerTopLines();
+    hideCoachDecisionPrompt();
     stopPlayClockTimer();
     playState.clockActiveSide = null;
     playState.clockLastTickAt = 0;
@@ -6754,20 +6909,29 @@ async function syncProfileStoreToDatabaseNow() {
     progressState.remoteSyncInFlight = true;
     try {
         const progress = analysisModule.loadProgress();
+        const payloadBody = {
+            progress,
+            lessons: {
+                progressByLesson: lessonState.progressByLesson
+            },
+            profile: {
+                syncedAt: new Date().toISOString()
+            }
+        };
+        const payloadHash = JSON.stringify({
+            progress,
+            lessonKeys: Object.keys(lessonState.progressByLesson || {}).sort()
+        });
+        if (payloadHash === progressState.lastProfileSyncHash) {
+            return;
+        }
+
         const response = await fetch("/api/profile-store/sync", withAuthFetchOptions({
             method: "POST",
             headers: {
                 "Content-Type": "application/json"
             },
-            body: JSON.stringify({
-                progress,
-                lessons: {
-                    progressByLesson: lessonState.progressByLesson
-                },
-                profile: {
-                    syncedAt: new Date().toISOString()
-                }
-            })
+            body: JSON.stringify(payloadBody)
         }));
         if (response.status === 401) {
             const payload = await readJsonResponseSafe(response);
@@ -6778,9 +6942,16 @@ async function syncProfileStoreToDatabaseNow() {
                 : "Sesion expirada. Vuelve a iniciar sesion.");
             return;
         }
+        if (response.status === 400) {
+            // Avoid hammering the sync endpoint with the same invalid payload.
+            progressState.lastProfileSyncHash = payloadHash;
+            return;
+        }
         if (!response.ok) {
             throw new Error(`Remote profile sync failed (${response.status}).`);
         }
+
+        progressState.lastProfileSyncHash = payloadHash;
     } catch {
         // ignore sync failures; local data remains authoritative
     } finally {
@@ -7874,6 +8045,7 @@ async function initOpeningExplorer() {
                 if (el.playGamePanel) el.playGamePanel.style.display = "flex";
                 if (el.playPanelGrid) el.playPanelGrid.classList.remove("setup-mode");
                 if (el.playBoardCard) el.playBoardCard.style.display = "";
+                setCoachSpotlightVisible(isCoachMode());
 
                 renderPlayBoard();
                 renderPlayMoveList();
@@ -8584,66 +8756,53 @@ function getCoachTurnComment(move, cls, evalAfter) {
     const key = cls.key || cls;
     const templates = {
         brilliant: [
-            "\u2728 \u00a1Madre m\u00eda, {san}! Eso fue BRILLANTE. No cualquiera la encuentra, \u00a1tienes ojo de maestro!",
-            "\ud83c\udf1f \u00a1WOW! {san} es una obra de arte. Me dejaste sin palabras, \u00a1sigue as\u00ed!",
-            "\ud83d\udca1 \u00a1{san}! Pensar fuera de la caja. Jugada de alto nivel, \u00a1me encanta tu creatividad!",
-            "\ud83d\ude80 \u00a1ESPECTACULAR! {san} demuestra que ves lo que otros no. \u00a1Qu\u00e9 talento!",
-            "\u2b50 \u00a1{san}! Momento \u00e9pico de la partida. \u00a1Brillante de verdad!"
+            "{san}: brillante. Esa idea no era obvia y cambia la partida.",
+            "Excelente calculo con {san}. Esto es nivel competitivo real.",
+            "{san} fue un recurso de mucha calidad. Muy buen ojo tactico."
         ],
         great: [
-            "\ud83d\udc4f \u00a1Muy bien, {san}! Buen instinto, mejoras mucho la posici\u00f3n.",
-            "\ud83d\udcaa {san} es fuerte. Se nota que piensas bien, \u00a1sigue con esa energ\u00eda!",
-            "\ud83d\udd25 \u00a1{san}, excelente elecci\u00f3n! Tu rival sentir\u00e1 la presi\u00f3n. \u00a1Bien hecho!",
-            "\ud83c\udfaf {san} fue gran jugada. Lees bien la posici\u00f3n, \u00a1me gusta!",
-            "\ud83d\ude04 \u00a1Buena esa! {san} demuestra que est\u00e1s en ritmo."
+            "Muy buena {san}. Mejoras la posicion y mantienes iniciativa.",
+            "{san} fue fuerte. Le pusiste presion directa a la posicion rival.",
+            "Gran decision con {san}. Este tipo de jugadas ganan partidas."
         ],
         best: [
-            "\u2705 \u00a1Perfecto! {san} es exacto. \u00a1Ni un GM lo har\u00eda mejor aqu\u00ed!",
-            "\ud83c\udfaf \u00a1{san} es LA jugada! Precisi\u00f3n total. Sigue as\u00ed.",
-            "\ud83d\udc4d \u00a1Impecable! {san} es la mejor. Tu c\u00e1lculo funciona genial.",
-            "\u2713 {san}, justo en el clavo. \u00a1Gran precisi\u00f3n!"
+            "{san} es la mejor jugada aqui. Preciso y efectivo.",
+            "Perfecto: {san}. Elegiste la respuesta mas fuerte.",
+            "{san} fue exacta. Buena lectura de la posicion."
         ],
         excellent: [
-            "\u2b50 \u00a1Muy bien! {san} es excelente. Juegas con solidez.",
-            "\ud83d\udc4d {san} mantiene todo bajo control. \u00a1Buen trabajo!",
-            "\ud83d\ude0a \u00a1{san}! Buenas decisiones. La partida va por buen camino.",
-            "\u2714\ufe0f {san} es muy precisa. Sigue as\u00ed, \u00a1vas genial!"
+            "{san} es excelente. Mantienes control y plan.",
+            "Buena tecnica con {san}. Posicion sana y estable.",
+            "{san} fue muy precisa. Vas por buen camino."
         ],
         good: [
-            "\ud83d\ude42 {san} est\u00e1 bien, pero \u00bfviste alguna m\u00e1s activa? Vale buscar m\u00e1s.",
-            "\ud83d\udc4c {san} es s\u00f3lida. Tip: busca jugadas que presionen al rival.",
-            "\ud83e\udd14 {san} est\u00e1 OK pero hab\u00eda algo mejor. \u00a1Sigue buscando!",
-            "\u2796 {san} correcta. Pregunta: \u00bfpuedo amenazar algo con mi jugada?",
-            "\ud83d\udca1 {san} est\u00e1 OK. Antes de mover, mira capturas, jaques o amenazas."
+            "{san} es jugable. Habia una opcion mas incisiva.",
+            "Correcta {san}, aunque podias buscar algo mas activo.",
+            "{san} esta bien. En la siguiente intenta mejorar la iniciativa."
         ],
         book: [
-            "\ud83d\udcda \u00a1De libro! {san} sigue la teor\u00eda. \u00a1Buena preparaci\u00f3n!",
-            "\ud83c\udf93 {san} es teor\u00eda. Conocer aperturas da ventaja desde el inicio.",
-            "\ud83d\udcda \u00a1Perfecto! {san} la juegan los maestros, \u00a1vas bien!",
-            "\ud83c\udf1f {san}, jugada te\u00f3rica. Te ahorra tiempo y evita trampas."
+            "{san} es teoria conocida. Apertura bien llevada.",
+            "Linea de libro con {san}. Buena preparacion de apertura.",
+            "{san} mantiene repertorio correcto en esta fase."
         ],
         inaccuracy: [
-            "\u26a0\ufe0f {san} no es la mejor. Hab\u00eda algo un poco m\u00e1s fuerte. \u00a1Sigue atento!",
-            "\ud83e\udd14 {san} pierde ventajita. Tip: rev\u00edsa amenazas del rival.",
-            "\u26a0\ufe0f {san} es imprecisa. Tranquilo, todos lo hacemos. Calcula una m\u00e1s.",
-            "\ud83d\udca1 {san} no era \u00f3ptimo. Pregunta: \u00bfqu\u00e9 quiere hacer mi rival?",
-            "\ud83d\ude15 {san} no es ideal. No pasa nada, lo importante es aprender."
+            "{san} fue imprecisa. Te recomiendo revisar amenazas del rival antes de mover.",
+            "Con {san} cediste un poco. Valia calcular una jugada mas.",
+            "{san} no era la mas fina. Aun hay margen para corregir."
         ],
         mistake: [
-            "\u274c \u00a1Uy! {san} es error. \u00a1Tranquilo! Cada error ense\u00f1a. Revisa jaques y capturas.",
-            "\ud83d\ude2c {san} complica cosas. No pasa nada, \u00a1vamos a recuperarnos!",
-            "\u274c {san} pierde ventaja. Mira qu\u00e9 puede hacer el rival DESPU\u00c9S de tu jugada.",
-            "\ud83d\udea8 {san} fue tropez\u00f3n. \u00a1\u00c1nimo! Los mejores tambi\u00e9n cometen errores."
+            "{san} fue un error serio. Mira jaques, capturas y amenazas inmediatas.",
+            "Aqui {san} complica tu posicion. Vale recalcular antes del siguiente turno.",
+            "{san} te hizo perder ventaja. Se puede recuperar con juego preciso."
         ],
         blunder: [
-            "\ud83d\udea8 \u00a1Cuidado! {san} es error grave. Respira y calcula una jugada m\u00e1s.",
-            "\ud83d\udca5 \u00a1Ay! {san} cambi\u00f3 el rumbo. No te desanimes, \u00a1a seguir luchando!",
-            "\u274c {san}, no viste la respuesta. Clave: revisa SIEMPRE las amenazas.",
-            "\ud83d\ude30 {san} es serio. Pero de errores se aprende m\u00e1s que de victorias."
+            "{san} fue un error grave. Conviene deshacer y replantear la idea.",
+            "Con {san} cambiaste la evaluacion de golpe. Toca reaccionar con calma.",
+            "{san} deja una desventaja fuerte. Vamos a buscar una defensa practica."
         ]
     };
 
-    const pool = templates[key] || ["\u27a1\ufe0f {san} - Jugada interesante. \u00bfQu\u00e9 plan ten\u00edas?"];
+    const pool = templates[key] || ["{san} es jugada interesante. Cuentame tu plan en esa posicion."];
     const t = pool[Math.floor(Math.random() * pool.length)];
     const san = move ? move.san : "...";
     return t.replace(/\{san\}/g, sanToSpanish(san));
@@ -8796,6 +8955,23 @@ function bindEvents() {
     });
     el.playHintBtn.addEventListener("click", () => requestCoachHint(false));
     el.playUndoBtn.addEventListener("click", undoPlayMove);
+    if (el.coachUndoBtn) {
+        el.coachUndoBtn.addEventListener("click", () => {
+            if (!playState.coachDecisionPending) {
+                hideCoachDecisionPrompt();
+                return;
+            }
+            hideCoachDecisionPrompt();
+            undoPlayMove();
+            setCoachMessage("Buena decision. Replantea la jugada buscando seguridad del rey y piezas colgando.", { forceSpeech: true });
+        });
+    }
+    if (el.coachContinueBtn) {
+        el.coachContinueBtn.addEventListener("click", () => {
+            hideCoachDecisionPrompt();
+            setCoachMessage("Perfecto, continuamos. Ajusta tu plan para compensar esa jugada.", { forceSpeech: true });
+        });
+    }
     if (el.playResignBtn) {
         el.playResignBtn.addEventListener("click", resignCurrentGame);
     }
@@ -10144,6 +10320,7 @@ function restorePlayFromSnapshot(snapshot) {
         el.playSetupPanel.style.display = hasGame ? "none" : "";
         el.playGamePanel.style.display = hasGame ? "flex" : "none";
         el.playBoardCard.style.display = hasGame ? "" : "none";
+        setCoachSpotlightVisible(hasGame && isCoachMode());
         el.playPanelGrid.classList.toggle("setup-mode", !hasGame);
     }
 
@@ -10411,3 +10588,6 @@ async function init() {
 }
 
 void init();
+
+
+

@@ -58,6 +58,18 @@
         }
         engineRuntime.wasmChecked = true;
 
+        // Some CSP policies block eval before we even get to wasm worker init.
+        // Probe once and fail fast to avoid noisy repeated console errors.
+        try {
+            // eslint-disable-next-line no-new-func
+            new Function("return 1")();
+        } catch (error) {
+            if (isCspWasmBlockError(error)) {
+                markCspBlocked(error);
+                return false;
+            }
+        }
+
         if (typeof WebAssembly !== "object" || typeof WebAssembly.compile !== "function") {
             engineRuntime.wasmAllowed = false;
             engineRuntime.reason = "WebAssembly no disponible";

@@ -80,6 +80,29 @@
                             <div id="play-board" class="chessboard" aria-label="Tablero para jugar contra bot"></div>
                         </div>
                     </div>
+                    <section id="coach-spotlight" class="coach-spotlight" style="display:none;" aria-live="polite">
+                        <div class="coach-character" aria-hidden="true">
+                            <div class="coach-character-face">
+                                <span class="coach-character-eyes">oo</span>
+                                <span class="coach-character-mouth">u</span>
+                            </div>
+                            <span class="coach-character-badge">Maestro Leo</span>
+                        </div>
+                        <div class="coach-spotlight-bubble">
+                            <div class="coach-spotlight-head">
+                                <strong id="coach-spotlight-name">Maestro Leo</strong>
+                                <span id="coach-spotlight-role">Rival y Entrenador</span>
+                            </div>
+                            <p id="coach-spotlight-text">Estoy listo. Te voy a presionar como rival y entrenarte en cada turno.</p>
+                            <div id="coach-decision-bar" class="coach-decision-bar" style="display:none;">
+                                <span id="coach-decision-text">Hubo una imprecisi&oacute;n. &iquest;Quieres deshacer para corregirla?</span>
+                                <div class="coach-decision-actions">
+                                    <button id="coach-undo-btn" class="primary-btn" type="button">&#8617; Deshacer y corregir</button>
+                                    <button id="coach-continue-btn" class="ghost-btn" type="button">Continuar</button>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
                 </article>
 
                 <aside class="card control-card sidebar-card">
