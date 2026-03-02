@@ -880,7 +880,10 @@ async function parsePgnToPositions(pgn: string): Promise<Position[]> {
     let moves: { from: string; to: string; san: string; promotion?: string }[];
 
     try {
-        board.loadPgn(pgn);
+        const loadResult = board.loadPgn(pgn) as unknown;
+        if (loadResult === false) {
+            throw new Error("Formato PGN invalido.");
+        }
         moves = board.history({ verbose: true });
     } catch {
         let parsedPGN;
@@ -1004,4 +1007,3 @@ registerGameRoutes(router, {
     parseStructuredAIResponse
 });
 export default router;
-

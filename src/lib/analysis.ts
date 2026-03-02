@@ -39,7 +39,7 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
             continue;
         }
 
-        const moveColour = position.fen.includes(" b ") ? "white" : "black";
+        const moveColour = position.fen.split(" ")[1] === "b" ? "white" : "black";
 
         // If there are no legal moves in this position, game is in terminal state
         if (!evaluation) {
@@ -394,12 +394,13 @@ async function analyse(positions: EvaluatedPosition[]): Promise<Report> {
     };
 
     for (const position of positions.slice(1)) {
-        const moveColour = position.fen.includes(" b ") ? "white" : "black";
+        const moveColour = position.fen.split(" ")[1] === "b" ? "white" : "black";
+        const classif = position.classification ?? Classification.BOOK;
 
-        accuracies[moveColour].current += classificationValues[position.classification!];
+        accuracies[moveColour].current += classificationValues[classif];
         accuracies[moveColour].maximum++;
 
-        classifications[moveColour][position.classification!] += 1;
+        classifications[moveColour][classif] += 1;
     }
 
     // Return complete report

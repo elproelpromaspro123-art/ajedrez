@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="es">
 
 <head>
@@ -137,6 +137,7 @@
                             <select id="play-mode">
                                 <option value="casual" selected>Clasica (sin rating)</option>
                                 <option value="ranked">Clasificatoria (cuenta perfil)</option>
+                                <option value="coach">&#127891; Jugar con Entrenador</option>
                             </select>
                             <p id="play-mode-note" class="muted">Solo Clasificatoria suma estadisticas, sin ayudas y con color aleatorio.</p>
                             <input id="coach-depth" type="range" min="8" max="18" value="12" hidden aria-hidden="true" />
@@ -1178,10 +1179,102 @@
             <div id="endgame-impact" class="endgame-impact" style="display:none;"></div>
 
             <div class="endgame-actions">
-                <button id="endgame-analyze-btn" class="primary-btn" type="button">&#128269; Analizar partida</button>
+                <button id="endgame-coach-review-btn" class="primary-btn" type="button">&#127891; Revisi&oacute;n con Entrenador</button>
+                <button id="endgame-analyze-btn" class="ghost-btn" type="button">&#128269; Analizar partida</button>
                 <button id="endgame-pgn-btn" class="ghost-btn" type="button">&#128190; Descargar PGN</button>
                 <button id="endgame-home-btn" class="ghost-btn" type="button">&#127968; Volver al inicio</button>
                 <button id="endgame-close-btn" class="ghost-btn" type="button">Cerrar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Coach Review Overlay -->
+    <div id="coach-review-overlay" class="coach-review-overlay" role="dialog" aria-modal="true" aria-label="Revisi&oacute;n con Entrenador">
+        <div class="coach-review-layout">
+            <!-- Left: Board + Eval Graph + Nav -->
+            <div class="cr-board-area">
+                <div class="cr-board-wrap">
+                    <div id="cr-board" class="chessboard" aria-label="Tablero de revision"></div>
+                </div>
+                <div class="cr-eval-graph-wrap">
+                    <canvas id="cr-eval-graph" width="520" height="60" aria-label="Grafico de evaluacion"></canvas>
+                </div>
+                <div class="cr-move-nav">
+                    <button id="cr-nav-start" type="button" aria-label="Inicio">&#10073;&#9664;</button>
+                    <button id="cr-nav-prev" type="button" aria-label="Anterior">&#9664;</button>
+                    <button id="cr-nav-play" type="button" aria-label="Reproducir">&#9654;</button>
+                    <button id="cr-nav-next" type="button" aria-label="Siguiente">&#9654;</button>
+                    <button id="cr-nav-end" type="button" aria-label="Final">&#9654;&#10073;</button>
+                </div>
+            </div>
+
+            <!-- Right: Review Panel -->
+            <div class="cr-panel">
+                <div class="cr-panel-header">
+                    <h2>&#9881; Revisi&oacute;n de partida</h2>
+                    <div class="cr-header-actions">
+                        <button id="cr-voice-btn" class="cr-voice-btn" type="button" aria-label="Silenciar voz del entrenador" aria-pressed="false">&#128266;</button>
+                        <button id="cr-close-btn" class="cr-close-btn" type="button" aria-label="Cerrar">&times;</button>
+                    </div>
+                </div>
+
+                <!-- Coach Speech -->
+                <div class="cr-coach-area">
+                    <div id="cr-coach-avatar" class="cr-coach-avatar">&#127891;</div>
+                    <div class="cr-speech-bubble">
+                        <div id="cr-speech-text" class="cr-speech-text"></div>
+                    </div>
+                </div>
+
+                <!-- Game Score -->
+                <div class="cr-summary-section">
+                    <div class="cr-game-score-card">
+                        <div id="cr-game-score" class="cr-game-score">--</div>
+                        <div class="cr-game-score-label">Puntuaci&oacute;n de la partida</div>
+                    </div>
+                </div>
+
+                <!-- Accuracy Cards -->
+                <div class="cr-summary-section">
+                    <div class="cr-accuracy-row">
+                        <div class="cr-accuracy-card white-card">
+                            <span class="cr-label" id="cr-white-name">Rival</span>
+                            <div class="cr-avatar-mini">&#9812;</div>
+                            <span id="cr-white-accuracy" class="cr-score">--</span>
+                        </div>
+                        <div class="cr-accuracy-card black-card">
+                            <span class="cr-label" id="cr-black-name">T&uacute;</span>
+                            <div class="cr-avatar-mini">&#9818;</div>
+                            <span id="cr-black-accuracy" class="cr-score">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Classification Breakdown -->
+                <h3 class="cr-section-title">Desglose de jugadas</h3>
+                <div class="cr-summary-section">
+                    <table class="cr-classification-table">
+                        <tbody id="cr-classification-body"></tbody>
+                    </table>
+                </div>
+
+                <!-- Phase Analysis -->
+                <h3 class="cr-section-title">Fases de la partida</h3>
+                <div id="cr-phases" class="cr-phases"></div>
+
+                <!-- Key Moments -->
+                <h3 class="cr-section-title">Momentos clave</h3>
+                <div id="cr-key-moments" class="cr-key-moments"></div>
+
+                <!-- Move List -->
+                <h3 class="cr-section-title">Jugadas</h3>
+                <div id="cr-move-list" class="cr-move-list"></div>
+
+                <!-- Actions -->
+                <div class="cr-actions">
+                    <button id="cr-new-game-btn" class="primary-btn" type="button">&#9654; Nueva partida</button>
+                    <button id="cr-close-bottom-btn" class="ghost-btn" type="button">Cerrar revisi&oacute;n</button>
+                </div>
             </div>
         </div>
     </div>
@@ -1206,9 +1299,9 @@
     <script src="/static/pages/report/scripts/modules/chat-ui.js"></script>
     <script src="/static/pages/report/scripts/modules/play.js"></script>
     <script src="/static/pages/report/scripts/modules/analysis.js"></script>
+    <script src="/static/pages/report/scripts/modules/coach-review.js"></script>
     <script src="/static/pages/report/scripts/main.js"></script>
     <script src="/static/pages/report/scripts/sw-register.js"></script>
 </body>
 
 </html>
-

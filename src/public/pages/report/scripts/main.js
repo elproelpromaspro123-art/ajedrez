@@ -110,6 +110,7 @@ const analysisModule = APP_MODULES.analysis || null;
 const engineModule = APP_MODULES.engine || null;
 const localeModule = APP_MODULES.locale || null;
 const chatUiModule = APP_MODULES.chatUi || null;
+const coachReviewModule = APP_MODULES.coachReview || null;
 function t(key, params) {
     return localeModule ? localeModule.t(key, params) : key;
 }
@@ -183,7 +184,32 @@ const el = {
     endgamePgnBtn: document.querySelector("#endgame-pgn-btn"),
     endgameHomeBtn: document.querySelector("#endgame-home-btn"),
     endgameCloseBtn: document.querySelector("#endgame-close-btn"),
+    endgameCoachReviewBtn: document.querySelector("#endgame-coach-review-btn"),
 
+    /* Coach Review Overlay */
+    crOverlay: document.querySelector("#coach-review-overlay"),
+    crBoard: document.querySelector("#cr-board"),
+    crEvalGraph: document.querySelector("#cr-eval-graph"),
+    crNavStart: document.querySelector("#cr-nav-start"),
+    crNavPrev: document.querySelector("#cr-nav-prev"),
+    crNavPlay: document.querySelector("#cr-nav-play"),
+    crNavNext: document.querySelector("#cr-nav-next"),
+    crNavEnd: document.querySelector("#cr-nav-end"),
+    crVoiceBtn: document.querySelector("#cr-voice-btn"),
+    crCloseBtn: document.querySelector("#cr-close-btn"),
+    crCloseBottomBtn: document.querySelector("#cr-close-bottom-btn"),
+    crNewGameBtn: document.querySelector("#cr-new-game-btn"),
+    crCoachAvatar: document.querySelector("#cr-coach-avatar"),
+    crSpeechText: document.querySelector("#cr-speech-text"),
+    crGameScore: document.querySelector("#cr-game-score"),
+    crWhiteName: document.querySelector("#cr-white-name"),
+    crBlackName: document.querySelector("#cr-black-name"),
+    crWhiteAccuracy: document.querySelector("#cr-white-accuracy"),
+    crBlackAccuracy: document.querySelector("#cr-black-accuracy"),
+    crClassificationBody: document.querySelector("#cr-classification-body"),
+    crPhases: document.querySelector("#cr-phases"),
+    crKeyMoments: document.querySelector("#cr-key-moments"),
+    crMoveList: document.querySelector("#cr-move-list"),
 
     botPreset: document.querySelector("#bot-preset"),
     botCustomElo: document.querySelector("#bot-custom-elo"),
@@ -1757,7 +1783,8 @@ function updateEvalBarElements(evaluation, barEl, fillEl, whiteLbl, blackLbl) {
 
 const PLAY_MODES = {
     CASUAL: "casual",
-    RANKED: "ranked"
+    RANKED: "ranked",
+    COACH: "coach"
 };
 
 const RANKED_FORCED_SETTINGS = {
@@ -1868,9 +1895,10 @@ const lessonState = {
 };
 
 function normalizePlayMode(value) {
-    return String(value || "").toLowerCase() === PLAY_MODES.RANKED
-        ? PLAY_MODES.RANKED
-        : PLAY_MODES.CASUAL;
+    const v = String(value || "").toLowerCase();
+    if (v === PLAY_MODES.RANKED) return PLAY_MODES.RANKED;
+    if (v === PLAY_MODES.COACH) return PLAY_MODES.COACH;
+    return PLAY_MODES.CASUAL;
 }
 
 function getSelectedPlayMode() {
@@ -1946,9 +1974,14 @@ function refreshPlayModeUiState() {
         el.playerColor.disabled = lockColorSelector;
     }
 
+    const coachSelected = getSelectedPlayMode() === PLAY_MODES.COACH;
+    const coachLive = normalizePlayMode(playState.gameMode) === PLAY_MODES.COACH && Boolean(playState.startTime) && !isPlayGameOver();
+
     if (el.playModeNote) {
         if (requiresAuth) {
             el.playModeNote.textContent = "Inicia sesion para jugar y guardar datos en tu perfil.";
+        } else if (coachSelected || coachLive) {
+            el.playModeNote.textContent = "\ud83c\udf93 Jugar con Entrenador: el coach te guia en cada turno y al final revisamos la partida juntos.";
         } else {
             el.playModeNote.textContent = rankedSelected || rankedLive
                 ? "Clasificatoria: color aleatorio (blancas/negras) y sin ayudas. Solo este modo suma perfil."
@@ -1967,6 +2000,9 @@ function refreshPlayModeUiState() {
     }
     if (el.playStartBtn) {
         el.playStartBtn.disabled = requiresAuth;
+    }
+    if (el.playSettingsBtn) {
+        el.playSettingsBtn.style.display = (coachSelected || coachLive) ? "none" : "";
     }
     if (el.setTimeControl) {
         el.setTimeControl.disabled = activeGame;
@@ -2243,9 +2279,107 @@ const COACH_PREFIX = {
     setup: "\u2726"
 };
 
+const COACH_SPEECH_RATE = 1.02;
+const COACH_SPEECH_PITCH = 1.0;
+const COACH_SPEECH_VOLUME = 1.0;
+const COACH_SPEECH_MIN_INTERVAL_MS = 1200;
+const COACH_SPEECH_MAX_LENGTH = 280;
+
+const coachSpeechState = {
+    enabled: true,
+    voice: null,
+    loaded: false,
+    lastText: "",
+    lastAt: 0
+};
+
 function coachNotice(type, text) {
     const icon = COACH_PREFIX[type] || COACH_PREFIX.info;
     return `${icon} ${text}`;
+}
+
+function stripCoachSpeechText(value) {
+    const raw = String(value || "");
+    const noEmojis = raw.replace(/[\u{1F300}-\u{1FAFF}]/gu, "");
+    const cleaned = noEmojis
+        .replace(/[\u2600-\u27BF]/g, " ")
+        .replace(/[•·]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    if (!cleaned) return "";
+    if (cleaned.length <= COACH_SPEECH_MAX_LENGTH) return cleaned;
+    return `${cleaned.slice(0, COACH_SPEECH_MAX_LENGTH - 1)}…`;
+}
+
+function loadCoachVoice() {
+    if (!("speechSynthesis" in window)) {
+        return;
+    }
+    const voices = window.speechSynthesis.getVoices();
+    if (!Array.isArray(voices) || voices.length === 0) {
+        return;
+    }
+
+    const preferEs = voices.find((voice) => /^es(-|$)/i.test(voice.lang || ""));
+    const preferEn = voices.find((voice) => /^en(-|$)/i.test(voice.lang || ""));
+    coachSpeechState.voice = preferEs || preferEn || voices[0] || null;
+    coachSpeechState.loaded = true;
+}
+
+function updateCoachVoiceButton() {
+    if (!el.crVoiceBtn) return;
+    const muted = !coachSpeechState.enabled;
+    el.crVoiceBtn.classList.toggle("is-muted", muted);
+    el.crVoiceBtn.textContent = muted ? "\ud83d\udd07" : "\ud83d\udd0a";
+    el.crVoiceBtn.setAttribute("aria-label", muted ? "Activar voz del entrenador" : "Silenciar voz del entrenador");
+    el.crVoiceBtn.setAttribute("aria-pressed", muted ? "true" : "false");
+}
+
+function stopCoachSpeech() {
+    if (!("speechSynthesis" in window)) {
+        return;
+    }
+    window.speechSynthesis.cancel();
+}
+
+function speakCoachText(message, options = {}) {
+    if (!coachSpeechState.enabled || !("speechSynthesis" in window)) {
+        return;
+    }
+
+    const force = Boolean(options.force);
+    const text = stripCoachSpeechText(message);
+    if (!text) {
+        return;
+    }
+
+    const now = Date.now();
+    if (!force && text === coachSpeechState.lastText && (now - coachSpeechState.lastAt) < 5000) {
+        return;
+    }
+    if (!force && (now - coachSpeechState.lastAt) < COACH_SPEECH_MIN_INTERVAL_MS) {
+        return;
+    }
+
+    if (!coachSpeechState.loaded) {
+        loadCoachVoice();
+    }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    if (coachSpeechState.voice) {
+        utterance.voice = coachSpeechState.voice;
+        utterance.lang = coachSpeechState.voice.lang || "es-ES";
+    } else {
+        utterance.lang = "es-ES";
+    }
+    utterance.rate = COACH_SPEECH_RATE;
+    utterance.pitch = COACH_SPEECH_PITCH;
+    utterance.volume = COACH_SPEECH_VOLUME;
+
+    stopCoachSpeech();
+    window.speechSynthesis.speak(utterance);
+    coachSpeechState.lastText = text;
+    coachSpeechState.lastAt = now;
 }
 
 function setTextWithOptionalOpeningLink(container, message, openingContext) {
@@ -2311,6 +2445,14 @@ function setCoachMessage(message, options = {}) {
     el.coachHistoryContainer.appendChild(msgEl);
     el.coachHistoryContainer.scrollTop = el.coachHistoryContainer.scrollHeight;
     scheduleSessionSnapshotSave();
+
+    const forceSpeech = Boolean(options && options.forceSpeech);
+    const shouldSpeakByMode = isCoachMode()
+        && Boolean(playState.startTime)
+        && !isPlayGameOver();
+    if (forceSpeech || shouldSpeakByMode) {
+        speakCoachText(message, { force: forceSpeech });
+    }
 }
 
 /* ===== Move Classification (chess.com style) ===== */
@@ -3140,11 +3282,24 @@ async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveInd
 
         if (isPlayerMove && commentsEnabled) {
             showMoveBadge(cls, "Tu jugada", bookDetail, openingContext);
-            setCoachMessage(buildCoachComment(cls, move, evalAfter, bookResult.name), openingContext || undefined);
+            if (isCoachMode()) {
+                const coachTip = getCoachTurnComment(move, cls, evalAfter);
+                if (coachTip) {
+                    setCoachMessage(coachTip, openingContext || undefined);
+                } else {
+                    setCoachMessage(buildCoachComment(cls, move, evalAfter, bookResult.name), openingContext || undefined);
+                }
+            } else {
+                setCoachMessage(buildCoachComment(cls, move, evalAfter, bookResult.name), openingContext || undefined);
+            }
         } else if (!isPlayerMove && commentsEnabled) {
             showMoveBadge(cls, "Rival", bookDetail, openingContext);
             const baseComment = buildCoachComment(cls, move, evalAfter, bookResult.name);
-            setCoachMessage(`\ud83e\udd16 Rival \u2022 ${baseComment} \u2022 Tu turno.`, openingContext || undefined);
+            if (isCoachMode()) {
+                setCoachMessage(`\ud83e\udd16 El rival jugo ${sanToSpanish(move.san)}. ${baseComment.split(' \u2022 ')[0]} \u2022 \u00a1Tu turno! \u00bfQu\u00e9 plan tienes?`, openingContext || undefined);
+            } else {
+                setCoachMessage(`\ud83e\udd16 Rival \u2022 ${baseComment} \u2022 Tu turno.`, openingContext || undefined);
+            }
         }
     } catch {
         if (!commentsEnabled) {
@@ -3307,11 +3462,15 @@ function showEndgameSummary(title, reason, winner) {
     renderEndgameAccuracies();
     renderEndgameRankedImpact(winner);
 
-    el.endgameModal.style.display = "flex";
-    setTimeout(() => {
-        el.endgameModal.style.opacity = "1";
-        el.endgameModal.style.pointerEvents = "auto";
-    }, 10);
+    if (isCoachMode() && coachReviewModule) {
+        setTimeout(() => openCoachReview(), 600);
+    } else {
+        el.endgameModal.style.display = "flex";
+        setTimeout(() => {
+            el.endgameModal.style.opacity = "1";
+            el.endgameModal.style.pointerEvents = "auto";
+        }, 10);
+    }
 }
 
 function closeEndgameModal() {
@@ -4504,6 +4663,7 @@ function startNewGame() {
     playState.game = new Chess();
     playState.gameMode = getSelectedPlayMode();
     const rankedMode = normalizePlayMode(playState.gameMode) === PLAY_MODES.RANKED;
+    const coachMode = normalizePlayMode(playState.gameMode) === PLAY_MODES.COACH;
     playState.gameType = rankedMode ? "standard" : normalizeGameType(getPlaySettings().gameType);
 
     if (rankedMode) {
@@ -4511,6 +4671,17 @@ function startNewGame() {
         if (el.setGameType) {
             el.setGameType.value = "standard";
         }
+    }
+
+    if (coachMode) {
+        if (el.setCoachAuto) el.setCoachAuto.checked = true;
+        if (el.setHints) el.setHints.checked = true;
+        if (el.setMoveComments) el.setMoveComments.checked = true;
+        if (el.setComputer) el.setComputer.checked = true;
+        if (el.setTakebacks) el.setTakebacks.checked = true;
+        if (el.setEvalBar) el.setEvalBar.checked = true;
+        if (el.setLegal) el.setLegal.checked = true;
+        if (el.setSuggestionArrows) el.setSuggestionArrows.checked = true;
     }
 
     const chosenColor = rankedMode
@@ -4580,11 +4751,13 @@ function startNewGame() {
     const typeMsg = settings.gameType === "standard"
         ? " Tipo: estandar."
         : ` Tipo: ${settings.gameType}.`;
-    const eloMsg = rankedMode
-        ? `Clasificatoria iniciada contra bot ${playState.botElo} ELO. Color asignado al azar: juegas con ${chosenColor === "white" ? "blancas" : "negras"}.`
-        : (settings.computerEnabled
-            ? `Partida clasica iniciada. Bot configurado en ${playState.botElo} ELO (no suma perfil).`
-            : "Partida clasica iniciada con motor desactivado (no suma perfil).");
+    const eloMsg = coachMode
+        ? `\ud83c\udf93 \u00a1Hola! Soy tu entrenador. Vamos a jugar juntos contra el bot (${playState.botElo} ELO). Te guiar\u00e9 en cada jugada. \u00a1Juegas con ${chosenColor === "white" ? "blancas" : "negras"}!`
+        : rankedMode
+            ? `Clasificatoria iniciada contra bot ${playState.botElo} ELO. Color asignado al azar: juegas con ${chosenColor === "white" ? "blancas" : "negras"}.`
+            : (settings.computerEnabled
+                ? `Partida clasica iniciada. Bot configurado en ${playState.botElo} ELO (no suma perfil).`
+                : "Partida clasica iniciada con motor desactivado (no suma perfil).");
     setCoachMessage(coachNotice("setup", `${eloMsg}${timeControlMsg}${typeMsg}`));
     playStartSound();
     resetPlayClockForNewGame();
@@ -7817,6 +7990,617 @@ function applySettingsToBoard() {
     renderPlayBoard();
 }
 
+/* ===== Coach Review System ===== */
+
+const coachReviewState = {
+    active: false,
+    session: null,
+    board: null,
+    currentPly: 0,
+    autoPlayTimer: null,
+    typingTimer: null
+};
+
+const CR_CLASSIFICATION_ROWS = [
+    { key: "brilliant", label: "Brillante", icon: "!!" },
+    { key: "great", label: "Genial", icon: "!" },
+    { key: "book", label: "Libro", icon: "\ud83d\udcda" },
+    { key: "best", label: "Mejor", icon: "\u2b50" },
+    { key: "excellent", label: "Excelente", icon: "\ud83d\udc4d" },
+    { key: "good", label: "Bueno", icon: "\u2705" },
+    { key: "inaccuracy", label: "Imprecisi\u00f3n", icon: "\u2753\u2757" },
+    { key: "mistake", label: "Error", icon: "\u2753" },
+    { key: "blunder", label: "Omisi\u00f3n", icon: "\u274c" }
+];
+
+function isCoachMode() {
+    return normalizePlayMode(playState.gameMode) === PLAY_MODES.COACH;
+}
+
+function buildCoachReviewPositions() {
+    const history = playState.game.history({ verbose: true });
+    const replay = new Chess();
+    const positions = [{ fen: replay.fen(), classification: null, san: null, eval: 0 }];
+    const swingByClass = {
+        brilliant: 170,
+        great: 110,
+        best: 70,
+        excellent: 45,
+        good: 20,
+        book: 10,
+        inaccuracy: -80,
+        mistake: -170,
+        blunder: -320
+    };
+    let estimatedWhiteEvalCp = 0;
+
+    for (let i = 0; i < history.length; i++) {
+        const move = history[i];
+        replay.move(move.san);
+        const cls = playState.moveClassifications[i] || null;
+        const classKey = typeof cls === "string" ? cls : (cls && cls.key ? cls.key : "");
+        const moverIsWhite = i % 2 === 0;
+        const swingForMover = swingByClass[classKey] || 0;
+        estimatedWhiteEvalCp = clamp(
+            estimatedWhiteEvalCp + (moverIsWhite ? swingForMover : -swingForMover),
+            -1200,
+            1200
+        );
+
+        positions.push({
+            fen: replay.fen(),
+            classification: cls,
+            san: move.san,
+            move: move.san,
+            from: move.from,
+            to: move.to,
+            eval: estimatedWhiteEvalCp
+        });
+    }
+
+    return positions;
+}
+
+function openCoachReview() {
+    if (!coachReviewModule) return;
+
+    closeEndgameModal();
+
+    const positions = buildCoachReviewPositions();
+    const opening = detectOpening(playState.game.history(), playState.game.fen()) || "";
+
+    const resultText = (() => {
+        if (playState.manualGameOver) {
+            const w = playState.manualGameOver.winner;
+            if (w === "Blancas") return "1-0";
+            if (w === "Negras") return "0-1";
+            return "1/2-1/2";
+        }
+        if (playState.game.isCheckmate()) {
+            return playState.game.turn() === "w" ? "0-1" : "1-0";
+        }
+        return "1/2-1/2";
+    })();
+
+    const meta = {
+        result: resultText,
+        playerColor: playState.playerColor,
+        rivalElo: playState.botElo,
+        duration: formatDurationFromStart(),
+        opening: opening
+    };
+
+    const session = coachReviewModule.buildReviewSession(
+        playState.game.pgn(),
+        positions,
+        playState.playerColor,
+        meta
+    );
+
+    coachReviewState.session = session;
+    coachReviewState.currentPly = 0;
+    coachReviewState.active = true;
+
+    if (!coachReviewState.board && el.crBoard) {
+        coachReviewState.board = new BoardView(el.crBoard, {
+            orientation: playState.playerColor,
+            interactive: false,
+            showCoordinates: true
+        });
+    }
+    if (coachReviewState.board) {
+        coachReviewState.board.setOrientation(playState.playerColor);
+    }
+
+    renderCoachReviewAll();
+
+    if (el.crOverlay) {
+        el.crOverlay.style.display = "flex";
+        setTimeout(() => {
+            el.crOverlay.classList.add("is-visible");
+        }, 20);
+    }
+
+    const summary = coachReviewModule.getGameSummary(session);
+    typeCoachSpeech(summary);
+}
+
+function closeCoachReview() {
+    coachReviewState.active = false;
+    stopCoachAutoPlay();
+    stopCoachSpeech();
+    if (coachReviewState.typingTimer) {
+        clearTimeout(coachReviewState.typingTimer);
+        coachReviewState.typingTimer = null;
+    }
+    if (el.crOverlay) {
+        el.crOverlay.classList.remove("is-visible");
+        setTimeout(() => {
+            el.crOverlay.style.display = "none";
+        }, 400);
+    }
+}
+
+function typeCoachSpeech(text, speed = 18) {
+    if (!el.crSpeechText) return;
+    if (coachReviewState.typingTimer) {
+        clearTimeout(coachReviewState.typingTimer);
+        coachReviewState.typingTimer = null;
+    }
+
+    if (el.crCoachAvatar) el.crCoachAvatar.classList.add("is-speaking");
+    el.crSpeechText.textContent = "";
+    speakCoachText(text, { force: true });
+    let i = 0;
+
+    function typeChar() {
+        if (i < text.length) {
+            el.crSpeechText.textContent += text[i];
+            i++;
+            coachReviewState.typingTimer = setTimeout(typeChar, speed);
+        } else {
+            if (el.crCoachAvatar) el.crCoachAvatar.classList.remove("is-speaking");
+            coachReviewState.typingTimer = null;
+        }
+    }
+    typeChar();
+}
+
+function navigateCoachReview(ply) {
+    if (!coachReviewState.session) return;
+    const maxPly = coachReviewState.session.positions.length - 1;
+    coachReviewState.currentPly = clamp(ply, 0, maxPly);
+    renderCoachReviewPosition();
+    renderCoachReviewMoveListHighlight();
+
+    const pos = coachReviewState.session.positions[coachReviewState.currentPly];
+    if (coachReviewState.currentPly === 0) {
+        typeCoachSpeech(coachReviewModule.getGameSummary(coachReviewState.session));
+    } else {
+        const comment = coachReviewModule.getCoachComment(coachReviewState.session, coachReviewState.currentPly);
+        if (comment) {
+            typeCoachSpeech(comment);
+        } else {
+            const san = pos ? (pos.san || pos.move || "...") : "...";
+            typeCoachSpeech(`\u27a1\ufe0f ${sanToSpanish(san)} - Jugada normal, sin grandes incidencias.`);
+        }
+    }
+
+    if (pos && pos.fen && coachReviewState.board) {
+        coachReviewState.board.setFen(pos.fen);
+        coachReviewState.board.clearHighlights();
+        if (pos.from && pos.to) {
+            coachReviewState.board.highlightSquares([pos.from], "last-from");
+            coachReviewState.board.highlightSquares([pos.to], "last-to");
+        }
+    }
+
+    renderCoachReviewEvalGraph();
+}
+
+function stopCoachAutoPlay() {
+    if (coachReviewState.autoPlayTimer) {
+        clearInterval(coachReviewState.autoPlayTimer);
+        coachReviewState.autoPlayTimer = null;
+    }
+}
+
+function toggleCoachAutoPlay() {
+    if (coachReviewState.autoPlayTimer) {
+        stopCoachAutoPlay();
+        return;
+    }
+    const maxPly = coachReviewState.session ? coachReviewState.session.positions.length - 1 : 0;
+    coachReviewState.autoPlayTimer = setInterval(() => {
+        if (coachReviewState.currentPly >= maxPly) {
+            stopCoachAutoPlay();
+            return;
+        }
+        navigateCoachReview(coachReviewState.currentPly + 1);
+    }, 2000);
+}
+
+function renderCoachReviewAll() {
+    renderCoachReviewPosition();
+    renderCoachReviewAccuracies();
+    renderCoachReviewClassifications();
+    renderCoachReviewPhases();
+    renderCoachReviewKeyMoments();
+    renderCoachReviewMoveList();
+    renderCoachReviewGameScore();
+    renderCoachReviewEvalGraph();
+}
+
+function renderCoachReviewPosition() {
+    if (!coachReviewState.session || !coachReviewState.board) return;
+    const pos = coachReviewState.session.positions[coachReviewState.currentPly];
+    if (!pos) return;
+    coachReviewState.board.setFen(pos.fen);
+    coachReviewState.board.clearHighlights();
+    if (pos.from && pos.to) {
+        coachReviewState.board.highlightSquares([pos.from], "last-from");
+        coachReviewState.board.highlightSquares([pos.to], "last-to");
+    }
+}
+
+function renderCoachReviewAccuracies() {
+    if (!coachReviewState.session) return;
+    const acc = coachReviewState.session.accuracies;
+    const isWhite = coachReviewState.session.meta.playerColor === "white";
+
+    if (el.crWhiteName) el.crWhiteName.textContent = isWhite ? "T\u00fa" : "Rival";
+    if (el.crBlackName) el.crBlackName.textContent = isWhite ? "Rival" : "T\u00fa";
+
+    const playerAcc = acc.player;
+    const opponentAcc = acc.opponent;
+
+    if (el.crWhiteAccuracy) el.crWhiteAccuracy.textContent = (isWhite ? playerAcc : opponentAcc) + "%";
+    if (el.crBlackAccuracy) el.crBlackAccuracy.textContent = (isWhite ? opponentAcc : playerAcc) + "%";
+}
+
+function renderCoachReviewClassifications() {
+    if (!el.crClassificationBody || !coachReviewState.session) return;
+    el.crClassificationBody.innerHTML = "";
+    const counts = coachReviewState.session.countsBySide;
+    const isWhite = coachReviewState.session.meta.playerColor === "white";
+
+    CR_CLASSIFICATION_ROWS.forEach(row => {
+        const wCount = counts.white[row.key] || 0;
+        const bCount = counts.black[row.key] || 0;
+
+        const tr = document.createElement("tr");
+        const tdW = document.createElement("td");
+        tdW.className = "cr-cls-count white-count";
+        tdW.textContent = isWhite ? wCount : bCount;
+
+        const tdName = document.createElement("td");
+        tdName.className = `cr-cls-name cr-cls-${row.key}`;
+        tdName.textContent = row.label;
+
+        const tdIcon = document.createElement("td");
+        tdIcon.className = `cr-cls-icon cr-cls-${row.key}`;
+        tdIcon.textContent = row.icon;
+
+        const tdB = document.createElement("td");
+        tdB.className = "cr-cls-count black-count";
+        tdB.textContent = isWhite ? bCount : wCount;
+
+        tr.append(tdW, tdName, tdIcon, tdB);
+        el.crClassificationBody.appendChild(tr);
+    });
+}
+
+function renderCoachReviewPhases() {
+    if (!el.crPhases || !coachReviewState.session || !coachReviewModule) return;
+    el.crPhases.innerHTML = "";
+    const phases = [
+        { key: "opening", label: "Apertura" },
+        { key: "middlegame", label: "Medio juego" },
+        { key: "endgame", label: "Final de partida" }
+    ];
+
+    phases.forEach(phase => {
+        const rating = coachReviewModule.getPhaseRating(coachReviewState.session, phase.key);
+        const icon = coachReviewModule.getPhaseIcon(rating.score);
+
+        const row = document.createElement("div");
+        row.className = "cr-phase-row";
+
+        const label = document.createElement("span");
+        label.className = "cr-phase-label";
+        label.textContent = phase.label;
+
+        const score = document.createElement("span");
+        score.className = "cr-phase-score";
+        score.textContent = rating.moves > 0 ? rating.score : "--";
+
+        const iconEl = document.createElement("span");
+        iconEl.className = "cr-phase-icon";
+        iconEl.textContent = rating.moves > 0 ? icon : "\u2796";
+
+        row.append(label, score, iconEl);
+        el.crPhases.appendChild(row);
+    });
+}
+
+function renderCoachReviewKeyMoments() {
+    if (!el.crKeyMoments || !coachReviewState.session || !coachReviewModule) return;
+    el.crKeyMoments.innerHTML = "";
+    const moments = coachReviewModule.getKeyMoments(coachReviewState.session);
+
+    if (moments.length === 0) {
+        const empty = document.createElement("p");
+        empty.className = "muted";
+        empty.textContent = "No se detectaron momentos clave.";
+        el.crKeyMoments.appendChild(empty);
+        return;
+    }
+
+    const clsIcons = {
+        brilliant: "\u2b50", great: "\ud83d\udd25", blunder: "\ud83d\udca5",
+        mistake: "\u274c", inaccuracy: "\u26a0\ufe0f"
+    };
+
+    moments.forEach(moment => {
+        const item = document.createElement("div");
+        item.className = "cr-moment-item";
+        item.addEventListener("click", () => navigateCoachReview(moment.ply));
+
+        const icon = document.createElement("span");
+        icon.className = "cr-moment-icon";
+        icon.textContent = clsIcons[moment.classification] || "\ud83d\udd0d";
+
+        const moveNum = Math.ceil(moment.ply / 2);
+        const side = moment.ply % 2 === 0 ? "" : "...";
+        const pos = coachReviewState.session.positions[moment.ply];
+        const san = pos ? (pos.san || pos.move || "") : "";
+
+        const moveSpan = document.createElement("span");
+        moveSpan.className = "cr-moment-move";
+        moveSpan.textContent = `${moveNum}.${side} ${san}`;
+
+        const desc = document.createElement("span");
+        desc.className = "cr-moment-desc";
+        desc.textContent = moment.reason;
+
+        item.append(icon, moveSpan, desc);
+        el.crKeyMoments.appendChild(item);
+    });
+}
+
+function renderCoachReviewMoveList() {
+    if (!el.crMoveList || !coachReviewState.session) return;
+    el.crMoveList.innerHTML = "";
+    const positions = coachReviewState.session.positions;
+
+    for (let i = 1; i < positions.length; i += 2) {
+        const wPos = positions[i];
+        const bPos = i + 1 < positions.length ? positions[i + 1] : null;
+        const moveNum = Math.ceil(i / 2);
+
+        const entry = document.createElement("div");
+        entry.className = "cr-move-entry";
+        entry.dataset.ply = String(i);
+
+        const num = document.createElement("span");
+        num.className = "cr-move-num";
+        num.textContent = `${moveNum}.`;
+
+        const wSan = document.createElement("span");
+        wSan.className = "cr-move-san";
+        const wCls = wPos.classification;
+        if (wCls && CLASSIFICATION_DOT_COLOR[wCls]) {
+            const dot = document.createElement("span");
+            dot.className = "cr-move-cls-dot";
+            dot.style.background = CLASSIFICATION_DOT_COLOR[wCls];
+            wSan.appendChild(dot);
+        }
+        wSan.appendChild(document.createTextNode(wPos.san || ""));
+        wSan.addEventListener("click", () => navigateCoachReview(i));
+
+        const bSan = document.createElement("span");
+        bSan.className = "cr-move-san";
+        if (bPos) {
+            const bCls = bPos.classification;
+            if (bCls && CLASSIFICATION_DOT_COLOR[bCls]) {
+                const dot = document.createElement("span");
+                dot.className = "cr-move-cls-dot";
+                dot.style.background = CLASSIFICATION_DOT_COLOR[bCls];
+                bSan.appendChild(dot);
+            }
+            bSan.appendChild(document.createTextNode(bPos.san || ""));
+            bSan.addEventListener("click", () => navigateCoachReview(i + 1));
+        }
+
+        entry.append(num, wSan, bSan);
+        el.crMoveList.appendChild(entry);
+    }
+
+    renderCoachReviewMoveListHighlight();
+}
+
+function renderCoachReviewMoveListHighlight() {
+    if (!el.crMoveList) return;
+    el.crMoveList.querySelectorAll(".cr-move-entry").forEach(entry => {
+        const ply = parseInt(entry.dataset.ply, 10);
+        const isActive = ply === coachReviewState.currentPly || ply + 1 === coachReviewState.currentPly;
+        entry.classList.toggle("is-active", isActive);
+    });
+}
+
+function renderCoachReviewGameScore() {
+    if (!el.crGameScore || !coachReviewState.session || !coachReviewModule) return;
+    const score = coachReviewModule.computeGameScore(coachReviewState.session);
+    el.crGameScore.textContent = String(score);
+}
+
+function renderCoachReviewEvalGraph() {
+    if (!el.crEvalGraph || !coachReviewState.session) return;
+    const canvas = el.crEvalGraph;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const positions = coachReviewState.session.positions;
+    const w = canvas.width;
+    const h = canvas.height;
+    const midY = h / 2;
+
+    ctx.clearRect(0, 0, w, h);
+
+    ctx.fillStyle = "rgba(255,255,255,0.04)";
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.strokeStyle = "rgba(255,255,255,0.15)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, midY);
+    ctx.lineTo(w, midY);
+    ctx.stroke();
+
+    if (positions.length < 2) return;
+
+    const step = w / (positions.length - 1);
+
+    ctx.beginPath();
+    ctx.strokeStyle = "rgba(129,182,76,0.8)";
+    ctx.lineWidth = 2;
+
+    for (let i = 0; i < positions.length; i++) {
+        const ev = Number(positions[i].eval || 0);
+        const normalized = clamp(ev / 500, -1, 1);
+        const y = midY - normalized * (midY - 4);
+        if (i === 0) ctx.moveTo(0, y);
+        else ctx.lineTo(i * step, y);
+    }
+    ctx.stroke();
+
+    const gradient = ctx.createLinearGradient(0, 0, 0, h);
+    gradient.addColorStop(0, "rgba(129,182,76,0.15)");
+    gradient.addColorStop(0.5, "rgba(129,182,76,0)");
+    gradient.addColorStop(1, "rgba(202,52,49,0.15)");
+
+    ctx.beginPath();
+    for (let i = 0; i < positions.length; i++) {
+        const ev = Number(positions[i].eval || 0);
+        const normalized = clamp(ev / 500, -1, 1);
+        const y = midY - normalized * (midY - 4);
+        if (i === 0) ctx.moveTo(0, y);
+        else ctx.lineTo(i * step, y);
+    }
+    ctx.lineTo((positions.length - 1) * step, midY);
+    ctx.lineTo(0, midY);
+    ctx.closePath();
+    ctx.fillStyle = gradient;
+    ctx.fill();
+
+    if (coachReviewState.currentPly > 0 && coachReviewState.currentPly < positions.length) {
+        const x = coachReviewState.currentPly * step;
+        ctx.strokeStyle = "rgba(255,255,255,0.5)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, h);
+        ctx.stroke();
+
+        ctx.fillStyle = "#81b64c";
+        ctx.beginPath();
+        const ev = Number(positions[coachReviewState.currentPly].eval || 0);
+        const ny = midY - clamp(ev / 500, -1, 1) * (midY - 4);
+        ctx.arc(x, ny, 4, 0, Math.PI * 2);
+        ctx.fill();
+    }
+}
+
+function getCoachTurnComment(move, cls, evalAfter) {
+    if (!cls) return null;
+    const key = cls.key || cls;
+    const templates = {
+        brilliant: [
+            "\u2728 \u00a1Wow, {san}! \u00a1Eso fue brillante! Encontraste algo que pocos ver\u00edan.",
+            "\ud83c\udf1f \u00a1Incre\u00edble {san}! Esa jugada demuestra talento real. \u00a1Sigue as\u00ed!"
+        ],
+        great: [
+            "\ud83d\udc4f \u00a1Gran jugada con {san}! Muy buena visi\u00f3n.",
+            "\ud83d\udcaa \u00a1Excelente {san}! Tu posici\u00f3n mejora."
+        ],
+        best: [
+            "\u2705 \u00a1Perfecto! {san} es la mejor jugada aqu\u00ed.",
+            "\ud83c\udfaf \u00a1{san} es justo lo que hab\u00eda que jugar! Impecable."
+        ],
+        excellent: [
+            "\u2b50 \u00a1Muy bien! {san} es excelente.",
+            "\ud83d\udc4d \u00a1{san} mantiene todo bajo control!"
+        ],
+        good: [
+            "\ud83d\ude42 {san} est\u00e1 bien. \u00bfViste alguna alternativa m\u00e1s activa?",
+            "\ud83d\udc4c {san} es s\u00f3lida. Intenta buscar opciones m\u00e1s ambiciosas."
+        ],
+        book: [
+            "\ud83d\udcda \u00a1Jugada de libro! {san} sigue la teor\u00eda.",
+            "\ud83c\udf93 {san} es teor\u00eda. \u00a1Tu preparaci\u00f3n es buena!"
+        ],
+        inaccuracy: [
+            "\u26a0\ufe0f {san} no es la mejor. \u00bfNotaste la alternativa? Piensa en amenazas del rival.",
+            "\ud83e\udd14 {san} pierde un poco. Intenta calcular m\u00e1s opciones antes de decidir."
+        ],
+        mistake: [
+            "\u274c \u00a1Uy! {san} es un error. No pasa nada, \u00a1aprenderemos de esto!",
+            "\ud83d\ude2c {san} complica las cosas. Recuerda revisar jaques y capturas del rival."
+        ],
+        blunder: [
+            "\ud83d\udea8 \u00a1Cuidado! {san} es un error grave. Respira y calcula antes de mover.",
+            "\ud83d\udca5 {san} cambia todo. Consejo: revisa siempre las amenazas antes de jugar."
+        ]
+    };
+
+    const pool = templates[key] || ["\u27a1\ufe0f {san} - Jugada interesante."];
+    const t = pool[Math.floor(Math.random() * pool.length)];
+    const san = move ? move.san : "...";
+    return t.replace(/\{san\}/g, sanToSpanish(san));
+}
+
+function bindCoachReviewEvents() {
+    if (el.crCloseBtn) el.crCloseBtn.addEventListener("click", closeCoachReview);
+    if (el.crVoiceBtn) {
+        el.crVoiceBtn.addEventListener("click", () => {
+            coachSpeechState.enabled = !coachSpeechState.enabled;
+            writeStored("preferences.coach_voice", coachSpeechState.enabled ? "1" : "0");
+            updateCoachVoiceButton();
+            if (!coachSpeechState.enabled) {
+                stopCoachSpeech();
+            } else if (coachReviewState.active && el.crSpeechText && el.crSpeechText.textContent) {
+                speakCoachText(el.crSpeechText.textContent, { force: true });
+            }
+        });
+    }
+    if (el.crCloseBottomBtn) el.crCloseBottomBtn.addEventListener("click", closeCoachReview);
+    if (el.crNavStart) el.crNavStart.addEventListener("click", () => navigateCoachReview(0));
+    if (el.crNavPrev) el.crNavPrev.addEventListener("click", () => navigateCoachReview(coachReviewState.currentPly - 1));
+    if (el.crNavNext) el.crNavNext.addEventListener("click", () => navigateCoachReview(coachReviewState.currentPly + 1));
+    if (el.crNavEnd) el.crNavEnd.addEventListener("click", () => {
+        const max = coachReviewState.session ? coachReviewState.session.positions.length - 1 : 0;
+        navigateCoachReview(max);
+    });
+    if (el.crNavPlay) el.crNavPlay.addEventListener("click", toggleCoachAutoPlay);
+    if (el.crNewGameBtn) el.crNewGameBtn.addEventListener("click", () => {
+        closeCoachReview();
+        goToPlaySetup(coachNotice("setup", "\u00a1Vamos con otra partida! Configura tu pr\u00f3ximo reto."));
+    });
+    if (el.crEvalGraph) {
+        el.crEvalGraph.addEventListener("click", (e) => {
+            if (!coachReviewState.session) return;
+            const rect = el.crEvalGraph.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const ratio = x / rect.width;
+            const ply = Math.round(ratio * (coachReviewState.session.positions.length - 1));
+            navigateCoachReview(ply);
+        });
+    }
+    if (el.endgameCoachReviewBtn) {
+        el.endgameCoachReviewBtn.addEventListener("click", openCoachReview);
+    }
+}
+
 function bindEvents() {
     playState.board.onSquareClick = onPlaySquareClick;
     playState.board.onDrop = handleBoardDrop;
@@ -7902,7 +8686,9 @@ function bindEvents() {
             if (!playState.startTime) {
                 const modeMessage = selectedMode === PLAY_MODES.RANKED
                     ? "Modo Clasificatoria activado: sin ayudas y con impacto en perfil."
-                    : "Modo Clasico activado: puedes usar ajustes libres sin afectar perfil.";
+                    : selectedMode === PLAY_MODES.COACH
+                        ? "Modo Jugar con Entrenador activado: guia por voz y revision automatica al terminar."
+                        : "Modo Clasico activado: puedes usar ajustes libres sin afectar perfil.";
                 setCoachMessage(coachNotice("setup", modeMessage));
             }
             refreshPlayModeUiState();
@@ -9418,6 +10204,16 @@ async function init() {
         el.playMode.value = normalizePlayMode(readStored("preferences.play_mode", PLAY_MODES.CASUAL));
         playState.gameMode = el.playMode.value;
     }
+    coachSpeechState.enabled = readStored("preferences.coach_voice", "1") !== "0";
+    if ("speechSynthesis" in window) {
+        loadCoachVoice();
+        window.speechSynthesis.onvoiceschanged = () => {
+            loadCoachVoice();
+        };
+    } else {
+        coachSpeechState.enabled = false;
+    }
+    updateCoachVoiceButton();
 
     lessonState.progressByLesson = {};
 
@@ -9457,6 +10253,7 @@ async function init() {
 
     bindTabs();
     bindEvents();
+    bindCoachReviewEvents();
     setAuthState(false, "");
     setAuthStatus("Validando sesion...");
     bindLessonsUi();
