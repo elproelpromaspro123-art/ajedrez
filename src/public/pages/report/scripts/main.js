@@ -17,17 +17,45 @@ const SAN_PIECE_ES = {
 
 function sanToSpanish(san) {
     if (!san) return san;
-    let desc = san;
-    if (san === "O-O") return "Enroque corto";
-    if (san === "O-O-O") return "Enroque largo";
-    const pieceChar = san[0];
-    if (SAN_PIECE_ES[pieceChar]) {
-        desc = SAN_PIECE_ES[pieceChar] + " " + san.slice(1);
-    } else if (/^[a-h]/.test(san)) {
-        desc = "Pe\u00f3n " + san;
+    const source = String(san).trim();
+    if (!source) return source;
+    if (source === "O-O") return "Enroque corto";
+    if (source === "O-O-O") return "Enroque largo";
+
+    const checkSuffix = source.includes("#")
+        ? " (jaque mate)"
+        : (source.includes("+") ? " (jaque)" : "");
+    let core = source.replace(/[+#]+$/g, "");
+    const promoMatch = core.match(/=([QRBN])$/i);
+    const promotionPiece = promoMatch ? String(promoMatch[1] || "").toUpperCase() : "";
+    if (promotionPiece) {
+        core = core.slice(0, -2);
     }
-    desc = desc.replace("x", " captura en ").replace("+", " (jaque)").replace("#", " (jaque mate)");
-    return desc;
+
+    const capture = core.includes("x");
+    const targetMatch = core.match(/([a-h][1-8])$/i);
+    const target = targetMatch ? String(targetMatch[1] || "").toLowerCase() : "";
+    const pieceChar = SAN_PIECE_ES[core[0]] ? core[0] : "P";
+    const pieceName = SAN_PIECE_ES[pieceChar] || "Pe\u00f3n";
+
+    let base = "";
+    if (target) {
+        base = capture
+            ? `${pieceName} captura en ${target}`
+            : `${pieceName} ${target}`;
+    } else if (pieceChar === "P" && /^[a-h]/i.test(core)) {
+        base = capture
+            ? `Pe\u00f3n captura en ${core.slice(-2).toLowerCase()}`
+            : `Pe\u00f3n ${core.toLowerCase()}`;
+    } else {
+        base = `${pieceName} ${core}`;
+    }
+
+    if (promotionPiece && SAN_PIECE_ES[promotionPiece]) {
+        base += ` y corona a ${SAN_PIECE_ES[promotionPiece]}`;
+    }
+
+    return `${base}${checkSuffix}`.replace(/\s+/g, " ").trim();
 }
 
 const PIECE_IMAGE = {
@@ -1010,7 +1038,7 @@ class BoardView {
             const droppedOnSource = Boolean(targetSquare && targetSquare.dataset.square === state.fromSquare);
             const willDrop = Boolean(targetSquare && targetSquare.dataset.square && targetSquare.dataset.square !== state.fromSquare);
 
-            // Restore origin image only if we did NOT drop on another square (evita tirón al soltar)
+            // Restore origin image only if we did NOT drop on another square (evita tiron al soltar)
             if (state.originImg && !willDrop) {
                 state.originImg.style.opacity = "";
             }
@@ -1131,10 +1159,10 @@ class BoardView {
             const suggestionMarker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
             suggestionMarker.setAttribute("id", `${this.arrowIdPrefix}-suggestion`);
             suggestionMarker.setAttribute("viewBox", "0 0 10 10");
-            suggestionMarker.setAttribute("refX", "7");
+            suggestionMarker.setAttribute("refX", "8");
             suggestionMarker.setAttribute("refY", "5");
-            suggestionMarker.setAttribute("markerWidth", "3");
-            suggestionMarker.setAttribute("markerHeight", "3");
+            suggestionMarker.setAttribute("markerWidth", "2.1");
+            suggestionMarker.setAttribute("markerHeight", "2.1");
             suggestionMarker.setAttribute("orient", "auto-start-reverse");
             const suggestionPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
             suggestionPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
@@ -1144,10 +1172,10 @@ class BoardView {
             const threatMarker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
             threatMarker.setAttribute("id", `${this.arrowIdPrefix}-threat`);
             threatMarker.setAttribute("viewBox", "0 0 10 10");
-            threatMarker.setAttribute("refX", "7");
+            threatMarker.setAttribute("refX", "8");
             threatMarker.setAttribute("refY", "5");
-            threatMarker.setAttribute("markerWidth", "3");
-            threatMarker.setAttribute("markerHeight", "3");
+            threatMarker.setAttribute("markerWidth", "2.1");
+            threatMarker.setAttribute("markerHeight", "2.1");
             threatMarker.setAttribute("orient", "auto-start-reverse");
             const threatPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
             threatPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
@@ -1213,20 +1241,15 @@ class BoardView {
             return;
         }
 
-        const shrink = Math.min(3.5, distance * 0.18);
+        const shrink = Math.min(2.1, distance * 0.12);
         const targetX = to.x - (dx / distance) * shrink;
         const targetY = to.y - (dy / distance) * shrink;
-        const normalX = distance > 0 ? (-dy / distance) : 0;
-        const normalY = distance > 0 ? (dx / distance) : 0;
-        const bend = Math.min(3.5, Math.max(0.6, distance * 0.1));
-        const controlX = (from.x + targetX) / 2 + (normalX * bend);
-        const controlY = (from.y + targetY) / 2 + (normalY * bend);
         const colorKind = kind === "threat" ? "threat" : "suggestion";
 
         const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
         path.setAttribute(
             "d",
-            `M ${from.x.toFixed(3)} ${from.y.toFixed(3)} Q ${controlX.toFixed(3)} ${controlY.toFixed(3)} ${targetX.toFixed(3)} ${targetY.toFixed(3)}`
+            `M ${from.x.toFixed(3)} ${from.y.toFixed(3)} L ${targetX.toFixed(3)} ${targetY.toFixed(3)}`
         );
         path.setAttribute("class", `board-arrow board-arrow-${colorKind}`);
         path.setAttribute("marker-end", `url(#${this.arrowIdPrefix}-${colorKind})`);
@@ -1234,7 +1257,7 @@ class BoardView {
         const tail = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         tail.setAttribute("cx", from.x.toFixed(3));
         tail.setAttribute("cy", from.y.toFixed(3));
-        tail.setAttribute("r", "0.8");
+        tail.setAttribute("r", "0.45");
         tail.setAttribute("class", `board-arrow-tail board-arrow-tail-${colorKind}`);
 
         this.arrowGroup.append(path, tail);
@@ -1665,6 +1688,108 @@ async function warmEngineAsset() {
     ]);
 }
 
+function evaluateInlineHeuristicFallback(options) {
+    const fen = String(options && options.fen ? options.fen : "");
+    const requestedPv = clamp(parseInt(options && options.multipv, 10) || 1, 1, 5);
+    const depth = clamp(parseInt(options && options.depth, 10) || 10, 1, 99);
+    let game = null;
+    try {
+        game = new Chess(fen);
+    } catch {
+        return { bestMove: "", lines: [] };
+    }
+
+    const legalMoves = game.moves({ verbose: true });
+    if (!Array.isArray(legalMoves) || legalMoves.length === 0) {
+        const terminalEval = game.isCheckmate()
+            ? sanitizeEngineEvaluation({ type: "mate", value: game.turn() === "w" ? -1 : 1 })
+            : sanitizeEngineEvaluation({ type: "cp", value: 0 });
+        return {
+            bestMove: "",
+            lines: [{
+                id: 1,
+                depth,
+                moveUCI: "",
+                moveSAN: "",
+                evaluation: terminalEval
+            }]
+        };
+    }
+
+    const pieceScore = { p: 100, n: 320, b: 330, r: 500, q: 900, k: 0 };
+    const evaluateBoardCp = (positionGame) => {
+        let cp = 0;
+        const board = positionGame.board();
+        for (let r = 0; r < board.length; r += 1) {
+            const row = board[r];
+            for (let c = 0; c < row.length; c += 1) {
+                const piece = row[c];
+                if (!piece || !piece.type || !piece.color) continue;
+                const value = pieceScore[piece.type] || 0;
+                cp += piece.color === "w" ? value : -value;
+            }
+        }
+        // Light mobility term for less static behaviour.
+        const currentTurn = positionGame.turn();
+        const ownMoves = positionGame.moves().length;
+        try {
+            const fenFields = positionGame.fen().split(" ");
+            fenFields[1] = currentTurn === "w" ? "b" : "w";
+            fenFields[3] = "-";
+            const otherMoves = new Chess(fenFields.join(" ")).moves().length;
+            cp += (ownMoves - otherMoves) * 2;
+        } catch {
+            cp += ownMoves;
+        }
+        return clamp(Math.trunc(cp), -MAX_ENGINE_CP, MAX_ENGINE_CP);
+    };
+
+    const moverIsWhite = game.turn() === "w";
+    const lines = legalMoves.map((candidate) => {
+        try {
+            const after = new Chess(fen);
+            const applied = after.move({
+                from: candidate.from,
+                to: candidate.to,
+                promotion: candidate.promotion || undefined
+            });
+            if (!applied) return null;
+
+            let evaluation = null;
+            if (after.isCheckmate()) {
+                evaluation = sanitizeEngineEvaluation({ type: "mate", value: after.turn() === "b" ? 1 : -1 });
+            } else if (after.isDraw()) {
+                evaluation = sanitizeEngineEvaluation({ type: "cp", value: 0 });
+            } else {
+                evaluation = sanitizeEngineEvaluation({ type: "cp", value: evaluateBoardCp(after) });
+            }
+            if (!evaluation) return null;
+
+            return {
+                id: 0,
+                depth,
+                moveUCI: `${candidate.from}${candidate.to}${candidate.promotion || ""}`,
+                moveSAN: candidate.san || "",
+                evaluation
+            };
+        } catch {
+            return null;
+        }
+    }).filter(Boolean);
+
+    lines.sort((a, b) => {
+        const aScore = evalToCp(a.evaluation);
+        const bScore = evalToCp(b.evaluation);
+        return moverIsWhite ? (bScore - aScore) : (aScore - bScore);
+    });
+
+    const selected = lines.slice(0, requestedPv).map((line, index) => ({ ...line, id: index + 1 }));
+    return {
+        bestMove: selected[0] ? selected[0].moveUCI : "",
+        lines: selected
+    };
+}
+
 async function evaluateWithStockfish(options) {
     const startedAt = nowMs();
     if (engineModule && engineModule.evaluateWithStockfish) {
@@ -1673,7 +1798,18 @@ async function evaluateWithStockfish(options) {
             markFirstEvalMetric(nowMs() - startedAt);
             return value;
         } catch {
-            // Continue with inline fallback path below.
+            let runtimeStatus = null;
+            try {
+                runtimeStatus = engineModule.getRuntimeStatus ? engineModule.getRuntimeStatus() : null;
+            } catch {
+                runtimeStatus = null;
+            }
+            if (runtimeStatus && runtimeStatus.cspBlocked) {
+                const value = evaluateInlineHeuristicFallback(options);
+                markFirstEvalMetric(nowMs() - startedAt);
+                return value;
+            }
+            // Continue with inline fallback path below for non-CSP failures.
         }
     }
 
@@ -1706,7 +1842,12 @@ async function evaluateWithStockfish(options) {
                 depth: clamp(Number(options.depth || 10), 8, 14),
                 timeoutMs: 30000
             };
-            const value = await runStockfishInternal(emergencyOptions, ENGINE_FALLBACK);
+            let value;
+            try {
+                value = await runStockfishInternal(emergencyOptions, ENGINE_FALLBACK);
+            } catch {
+                value = evaluateInlineHeuristicFallback(options);
+            }
             ENGINE_EVAL_CACHE.set(cacheKey, { at: Date.now(), value });
             markFirstEvalMetric(nowMs() - startedAt);
             return value;
@@ -2334,15 +2475,22 @@ const COACH_PREFIX = {
 const COACH_SPEECH_RATE = 0.95;
 const COACH_SPEECH_PITCH = 1.02;
 const COACH_SPEECH_VOLUME = 1;
-const COACH_SPEECH_MIN_INTERVAL_MS = 1200;
+const COACH_SPEECH_MIN_INTERVAL_MS = 520;
+const COACH_SPEECH_DUPLICATE_WINDOW_MS = 5000;
+const COACH_SPEECH_MAX_QUEUE = 6;
 const COACH_SPEECH_MAX_LENGTH = 280;
+const SAN_TOKEN_REGEX = /\b(?:O-O-O|O-O|[KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?|[a-h]x[a-h][1-8](?:=[QRBN])?[+#]?|[a-h][1-8](?:=[QRBN])?[+#]?)\b/g;
 
 const coachSpeechState = {
     enabled: true,
     voice: null,
     loaded: false,
     lastText: "",
-    lastAt: 0
+    lastAt: 0,
+    lastQueuedAt: 0,
+    queue: [],
+    speaking: false,
+    currentUtteranceId: 0
 };
 
 function coachNotice(type, text) {
@@ -2350,12 +2498,18 @@ function coachNotice(type, text) {
     return `${icon} ${text}`;
 }
 
+function normalizeCoachSpeechNotation(text) {
+    const source = String(text || "");
+    return source.replace(SAN_TOKEN_REGEX, (token) => sanToSpanish(token));
+}
+
 function stripCoachSpeechText(value) {
-    const raw = String(value || "");
+    const raw = normalizeCoachSpeechNotation(value);
     const noEmojis = raw.replace(/[\u{1F300}-\u{1FAFF}]/gu, "");
     const cleaned = noEmojis
         .replace(/[\u2600-\u27BF]/g, " ")
         .replace(/[\u2022\u00B7]/g, " ")
+        .replace(/\(([KQRBN]?[a-h]?[1-8]?x?[a-h][1-8](?:=[QRBN])?[+#]?)\)/g, (_m, san) => `, ${sanToSpanish(san)}`)
         .replace(/\s+/g, " ")
         .trim();
     if (!cleaned) return "";
@@ -2389,11 +2543,91 @@ function updateCoachVoiceButton() {
     el.crVoiceBtn.setAttribute("aria-pressed", muted ? "true" : "false");
 }
 
-function stopCoachSpeech() {
+function clearCoachSpeechQueue() {
+    coachSpeechState.queue = [];
+    coachSpeechState.lastQueuedAt = 0;
+}
+
+function stopCoachSpeech(options = {}) {
+    const flush = options && options.flush !== false;
+    if (flush) {
+        clearCoachSpeechQueue();
+    }
+    coachSpeechState.speaking = false;
+    coachSpeechState.currentUtteranceId = 0;
     if (!("speechSynthesis" in window)) {
         return;
     }
     window.speechSynthesis.cancel();
+}
+
+function startNextCoachSpeech() {
+    if (!coachSpeechState.enabled || !("speechSynthesis" in window)) {
+        return;
+    }
+    if (coachSpeechState.speaking) {
+        return;
+    }
+    const next = coachSpeechState.queue.shift();
+    if (!next || !next.text) {
+        return;
+    }
+
+    if (!coachSpeechState.loaded) {
+        loadCoachVoice();
+    }
+
+    const utterance = new SpeechSynthesisUtterance(next.text);
+    if (coachSpeechState.voice) {
+        utterance.voice = coachSpeechState.voice;
+        utterance.lang = coachSpeechState.voice.lang || "es-ES";
+    } else {
+        utterance.lang = "es-ES";
+    }
+    const adaptiveRate = clamp(COACH_SPEECH_RATE - (next.text.length > 160 ? 0.07 : next.text.length > 110 ? 0.04 : 0), 0.82, 1.05);
+    const adaptivePitch = clamp(COACH_SPEECH_PITCH + (/\?/.test(next.text) ? 0.04 : 0), 0.9, 1.2);
+    utterance.rate = adaptiveRate;
+    utterance.pitch = adaptivePitch;
+    utterance.volume = COACH_SPEECH_VOLUME;
+
+    const utteranceId = coachSpeechState.currentUtteranceId + 1;
+    coachSpeechState.currentUtteranceId = utteranceId;
+    coachSpeechState.speaking = true;
+
+    const onDone = () => {
+        if (coachSpeechState.currentUtteranceId !== utteranceId) {
+            return;
+        }
+        coachSpeechState.speaking = false;
+        coachSpeechState.currentUtteranceId = 0;
+        coachSpeechState.lastText = next.text;
+        coachSpeechState.lastAt = Date.now();
+        window.setTimeout(startNextCoachSpeech, 80);
+    };
+
+    utterance.onend = onDone;
+    utterance.onerror = onDone;
+
+    coachSpeechState.lastQueuedAt = Date.now();
+    window.speechSynthesis.speak(utterance);
+}
+
+function queueCoachSpeech(text, force = false) {
+    const now = Date.now();
+    if (!force) {
+        if (text === coachSpeechState.lastText && (now - coachSpeechState.lastAt) < COACH_SPEECH_DUPLICATE_WINDOW_MS) {
+            return;
+        }
+        if (coachSpeechState.queue.some((entry) => entry.text === text)) {
+            return;
+        }
+    }
+
+    coachSpeechState.queue.push({ text, at: now, force: Boolean(force) });
+    if (coachSpeechState.queue.length > COACH_SPEECH_MAX_QUEUE) {
+        coachSpeechState.queue.splice(0, coachSpeechState.queue.length - COACH_SPEECH_MAX_QUEUE);
+    }
+    startNextCoachSpeech();
 }
 
 function speakCoachText(message, options = {}) {
@@ -2402,40 +2636,20 @@ function speakCoachText(message, options = {}) {
     }
 
     const force = Boolean(options.force);
+    const interrupt = Boolean(options.interrupt);
     const text = stripCoachSpeechText(message);
     if (!text) {
         return;
     }
 
     const now = Date.now();
-    if (!force && text === coachSpeechState.lastText && (now - coachSpeechState.lastAt) < 5000) {
+    if (!force && (now - coachSpeechState.lastQueuedAt) < COACH_SPEECH_MIN_INTERVAL_MS && coachSpeechState.queue.length > 3) {
         return;
     }
-    if (!force && (now - coachSpeechState.lastAt) < COACH_SPEECH_MIN_INTERVAL_MS) {
-        return;
+    if (interrupt) {
+        stopCoachSpeech({ flush: false });
     }
-
-    if (!coachSpeechState.loaded) {
-        loadCoachVoice();
-    }
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    if (coachSpeechState.voice) {
-        utterance.voice = coachSpeechState.voice;
-        utterance.lang = coachSpeechState.voice.lang || "es-ES";
-    } else {
-        utterance.lang = "es-ES";
-    }
-    const adaptiveRate = clamp(COACH_SPEECH_RATE - (text.length > 160 ? 0.07 : text.length > 110 ? 0.04 : 0), 0.82, 1.05);
-    const adaptivePitch = clamp(COACH_SPEECH_PITCH + (/\?/.test(text) ? 0.04 : 0), 0.9, 1.2);
-    utterance.rate = adaptiveRate;
-    utterance.pitch = adaptivePitch;
-    utterance.volume = COACH_SPEECH_VOLUME;
-
-    stopCoachSpeech();
-    window.speechSynthesis.speak(utterance);
-    coachSpeechState.lastText = text;
-    coachSpeechState.lastAt = now;
+    queueCoachSpeech(text, force);
 }
 
 function setTextWithOptionalOpeningLink(container, message, openingContext) {
@@ -2480,7 +2694,7 @@ function setTextWithOptionalOpeningLink(container, message, openingContext) {
 function normalizeCoachBubbleText(message) {
     return String(message || "")
         .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
-        .replace(/[•·]/g, " ")
+        .replace(/[\u2022\u00B7]/g, " ")
         .replace(/\b(Eval|Evaluacion):[^.]*\.?/gi, "")
         .replace(/\s+/g, " ")
         .trim();
@@ -2802,28 +3016,27 @@ function renderPlayMoveList() {
 
 function buildCoachComment(classification, move, evalAfter, openingName) {
     const evalText = formatEval(evalAfter);
-    const sanStr = move ? move.san : "";
     const descStr = move ? sanToSpanish(move.san) : "";
 
     switch (classification.key) {
         case "brilliant":
-            return `Excelente golpe con ${descStr} (${sanStr}). Fue una jugada brillante y subio mucho la evaluacion (${evalText}).`;
+            return `Excelente golpe con ${descStr}. Fue una idea brillante y cambiaste el rumbo de la posicion.`;
         case "great":
-            return `Muy buena decision con ${descStr} (${sanStr}). Mejoraste la posicion de forma clara (${evalText}).`;
+            return `Muy buena decision con ${descStr}. Ganaste iniciativa y mejoraste tu posicion.`;
         case "best":
-            return `${descStr} (${sanStr}) fue la mejor opcion practica en esta posicion (${evalText}).`;
+            return `${descStr} fue la mejor respuesta en esta posicion.`;
         case "excellent":
-            return `${descStr} (${sanStr}) fue muy precisa y mantiene el plan correcto (${evalText}).`;
+            return `${descStr} fue precisa y mantiene tu plan de juego.`;
         case "good":
-            return `${descStr} (${sanStr}) es una jugada solida. Hay alternativas un poco mas activas (${evalText}).`;
+            return `${descStr} es una jugada solida. Habia una alternativa un poco mas activa.`;
         case "book":
-            return `${descStr} (${sanStr}) es teoria de apertura: ${openingName || "Apertura no catalogada"}.`;
+            return `${descStr} es teoria de apertura: ${openingName || "Apertura no catalogada"}.`;
         case "inaccuracy":
-            return `${descStr} (${sanStr}) fue una imprecision. Perdiste parte de la ventaja (${evalText}).`;
+            return `${descStr} fue una imprecision. Cediste algo de control en la posicion.`;
         case "mistake":
-            return `${descStr} (${sanStr}) fue un error. La posicion empeoro de forma importante (${evalText}).`;
+            return `${descStr} fue un error serio. Tu posicion quedo mas expuesta.`;
         case "blunder":
-            return `${descStr} (${sanStr}) fue un error grave. Quedo una desventaja grande (${evalText}).`;
+            return `${descStr} fue un error grave. Ahora tienes una desventaja importante.`;
         default:
             return `${descStr}. Evaluacion actual: ${evalText}.`;
     }
@@ -3495,9 +3708,8 @@ async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveInd
             showMoveBadge(cls, "Rival", bookDetail, openingContext);
             hideCoachDecisionPrompt();
             if (isCoachMode()) {
-                const rivalMoveText = sanToSpanish(move.san);
                 const rivalSummary = buildCoachComment(cls, move, evalAfter, bookResult.name);
-                setCoachMessage(`Mi jugada fue ${rivalMoveText}. ${rivalSummary} Tu turno: busca una respuesta activa.`, {
+                setCoachMessage(`${rivalSummary} Ahora es tu turno: encuentra una respuesta activa.`, {
                     ...(openingContext || {}),
                     forceSpeech: true
                 });
@@ -3512,9 +3724,9 @@ async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveInd
         }
         hideCoachDecisionPrompt();
         if (isPlayerMove) {
-            setCoachMessage(coachNotice("warn", "Jugaste " + move.san + ". No se pudo evaluar."));
+            setCoachMessage(coachNotice("warn", "Jugaste " + sanToSpanish(move.san) + ". No se pudo evaluar."));
         } else {
-            setCoachMessage(coachNotice("warn", "El rival jugo " + move.san + ". No se pudo evaluar su calidad."));
+            setCoachMessage(coachNotice("warn", "El rival jugo " + sanToSpanish(move.san) + ". No se pudo evaluar su calidad."));
         }
     } finally {
         playState.pendingEvaluations = Math.max(0, playState.pendingEvaluations - 1);
@@ -3810,7 +4022,23 @@ function renderPlayStatus() {
     }
 }
 
-function renderPlayBoard() {
+let playBoardRenderQueued = false;
+let playBoardRenderFrame = 0;
+
+function renderPlayBoard(forceNow = false) {
+    if (!forceNow) {
+        if (playBoardRenderQueued) {
+            return;
+        }
+        playBoardRenderQueued = true;
+        playBoardRenderFrame = window.requestAnimationFrame(() => {
+            playBoardRenderQueued = false;
+            playBoardRenderFrame = 0;
+            renderPlayBoard(true);
+        });
+        return;
+    }
+
     const settings = getPlaySettings();
     const currentFen = playState.game.fen();
 
@@ -4244,19 +4472,29 @@ function currentBotElo() {
 function getBotDecisionProfile(elo, gameType = "standard") {
     const bounded = clamp(Number(elo || 1200), 400, 2800);
     const strength = (bounded - 400) / 2400;
+    const lowEloFactor = clamp((1600 - bounded) / 1200, 0, 1);
     const normalizedGameType = normalizeGameType(gameType);
     const depthBoost = normalizedGameType === "challenge" ? 2 : (normalizedGameType === "training" ? -1 : 0);
     const timeScale = normalizedGameType === "challenge" ? 1.16 : (normalizedGameType === "training" ? 0.86 : 1);
+
+    const multipv = bounded <= 900
+        ? 5
+        : bounded <= 1400
+            ? 4
+            : bounded <= 2000
+                ? 3
+                : 2;
+
     return {
-        // Keep behaviour tied to actual UCI_Elo, without manual blunder injection/caps.
-        multipv: 2,
-        depth: clamp(Math.round(8 + (strength * 6)) + depthBoost, 8, 18),
-        movetime: clamp(Math.round((260 + strength * 980) * timeScale), 220, 2100),
-        maxCandidates: 2,
-        temperatureCp: clamp(Math.round(135 - strength * 48), 70, 160),
-        rankPenalty: 0.62,
-        randomMoveChance: normalizedGameType === "training" ? 0.05 : 0.015,
-        strictElo: true
+        // Keep behaviour anchored to UCI_Elo/Skill while allowing human-like variety.
+        multipv,
+        depth: clamp(Math.round(6 + (strength * 8)) + depthBoost, 6, 18),
+        movetime: clamp(Math.round((200 + strength * 900) * timeScale), 160, 2200),
+        maxCandidates: clamp(Math.round(2 + (lowEloFactor * 3)), 2, 5),
+        temperatureCp: clamp(Math.round(90 + (lowEloFactor * 220)), 70, 320),
+        rankPenalty: clamp(0.45 + ((1 - strength) * 0.55), 0.35, 1),
+        randomMoveChance: clamp(0.01 + (lowEloFactor * 0.18) + (normalizedGameType === "training" ? 0.08 : 0), 0.01, 0.23),
+        strictElo: false
     };
 }
 
@@ -4480,8 +4718,8 @@ async function playBotMove() {
 
         const normalizedLines = normalizeEngineLinesForFen(fenBeforeMove, result.lines || []);
         const selectedLine = chooseBotMoveFromLines(normalizedLines, playState.botColor, botProfile);
-        const selectedMoveUci = result.bestMove
-            || (selectedLine && selectedLine.moveUCI)
+        const selectedMoveUci = (selectedLine && selectedLine.moveUCI)
+            || result.bestMove
             || (normalizedLines[0] && normalizedLines[0].moveUCI)
             || "";
         const normalizedBestMove = normalizeUciMoveForFen(fenBeforeMove, selectedMoveUci);
@@ -4878,6 +5116,7 @@ function startNewGame() {
         return;
     }
 
+    stopCoachSpeech();
     playState.sessionId += 1;
     playState.game = new Chess();
     playState.gameMode = getSelectedPlayMode();

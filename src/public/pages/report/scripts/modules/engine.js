@@ -78,6 +78,9 @@
 
         try {
             await WebAssembly.compile(tinyWasmProbe);
+            // Some CSP policies allow compile() but block instantiate().
+            // Probe both to avoid booting workers that will fail noisily.
+            await WebAssembly.instantiate(tinyWasmProbe);
             engineRuntime.wasmAllowed = true;
             return true;
         } catch (error) {
@@ -85,8 +88,9 @@
                 markCspBlocked(error);
                 return false;
             }
-            engineRuntime.wasmAllowed = true;
-            return true;
+            engineRuntime.wasmAllowed = false;
+            engineRuntime.reason = errorText(error) || "WebAssembly no disponible";
+            return false;
         }
     }
 
