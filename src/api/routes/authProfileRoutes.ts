@@ -288,18 +288,20 @@ export function registerAuthProfileRoutes(router: Router, deps: AuthProfileRoute
             patch.profile = profile;
         }
 
-        if (Object.keys(patch).length === 0) {
-            return res.status(400).json({ message: "Payload de sincronizacion invalido." });
-        }
-        if (!isJsonPayloadSizeSafe(patch, PROFILE_SYNC_MAX_BYTES)) {
-            return res.status(413).json({ message: "El payload de sincronizacion es demasiado grande." });
-        }
-
         try {
             const ctx = await resolveAuthContext(req);
             if (!ctx) {
                 clearAuthCookie(req, res);
                 return unauthorized(res);
+            }
+
+            if (Object.keys(patch).length === 0) {
+                return res.status(400).json({
+                    message: "El payload está vacío o no es válido para sincronizar."
+                });
+            }
+            if (!isJsonPayloadSizeSafe(patch, PROFILE_SYNC_MAX_BYTES)) {
+                return res.status(413).json({ message: "El payload de sincronizacion es demasiado grande." });
             }
 
             const currentStore = asObject(ctx.user.store) || {};

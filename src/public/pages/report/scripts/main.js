@@ -969,7 +969,8 @@ class BoardView {
             };
             this._dragGhost = ghost;
 
-            // Fire click to show legal moves immediately on pointer down.
+            // Fire click to show legal moves immediately on pointer down; mark so the subsequent click does not toggle selection off.
+            this._pointerDownHandled = true;
             if (this.onSquareClick) {
                 this.onSquareClick(square);
             }
@@ -995,20 +996,23 @@ class BoardView {
             if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
             this._dragGhost = null;
 
-            // Restore origin image
-            if (state.originImg) state.originImg.style.opacity = "";
+            // Find target square before restoring UI, to know if we're dropping on a new square
+            const target = document.elementFromPoint(event.clientX, event.clientY);
+            const targetSquare = target ? target.closest(".square") : null;
+            const droppedOnSource = Boolean(targetSquare && targetSquare.dataset.square === state.fromSquare);
+            const willDrop = Boolean(targetSquare && targetSquare.dataset.square && targetSquare.dataset.square !== state.fromSquare);
+
+            // Restore origin image only if we did NOT drop on another square (evita tirón al soltar)
+            if (state.originImg && !willDrop) {
+                state.originImg.style.opacity = "";
+            }
 
             // Remove classes
             this.root.classList.remove("drag-active");
             this.root.querySelectorAll(".drag-origin").forEach((el) => el.classList.remove("drag-origin"));
-
-            // Find target square
-            const target = document.elementFromPoint(event.clientX, event.clientY);
-            const targetSquare = target ? target.closest(".square") : null;
-            const droppedOnSource = Boolean(targetSquare && targetSquare.dataset.square === state.fromSquare);
             this._pointerDownHandled = droppedOnSource;
 
-            if (targetSquare && targetSquare.dataset.square && targetSquare.dataset.square !== state.fromSquare) {
+            if (willDrop) {
                 this._wasDragging = true;
                 this._pointerDownHandled = false;
                 if (this.onDrop) {
@@ -1119,10 +1123,10 @@ class BoardView {
             const suggestionMarker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
             suggestionMarker.setAttribute("id", `${this.arrowIdPrefix}-suggestion`);
             suggestionMarker.setAttribute("viewBox", "0 0 10 10");
-            suggestionMarker.setAttribute("refX", "8");
+            suggestionMarker.setAttribute("refX", "7");
             suggestionMarker.setAttribute("refY", "5");
-            suggestionMarker.setAttribute("markerWidth", "7.5");
-            suggestionMarker.setAttribute("markerHeight", "7.5");
+            suggestionMarker.setAttribute("markerWidth", "3");
+            suggestionMarker.setAttribute("markerHeight", "3");
             suggestionMarker.setAttribute("orient", "auto-start-reverse");
             const suggestionPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
             suggestionPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
@@ -1132,10 +1136,10 @@ class BoardView {
             const threatMarker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
             threatMarker.setAttribute("id", `${this.arrowIdPrefix}-threat`);
             threatMarker.setAttribute("viewBox", "0 0 10 10");
-            threatMarker.setAttribute("refX", "8");
+            threatMarker.setAttribute("refX", "7");
             threatMarker.setAttribute("refY", "5");
-            threatMarker.setAttribute("markerWidth", "7.5");
-            threatMarker.setAttribute("markerHeight", "7.5");
+            threatMarker.setAttribute("markerWidth", "3");
+            threatMarker.setAttribute("markerHeight", "3");
             threatMarker.setAttribute("orient", "auto-start-reverse");
             const threatPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
             threatPath.setAttribute("d", "M 0 0 L 10 5 L 0 10 z");
@@ -1201,12 +1205,12 @@ class BoardView {
             return;
         }
 
-        const shrink = Math.min(4, distance * 0.2);
+        const shrink = Math.min(3.5, distance * 0.18);
         const targetX = to.x - (dx / distance) * shrink;
         const targetY = to.y - (dy / distance) * shrink;
         const normalX = distance > 0 ? (-dy / distance) : 0;
         const normalY = distance > 0 ? (dx / distance) : 0;
-        const bend = Math.min(6, Math.max(1.1, distance * 0.18));
+        const bend = Math.min(3.5, Math.max(0.6, distance * 0.1));
         const controlX = (from.x + targetX) / 2 + (normalX * bend);
         const controlY = (from.y + targetY) / 2 + (normalY * bend);
         const colorKind = kind === "threat" ? "threat" : "suggestion";
@@ -1222,7 +1226,7 @@ class BoardView {
         const tail = document.createElementNS("http://www.w3.org/2000/svg", "circle");
         tail.setAttribute("cx", from.x.toFixed(3));
         tail.setAttribute("cy", from.y.toFixed(3));
-        tail.setAttribute("r", "2.2");
+        tail.setAttribute("r", "0.8");
         tail.setAttribute("class", `board-arrow-tail board-arrow-tail-${colorKind}`);
 
         this.arrowGroup.append(path, tail);
@@ -1397,7 +1401,7 @@ function playErrorSound() {
 
         const context = errorAudioContext;
         if (context.state === "suspended") {
-            context.resume().catch(() => {});
+            context.resume().catch(() => { });
         }
 
         const now = context.currentTime;
@@ -1745,7 +1749,39 @@ function updateEvalBar(evaluation) {
 }
 
 function updatePlayEvalBar(evaluation) {
-    updateEvalBarElements(evaluation, el.playEvalBar, el.playEvalFill, el.playEvalLabelWhite, el.playEvalLabelBlack);
+    if (!el.playEvalBar || !el.playEvalFill) return;
+    let whitePercent = 50;
+    if (evaluation) {
+        if (evaluation.type === "mate") {
+            whitePercent = evaluation.value > 0 ? 100 : (evaluation.value < 0 ? 0 : 50);
+        } else {
+            const cp = evaluation.value / 100;
+            whitePercent = 50 + 50 * (2 / (1 + Math.exp(-0.4 * cp)) - 1);
+            whitePercent = clamp(whitePercent, 2, 98);
+        }
+    }
+    el.playEvalFill.style.height = `${whitePercent}%`;
+    if (el.playEvalLabelWhite && el.playEvalLabelBlack && playState) {
+        const text = formatEvalForPlayer(evaluation);
+        const playerVal = evaluation ? getEvalValueForPlayer(evaluation) : 0;
+        if (playState.playerColor === "white") {
+            if (!evaluation || playerVal >= 0) {
+                el.playEvalLabelWhite.textContent = text;
+                el.playEvalLabelBlack.textContent = "";
+            } else {
+                el.playEvalLabelBlack.textContent = text;
+                el.playEvalLabelWhite.textContent = "";
+            }
+        } else {
+            if (!evaluation || playerVal >= 0) {
+                el.playEvalLabelBlack.textContent = text;
+                el.playEvalLabelWhite.textContent = "";
+            } else {
+                el.playEvalLabelWhite.textContent = text;
+                el.playEvalLabelBlack.textContent = "";
+            }
+        }
+    }
 }
 
 function updateEvalBarElements(evaluation, barEl, fillEl, whiteLbl, blackLbl) {
@@ -2279,9 +2315,9 @@ const COACH_PREFIX = {
     setup: "\u2726"
 };
 
-const COACH_SPEECH_RATE = 1.02;
-const COACH_SPEECH_PITCH = 1.0;
-const COACH_SPEECH_VOLUME = 1.0;
+const COACH_SPEECH_RATE = 0.92;
+const COACH_SPEECH_PITCH = 1.06;
+const COACH_SPEECH_VOLUME = 1;
 const COACH_SPEECH_MIN_INTERVAL_MS = 1200;
 const COACH_SPEECH_MAX_LENGTH = 280;
 
@@ -2319,9 +2355,10 @@ function loadCoachVoice() {
     if (!Array.isArray(voices) || voices.length === 0) {
         return;
     }
-
-    const preferEs = voices.find((voice) => /^es(-|$)/i.test(voice.lang || ""));
-    const preferEn = voices.find((voice) => /^en(-|$)/i.test(voice.lang || ""));
+    const esVoices = voices.filter((v) => /^es(-|$)/i.test(v.lang || ""));
+    const preferNatural = esVoices.find((v) => /Google|Microsoft|Natural|Premium|Daniel|Paulina|Sabina|Monica/i.test(v.name || ""));
+    const preferEs = preferNatural || esVoices[0] || voices.find((v) => /^es(-|$)/i.test(v.lang || ""));
+    const preferEn = voices.find((v) => /^en(-|$)/i.test(v.lang || ""));
     coachSpeechState.voice = preferEs || preferEn || voices[0] || null;
     coachSpeechState.loaded = true;
 }
@@ -3256,7 +3293,22 @@ async function evaluateLastMove(move, fenBefore, fenAfter, localSession, moveInd
         const bookMove = bookResult.isBook && cpLoss < 90;
 
         // Classify and save to the exact move index
-        const cls = classifyMove(cpLoss, bookMove, cpBefore, cpAfterAdjusted, moverIsWhite);
+        let cls = classifyMove(cpLoss, bookMove, cpBefore, cpAfterAdjusted, moverIsWhite);
+
+        // Cap bot move classification for low-ELO bots - a 1200 bot shouldn't be getting "brilliant"
+        if (!isPlayerMove && playState.botElo <= 1600) {
+            const botClsCap = playState.botElo <= 1000 ? "good"
+                : playState.botElo <= 1400 ? "best"
+                    : "great";
+            const clsRank = { brilliant: 6, great: 5, best: 4, excellent: 3, good: 2, book: 2, inaccuracy: 1, mistake: 0, blunder: 0 };
+            const capRank = clsRank[botClsCap] || 2;
+            const moveRank = clsRank[cls.key] || 0;
+            if (moveRank > capRank) {
+                const downgrade = botClsCap === "good" ? "good" : (botClsCap === "best" ? "best" : "excellent");
+                cls = MOVE_CLASSES.find(c => c.key === downgrade) || cls;
+            }
+        }
+
         playState.moveClassifications[moveIndex] = cls.key;
 
         if (cls.key === "book" && bookResult.name) {
@@ -4038,14 +4090,20 @@ function getBotDecisionProfile(elo, gameType = "standard") {
     const timeScale = normalizedGameType === "challenge" ? 1.32 : (normalizedGameType === "training" ? 0.82 : 1);
     const randomnessScale = normalizedGameType === "challenge" ? 0.78 : (normalizedGameType === "training" ? 1.2 : 1);
     const candidateShift = normalizedGameType === "challenge" ? -1 : (normalizedGameType === "training" ? 1 : 0);
+    const isLowElo = bounded <= 1400;
+    const isVeryLowElo = bounded <= 1000;
+    const humanLikeRandom = isVeryLowElo ? 0.42 : (isLowElo ? 0.30 + (1 - strength) * 0.22 : 0);
+    const humanLikeRankPenalty = isVeryLowElo ? 0.3 : (isLowElo ? 0.4 + (1 - strength) * 0.3 : 0);
     return {
         multipv: strength < 0.2 ? 6 : strength < 0.35 ? 5 : strength < 0.6 ? 4 : 3,
-        depth: clamp(Math.round(6 + bounded / 280) + depthBoost, 6, 16),
+        depth: clamp(Math.round(6 + bounded / 280) + depthBoost - (isLowElo ? 2 : 0), 5, 16),
         movetime: clamp(Math.round((170 + bounded / 3.6) * timeScale), 180, 2100),
-        maxCandidates: clamp((strength < 0.3 ? 5 : strength < 0.55 ? 4 : 3) + candidateShift, 2, 6),
-        temperatureCp: clamp(Math.round(260 - strength * 205), 55, 260),
-        rankPenalty: 0.28 + (strength * 0.55),
-        randomMoveChance: clamp((0.26 - strength * 0.23) * randomnessScale, 0.01, 0.3)
+        maxCandidates: clamp((strength < 0.3 ? 6 : strength < 0.55 ? 5 : 3) + candidateShift, 2, 6),
+        temperatureCp: clamp(Math.round(290 - strength * 220) + (isLowElo ? 100 : 0), 55, 380),
+        rankPenalty: isVeryLowElo ? 0.18 : (0.22 + (strength * 0.45) + humanLikeRankPenalty),
+        randomMoveChance: clamp((0.32 - strength * 0.26) * randomnessScale + humanLikeRandom, 0.06, 0.55),
+        isLowElo,
+        isVeryLowElo
     };
 }
 
@@ -4088,13 +4146,25 @@ function chooseBotMoveFromLines(lines, botSide, profile) {
         return ranked[0] ? ranked[0].line : null;
     }
 
-    if (Math.random() < Number(profile && profile.randomMoveChance || 0)) {
+    const randomChance = Number(profile && profile.randomMoveChance || 0);
+    if (Math.random() < randomChance) {
         return shortlist[Math.floor(Math.random() * shortlist.length)].line;
     }
 
+    const isLowElo = Boolean(profile && profile.isLowElo);
+    const isVeryLowElo = Boolean(profile && profile.isVeryLowElo);
+    if (isVeryLowElo && shortlist.length >= 2 && Math.random() < 0.55) {
+        const suboptimalIndex = Math.min(shortlist.length - 1, 1 + Math.floor(Math.random() * (shortlist.length - 1)));
+        return shortlist[suboptimalIndex].line;
+    }
+    if (isLowElo && shortlist.length >= 2 && Math.random() < 0.42) {
+        const suboptimalIndex = Math.random() < 0.55 ? 1 : (shortlist.length >= 3 ? 2 : 1);
+        return shortlist[suboptimalIndex].line;
+    }
+
     const bestScore = shortlist[0].score;
-    const temperature = clamp(Number(profile && profile.temperatureCp || 120), 30, 300);
-    const rankPenalty = clamp(Number(profile && profile.rankPenalty || 0.4), 0.1, 1.2);
+    const temperature = clamp(Number(profile && profile.temperatureCp || 120), 30, 320);
+    const rankPenalty = clamp(Number(profile && profile.rankPenalty || 0.4), 0.1, 1.5);
     const weights = shortlist.map((entry, index) => {
         const loss = Math.max(0, bestScore - entry.score);
         const evalWeight = Math.exp(-loss / temperature);
@@ -7282,14 +7352,14 @@ function classifyExplorerResult(success) {
 
 function formatExplorerFrequencyLabel(tier) {
     switch (String(tier || "all").toLowerCase()) {
-    case "high":
-        return "Muy jugada";
-    case "medium":
-        return "Intermedia";
-    case "low":
-        return "Poco jugada";
-    default:
-        return "Sin clasificar";
+        case "high":
+            return "Muy jugada";
+        case "medium":
+            return "Intermedia";
+        case "low":
+            return "Poco jugada";
+        default:
+            return "Sin clasificar";
     }
 }
 
@@ -7311,7 +7381,7 @@ function playStartSound() {
 
         const context = errorAudioContext;
         if (context.state === "suspended") {
-            context.resume().catch(() => {});
+            context.resume().catch(() => { });
         }
 
         const now = context.currentTime;
@@ -7344,14 +7414,14 @@ function playStartSound() {
 
 function formatExplorerResultLabel(tier) {
     switch (String(tier || "all").toLowerCase()) {
-    case "favorable":
-        return "Favorable";
-    case "balanced":
-        return "Equilibrada";
-    case "risky":
-        return "Riesgosa";
-    default:
-        return "Sin clasificar";
+        case "favorable":
+            return "Favorable";
+        case "balanced":
+            return "Equilibrada";
+        case "risky":
+            return "Riesgosa";
+        default:
+            return "Sin clasificar";
     }
 }
 
@@ -8516,48 +8586,71 @@ function getCoachTurnComment(move, cls, evalAfter) {
     const key = cls.key || cls;
     const templates = {
         brilliant: [
-            "\u2728 \u00a1Wow, {san}! \u00a1Eso fue brillante! Encontraste algo que pocos ver\u00edan.",
-            "\ud83c\udf1f \u00a1Incre\u00edble {san}! Esa jugada demuestra talento real. \u00a1Sigue as\u00ed!"
+            "\u2728 \u00a1Madre m\u00eda, {san}! Eso fue BRILLANTE. No cualquiera la encuentra, \u00a1tienes ojo de maestro!",
+            "\ud83c\udf1f \u00a1WOW! {san} es una obra de arte. Me dejaste sin palabras, \u00a1sigue as\u00ed!",
+            "\ud83d\udca1 \u00a1{san}! Pensar fuera de la caja. Jugada de alto nivel, \u00a1me encanta tu creatividad!",
+            "\ud83d\ude80 \u00a1ESPECTACULAR! {san} demuestra que ves lo que otros no. \u00a1Qu\u00e9 talento!",
+            "\u2b50 \u00a1{san}! Momento \u00e9pico de la partida. \u00a1Brillante de verdad!"
         ],
         great: [
-            "\ud83d\udc4f \u00a1Gran jugada con {san}! Muy buena visi\u00f3n.",
-            "\ud83d\udcaa \u00a1Excelente {san}! Tu posici\u00f3n mejora."
+            "\ud83d\udc4f \u00a1Muy bien, {san}! Buen instinto, mejoras mucho la posici\u00f3n.",
+            "\ud83d\udcaa {san} es fuerte. Se nota que piensas bien, \u00a1sigue con esa energ\u00eda!",
+            "\ud83d\udd25 \u00a1{san}, excelente elecci\u00f3n! Tu rival sentir\u00e1 la presi\u00f3n. \u00a1Bien hecho!",
+            "\ud83c\udfaf {san} fue gran jugada. Lees bien la posici\u00f3n, \u00a1me gusta!",
+            "\ud83d\ude04 \u00a1Buena esa! {san} demuestra que est\u00e1s en ritmo."
         ],
         best: [
-            "\u2705 \u00a1Perfecto! {san} es la mejor jugada aqu\u00ed.",
-            "\ud83c\udfaf \u00a1{san} es justo lo que hab\u00eda que jugar! Impecable."
+            "\u2705 \u00a1Perfecto! {san} es exacto. \u00a1Ni un GM lo har\u00eda mejor aqu\u00ed!",
+            "\ud83c\udfaf \u00a1{san} es LA jugada! Precisi\u00f3n total. Sigue as\u00ed.",
+            "\ud83d\udc4d \u00a1Impecable! {san} es la mejor. Tu c\u00e1lculo funciona genial.",
+            "\u2713 {san}, justo en el clavo. \u00a1Gran precisi\u00f3n!"
         ],
         excellent: [
-            "\u2b50 \u00a1Muy bien! {san} es excelente.",
-            "\ud83d\udc4d \u00a1{san} mantiene todo bajo control!"
+            "\u2b50 \u00a1Muy bien! {san} es excelente. Juegas con solidez.",
+            "\ud83d\udc4d {san} mantiene todo bajo control. \u00a1Buen trabajo!",
+            "\ud83d\ude0a \u00a1{san}! Buenas decisiones. La partida va por buen camino.",
+            "\u2714\ufe0f {san} es muy precisa. Sigue as\u00ed, \u00a1vas genial!"
         ],
         good: [
-            "\ud83d\ude42 {san} est\u00e1 bien. \u00bfViste alguna alternativa m\u00e1s activa?",
-            "\ud83d\udc4c {san} es s\u00f3lida. Intenta buscar opciones m\u00e1s ambiciosas."
+            "\ud83d\ude42 {san} est\u00e1 bien, pero \u00bfviste alguna m\u00e1s activa? Vale buscar m\u00e1s.",
+            "\ud83d\udc4c {san} es s\u00f3lida. Tip: busca jugadas que presionen al rival.",
+            "\ud83e\udd14 {san} est\u00e1 OK pero hab\u00eda algo mejor. \u00a1Sigue buscando!",
+            "\u2796 {san} correcta. Pregunta: \u00bfpuedo amenazar algo con mi jugada?",
+            "\ud83d\udca1 {san} est\u00e1 OK. Antes de mover, mira capturas, jaques o amenazas."
         ],
         book: [
-            "\ud83d\udcda \u00a1Jugada de libro! {san} sigue la teor\u00eda.",
-            "\ud83c\udf93 {san} es teor\u00eda. \u00a1Tu preparaci\u00f3n es buena!"
+            "\ud83d\udcda \u00a1De libro! {san} sigue la teor\u00eda. \u00a1Buena preparaci\u00f3n!",
+            "\ud83c\udf93 {san} es teor\u00eda. Conocer aperturas da ventaja desde el inicio.",
+            "\ud83d\udcda \u00a1Perfecto! {san} la juegan los maestros, \u00a1vas bien!",
+            "\ud83c\udf1f {san}, jugada te\u00f3rica. Te ahorra tiempo y evita trampas."
         ],
         inaccuracy: [
-            "\u26a0\ufe0f {san} no es la mejor. \u00bfNotaste la alternativa? Piensa en amenazas del rival.",
-            "\ud83e\udd14 {san} pierde un poco. Intenta calcular m\u00e1s opciones antes de decidir."
+            "\u26a0\ufe0f {san} no es la mejor. Hab\u00eda algo un poco m\u00e1s fuerte. \u00a1Sigue atento!",
+            "\ud83e\udd14 {san} pierde ventajita. Tip: rev\u00edsa amenazas del rival.",
+            "\u26a0\ufe0f {san} es imprecisa. Tranquilo, todos lo hacemos. Calcula una m\u00e1s.",
+            "\ud83d\udca1 {san} no era \u00f3ptimo. Pregunta: \u00bfqu\u00e9 quiere hacer mi rival?",
+            "\ud83d\ude15 {san} no es ideal. No pasa nada, lo importante es aprender."
         ],
         mistake: [
-            "\u274c \u00a1Uy! {san} es un error. No pasa nada, \u00a1aprenderemos de esto!",
-            "\ud83d\ude2c {san} complica las cosas. Recuerda revisar jaques y capturas del rival."
+            "\u274c \u00a1Uy! {san} es error. \u00a1Tranquilo! Cada error ense\u00f1a. Revisa jaques y capturas.",
+            "\ud83d\ude2c {san} complica cosas. No pasa nada, \u00a1vamos a recuperarnos!",
+            "\u274c {san} pierde ventaja. Mira qu\u00e9 puede hacer el rival DESPU\u00c9S de tu jugada.",
+            "\ud83d\udea8 {san} fue tropez\u00f3n. \u00a1\u00c1nimo! Los mejores tambi\u00e9n cometen errores."
         ],
         blunder: [
-            "\ud83d\udea8 \u00a1Cuidado! {san} es un error grave. Respira y calcula antes de mover.",
-            "\ud83d\udca5 {san} cambia todo. Consejo: revisa siempre las amenazas antes de jugar."
+            "\ud83d\udea8 \u00a1Cuidado! {san} es error grave. Respira y calcula una jugada m\u00e1s.",
+            "\ud83d\udca5 \u00a1Ay! {san} cambi\u00f3 el rumbo. No te desanimes, \u00a1a seguir luchando!",
+            "\u274c {san}, no viste la respuesta. Clave: revisa SIEMPRE las amenazas.",
+            "\ud83d\ude30 {san} es serio. Pero de errores se aprende m\u00e1s que de victorias."
         ]
     };
 
-    const pool = templates[key] || ["\u27a1\ufe0f {san} - Jugada interesante."];
+    const pool = templates[key] || ["\u27a1\ufe0f {san} - Jugada interesante. \u00bfQu\u00e9 plan ten\u00edas?"];
     const t = pool[Math.floor(Math.random() * pool.length)];
     const san = move ? move.san : "...";
     return t.replace(/\{san\}/g, sanToSpanish(san));
 }
+
 
 function bindCoachReviewEvents() {
     if (el.crCloseBtn) el.crCloseBtn.addEventListener("click", closeCoachReview);
@@ -9447,7 +9540,7 @@ function makeMovesClickable(msgEl) {
                 } else {
                     addAiMessage(`No puedo jugar ${san} en esta posicion actual.`, "ai-bot");
                 }
-            } catch {}
+            } catch { }
         });
         return span;
     });
