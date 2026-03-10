@@ -125,10 +125,6 @@ body[data-ui-theme="light"] {
     box-sizing: border-box;
 }
 
-html {
-    scroll-behavior: smooth;
-}
-
 html,
 body {
     margin: 0;
@@ -233,7 +229,8 @@ a:hover {
     border-radius: 12px;
     padding: 0;
     min-width: 160px;
-    backdrop-filter: blur(12px);
+    /* Menos blur para móviles y mejor rendimiento */
+    backdrop-filter: blur(6px);
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
     font-size: 0.72rem;
     transition: opacity 0.25s ease;
@@ -304,7 +301,8 @@ a:hover {
     padding: 5px;
     width: fit-content;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
-    backdrop-filter: blur(16px);
+    /* Blur moderado para no castigar tanto la GPU en móviles */
+    backdrop-filter: blur(8px);
 }
 
 .tab-btn {
@@ -475,7 +473,8 @@ a:hover {
     border: 1px solid rgba(255, 255, 255, 0.09);
     border-radius: 20px;
     padding: 20px;
-    backdrop-filter: blur(18px);
+    /* Reducido el blur para mejorar rendimiento en móviles */
+    backdrop-filter: blur(10px);
     box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28), 0 2px 8px rgba(0, 0, 0, 0.12);
     transition: box-shadow 0.3s ease, border-color 0.3s ease, transform 0.3s ease;
     color: var(--text);
@@ -1062,7 +1061,6 @@ a:hover {
     pointer-events: none;
     filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.32));
     transition: transform 0.12s cubic-bezier(0.22, 1, 0.36, 1), filter 0.15s ease, opacity 0.12s ease;
-    will-change: transform, opacity;
 }
 
 body[data-piece-theme="neo"] .square img {
@@ -3404,6 +3402,29 @@ textarea:focus-visible {
         min-height: 42px;
         font-size: 0.86rem;
     }
+
+    /* Desactivar animaciones pesadas en móviles para mejorar INP/CLS */
+    .panel.is-active,
+    .coach-feed .coach-msg,
+    .study-card,
+    .move-badge,
+    .board-arrow,
+    .endgame-content,
+    .settings-content,
+    .coach-review-overlay.is-visible,
+    .cr-coach-avatar,
+    .typewriter-text.is-typing {
+        animation: none !important;
+        transition: none !important;
+    }
+
+    .card,
+    .study-cat-card,
+    .lesson-course-card {
+        transition: none !important;
+        transform: none !important;
+        box-shadow: 0 10px 32px rgba(0, 0, 0, 0.35);
+    }
 }
 
 /* ===== Extra-small phones ===== */
@@ -3521,7 +3542,8 @@ textarea:focus-visible {
     pointer-events: none;
     z-index: 3000;
     background: rgba(0, 0, 0, 0.88);
-    backdrop-filter: blur(12px);
+    /* Reducido ligeramente el blur para aliviar la GPU */
+    backdrop-filter: blur(8px);
     transition: opacity 0.4s ease;
     overflow-y: auto;
 }
@@ -4117,7 +4139,8 @@ textarea:focus-visible {
 
 /* Smooth scroll for review panel */
 .cr-panel {
-    scroll-behavior: smooth;
+    /* Evitar scroll suave en panel interno para no bloquear el hilo principal en móviles */
+    scroll-behavior: auto;
 }
 
 .cr-panel::-webkit-scrollbar {
